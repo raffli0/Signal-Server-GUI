@@ -1,0 +1,385 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+        integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+          integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+  <style>
+    * { box-sizing: border-box; }
+    html, body, #map { margin: 0; padding: 0; height: 100%; width: 100%; font-family: 'Segoe UI', system-ui, sans-serif; background-color: #121417; overflow: hidden; }
+
+    /* Right Vertical dBm Legend Bar */
+    #dbm-legend {
+      position: absolute;
+      top: 15px;
+      right: 12px;
+      z-index: 1000;
+      background: rgba(27, 30, 34, 0.88);
+      backdrop-filter: blur(4px);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 6px;
+      padding: 6px 4px;
+      width: 48px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+      color: #E2E8F0;
+      user-select: none;
+    }
+    #dbm-legend .title {
+      font-size: 10px;
+      font-weight: 700;
+      margin-bottom: 4px;
+      color: #A0AEC0;
+    }
+    #dbm-legend .legend-container {
+      display: flex;
+      flex-direction: row;
+      align-items: center;
+      height: 380px;
+      width: 100%;
+    }
+    #dbm-legend .gradient-bar {
+      width: 12px;
+      height: 100%;
+      border-radius: 3px;
+      background: linear-gradient(to bottom, 
+        #E53E3E 0%, 
+        #DD6B20 10%, 
+        #D69E2E 22%, 
+        #38A169 35%, 
+        #319795 50%, 
+        #3182CE 70%, 
+        #2B6CB0 85%, 
+        #1A365D 100%
+      );
+      border: 1px solid rgba(0,0,0,0.3);
+    }
+    #dbm-legend .ticks {
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      height: 100%;
+      margin-left: 4px;
+      font-size: 8px;
+      font-family: monospace;
+      color: #CBD5E0;
+    }
+
+    /* Top Right Map Control Buttons */
+    #top-right-tools {
+      position: absolute;
+      top: 15px;
+      right: 68px;
+      z-index: 1000;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .map-btn {
+      width: 32px;
+      height: 32px;
+      background: rgba(27, 30, 34, 0.9);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      border-radius: 4px;
+      color: #E2E8F0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 14px;
+      cursor: pointer;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+      transition: all 0.15s ease;
+    }
+    .map-btn:hover {
+      background: #3182CE;
+      color: #FFFFFF;
+    }
+
+    /* Inline SVG icons */
+    .ic {
+      width: 18px;
+      height: 18px;
+      display: block;
+    }
+    #bottom-right-info .ic,
+    #bottom-tools-pill .ic {
+      width: 16px;
+      height: 16px;
+      vertical-align: middle;
+    }
+
+    /* 3D Compass Widget */
+    .compass-dial {
+      width: 34px;
+      height: 34px;
+      border-radius: 50%;
+      border: 2px solid #3182CE;
+      background: rgba(27, 30, 34, 0.9);
+      color: #3182CE;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: bold;
+      font-size: 11px;
+    }
+
+    /* Bottom Center Floating Toolbar Pill */
+    #bottom-tools-pill {
+      position: absolute;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 1000;
+      background: rgba(27, 30, 34, 0.88);
+      backdrop-filter: blur(6px);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 20px;
+      padding: 4px 14px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      box-shadow: 0 4px 14px rgba(0,0,0,0.4);
+      color: #E2E8F0;
+    }
+    #bottom-tools-pill input[type=range] {
+      width: 80px;
+      accent-color: #3182CE;
+      cursor: pointer;
+    }
+
+    /* Bottom Left Attribution Bar */
+    #bottom-left-attr {
+      position: absolute;
+      bottom: 6px;
+      left: 10px;
+      z-index: 1000;
+      color: rgba(255,255,255,0.6);
+      font-size: 10px;
+      text-shadow: 0 1px 2px rgba(0,0,0,0.8);
+      pointer-events: none;
+    }
+
+    /* Bottom Right Info Overlay */
+    #bottom-right-info {
+      position: absolute;
+      bottom: 8px;
+      right: 10px;
+      z-index: 1000;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      background: rgba(27, 30, 34, 0.8);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 4px;
+      padding: 3px 8px;
+      color: #CBD5E0;
+      font-size: 10px;
+      font-family: monospace;
+    }
+
+    /* Marker styling */
+    .tx-pin {
+      display: block;
+      filter: drop-shadow(0 2px 4px rgba(0,0,0,0.5));
+    }
+    .rx-badge {
+      background: #D69E2E;
+      color: #1A202C;
+      font-weight: 800;
+      font-size: 11px;
+      padding: 2px 6px;
+      border-radius: 4px;
+      border: 1px solid #B7791F;
+      box-shadow: 0 2px 5px rgba(0,0,0,0.5);
+      white-space: nowrap;
+    }
+
+    /* Hide Leaflet default controls to use custom CloudRF ones */
+    .leaflet-control-attribution { display: none !important; }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+
+  <!-- Vertical dBm Scale Legend -->
+  <div id="dbm-legend">
+    <div class="title">dBm</div>
+    <div class="legend-container">
+      <div class="gradient-bar"></div>
+      <div class="ticks">
+        <span>-20</span>
+        <span>-28</span>
+        <span>-35</span>
+        <span>-44</span>
+        <span>-52</span>
+        <span>-60</span>
+        <span>-72</span>
+        <span>-83</span>
+        <span>-92</span>
+        <span>-104</span>
+        <span>-112</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Top Right Tools -->
+  <div id="top-right-tools">
+    <div class="map-btn" title="Search Location" onclick="searchLoc()"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg></div>
+    <div class="map-btn" title="Reset View / Home" onclick="goHome()"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg></div>
+    <div class="map-btn" title="Switch Basemap Layer" onclick="toggleLayer()"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4 3 6v14l6-2 6 2 6-2V4l-6 2-6-2z"/><path d="M9 4v14"/><path d="M15 6v14"/></svg></div>
+    <div class="compass-dial" title="3D Navigation View">N</div>
+  </div>
+
+  <!-- Bottom Floating Toolbar Pill -->
+  <div id="bottom-tools-pill">
+    <span title="Contrast / Brightness" style="cursor:pointer"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 3v18"/><path d="M12 3a9 9 0 0 1 0 18z" fill="currentColor" stroke="none"/></svg></span>
+    <input type="range" id="opacitySlider" min="0" max="100" value="75" title="Overlay Opacity" oninput="changeOpacity(this.value)">
+    <span title="Draw Polygon / Area" style="cursor:pointer"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg></span>
+    <span title="Color Palette" style="cursor:pointer"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a9 9 0 1 0 0 18c1.7 0 2-1.2 2-2.2 0-1.2-1-1.4-1-2.6 0-.9.8-1.6 1.7-1.6H17a4 4 0 0 0 4-4c0-5-4.5-9-9-9z"/><circle cx="7.5" cy="11" r="1" fill="currentColor"/><circle cx="11" cy="7.5" r="1" fill="currentColor"/><circle cx="16" cy="8.5" r="1" fill="currentColor"/></svg></span>
+    <span title="Code / API" style="cursor:pointer"><code>&lt;/&gt;</code></span>
+  </div>
+
+  <!-- Bottom Left Attribution -->
+  <div id="bottom-left-attr">
+    Data: OpenStreetMap, 
+  </div>
+
+  <!-- Bottom Right Coordinates & Scale Indicator -->
+  <div id="bottom-right-info">
+    <span id="scale-indicator">100.00 m</span>
+    <span id="coord-display">51.717470N -2.482561E</span>
+    <span title="Toggle Fullscreen" style="cursor:pointer" onclick="toggleFS()"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9V3h6"/><path d="M21 9V3h-6"/><path d="M3 15v6h6"/><path d="M21 15v6h-6"/></svg></span>
+  </div>
+
+  <script>
+    // Initialize Map with Satellite imagery by default
+    var satLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+      maxZoom: 19,
+      attribution: 'Esri Satellite'
+    });
+
+    var osmLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19
+    });
+
+    var currentLayer = satLayer;
+    var map = L.map('map', {
+      center: [51.717476, -2.483066],
+      zoom: 15,
+      layers: [satLayer],
+      zoomControl: false
+    });
+
+    // Zoom control at top-left
+    L.control.zoom({ position: 'topleft' }).addTo(map);
+
+    var overlay = null;
+    var markersLayer = L.layerGroup().addTo(map);
+
+    function loadCoverage(dataUri, bounds) {
+      if (overlay) { map.removeLayer(overlay); overlay = null; }
+      if (!dataUri) return;
+      var op = document.getElementById('opacitySlider').value / 100.0;
+      overlay = L.imageOverlay(dataUri, bounds, {opacity: op}).addTo(map);
+      map.fitBounds(bounds);
+    }
+
+    function placeMarkers(list) {
+      markersLayer.clearLayers();
+      (list || []).forEach(function (m) {
+        if (m.role === 'tx') {
+          var txIcon = L.divIcon({
+            className: 'mk-container',
+            html: '<svg class="tx-pin" width="38" height="48" viewBox="0 0 46 50" xmlns="http://www.w3.org/2000/svg">' +
+                    '<path d="M 10 3 H 36 A 6 6 0 0 1 42 9 V 27 A 6 6 0 0 1 36 33 H 28 L 23 47 L 18 33 H 10 A 6 6 0 0 1 4 27 V 9 A 6 6 0 0 1 10 3 Z" fill="#F59E0B" stroke="#FFFFFF" stroke-width="2"/>' +
+                    '<text x="23" y="18" text-anchor="middle" dominant-baseline="central" font-family="Segoe UI, system-ui, sans-serif" font-size="15" font-weight="bold" fill="#FFFFFF" stroke="#000000" stroke-width="0.8" paint-order="stroke fill">Tx</text>' +
+                  '</svg>',
+            iconSize: [38, 48],
+            iconAnchor: [19, 47],
+            popupAnchor: [0, -44]
+          });
+          var marker = L.marker([m.lat, m.lon], {icon: txIcon}).addTo(markersLayer);
+        } else {
+          var rxIcon = L.divIcon({
+            className: 'mk-container',
+            html: '<div class="rx-badge">' + m.label + '</div>',
+            iconSize: [40, 20],
+            iconAnchor: [20, 10],
+            popupAnchor: [0, -12]
+          });
+          var marker = L.marker([m.lat, m.lon], {icon: rxIcon}).addTo(markersLayer);
+        }
+        marker.bindPopup('<b>' + m.label + '</b><br>' + m.lat.toFixed(6) + ', ' + m.lon.toFixed(6) + '<br>35m 269.4°');
+      });
+    }
+
+    function flyToSite(lat, lon) {
+      map.flyTo([lat, lon], Math.max(map.getZoom(), 14));
+    }
+
+    function changeOpacity(val) {
+      if (overlay) {
+        overlay.setOpacity(val / 100.0);
+      }
+    }
+
+    function toggleLayer() {
+      if (map.hasLayer(satLayer)) {
+        map.removeLayer(satLayer);
+        map.addLayer(osmLayer);
+      } else {
+        map.removeLayer(osmLayer);
+        map.addLayer(satLayer);
+      }
+    }
+
+    function goHome() {
+      map.setView([51.717476, -2.483066], 15);
+    }
+
+    function searchLoc() {
+      var query = prompt("Enter location (lat, lon or city name):", "51.717476, -2.483066");
+      if (query) {
+        var parts = query.split(",");
+        if (parts.length === 2) {
+          var lat = parseFloat(parts[0]), lon = parseFloat(parts[1]);
+          if (!isNaN(lat) && !isNaN(lon)) {
+            flyToSite(lat, lon);
+          }
+        }
+      }
+    }
+
+    function toggleFS() {
+      if (window.parent) {
+        var event = new CustomEvent('toggleFS');
+        window.dispatchEvent(event);
+      }
+    }
+
+    map.on('mousemove', function (e) {
+      var lat = e.latlng.lat;
+      var lon = e.latlng.lng;
+      var latStr = Math.abs(lat).toFixed(6) + (lat >= 0 ? 'N' : 'S');
+      var lonStr = Math.abs(lon).toFixed(6) + (lon >= 0 ? 'E' : 'W');
+      document.getElementById('coord-display').innerText = latStr + ' ' + lonStr;
+    });
+
+    map.on('click', function (e) {
+      var lat = e.latlng.lat.toFixed(6), lon = e.latlng.lng.toFixed(6);
+      window.location.href = 'app://pick?role=' + (window.__armedRole || 'tx')
+                            + '&lat=' + lat + '&lon=' + lon;
+    });
+
+    window.__armedRole = 'tx';
+    /*__DATA__*/
+    if (window.__coverage) { loadCoverage(window.__coverage.dataUri, window.__coverage.bounds); }
+    if (window.__markers) { placeMarkers(window.__markers); }
+  </script>
+</body>
+</html>

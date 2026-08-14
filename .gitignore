@@ -1,0 +1,29 @@
+# ===== Python (gui) =====
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+.env
+
+# ===== App runtime cache (downloaded DEM/SDF terrain data, regenerable) =====
+gui/cache/
+
+# ===== Signal-Server build artifacts =====
+build/
+build-*/
+src/build
+CMakeCache.txt
+CMakeFiles/
+compile_commands.json
+
+# ===== System dependency (AddressSanitizer runtime, not source) =====
+asanlib/libasan*.so*
+
+# ===== Generated analysis output =====
+graphify-out/
+
+# OS / editor
+.DS_Store
+*.swp
