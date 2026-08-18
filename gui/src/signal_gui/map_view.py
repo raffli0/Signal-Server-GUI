@@ -164,3 +164,20 @@ class MapView(QWebEngineView):
         """Remove the coverage overlay (Tx/Rx markers are kept)."""
         self._coverage = None
         self._render()
+
+    def set_opacity(self, value: int) -> None:
+        """Set the coverage overlay opacity (0-100) via JavaScript.
+
+        Can be called directly from a PySide6 QSlider.valueChanged signal
+        without reloading the map page.  When no overlay is loaded the call
+        is a no-op on the JS side.
+        """
+        opacity_float = max(0, min(100, value)) / 100.0
+        js = (
+            f"if (typeof overlay !== 'undefined' && overlay !== null) {{"
+            f"  overlay.setOpacity({opacity_float:.3f});"
+            f"  document.getElementById('opacitySlider').value = {value};"
+            f"}}"
+        )
+        self.page().runJavaScript(js)
+

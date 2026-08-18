@@ -201,6 +201,18 @@
 
     /* Hide Leaflet default controls to use custom CloudRF ones */
     .leaflet-control-attribution { display: none !important; }
+
+    /* === Blueprint: Crisp-Edges Zoom Raster ===
+       Prevent bilinear interpolation (blur) on PNG overlay when zooming in.
+       Uses pixelated / crisp-edges across all major browsers. */
+    .leaflet-image-layer {
+      image-rendering: optimizeSpeed;
+      image-rendering: -moz-crisp-edges;
+      image-rendering: -o-crisp-edges;
+      image-rendering: -webkit-optimize-contrast;
+      image-rendering: pixelated;
+      image-rendering: crisp-edges;
+    }
   </style>
 </head>
 <body>
@@ -285,8 +297,25 @@
       if (overlay) { map.removeLayer(overlay); overlay = null; }
       if (!dataUri) return;
       var op = document.getElementById('opacitySlider').value / 100.0;
-      overlay = L.imageOverlay(dataUri, bounds, {opacity: op}).addTo(map);
+      overlay = L.imageOverlay(dataUri, bounds, {
+        opacity: op,
+        interactive: false
+      }).addTo(map);
       map.fitBounds(bounds);
+
+      // === Blueprint: Adaptive Opacity based on Zoom Level ===
+      // Unregister previous zoom listener to avoid stacking handlers
+      map.off('zoomend', _onZoomOpacity);
+      map.on('zoomend', _onZoomOpacity);
+    }
+
+    function _onZoomOpacity() {
+      if (!overlay) return;
+      // At street level (zoom > 15), reduce opacity so buildings/roads show through
+      var sliderVal = document.getElementById('opacitySlider').value / 100.0;
+      var currentZoom = map.getZoom();
+      var adaptedOp = (currentZoom > 15) ? Math.min(sliderVal, 0.50) : sliderVal;
+      overlay.setOpacity(adaptedOp);
     }
 
     function placeMarkers(list) {

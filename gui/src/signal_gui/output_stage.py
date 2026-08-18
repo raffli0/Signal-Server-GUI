@@ -27,13 +27,25 @@ def find_convert() -> str:
 
 
 def ppm_to_png(ppm_path: str, png_path: Optional[str] = None) -> str:
-    """Convert a PPM coverage image to a transparent PNG via ImageMagick."""
+    """Convert a PPM coverage image to a transparent PNG via ImageMagick.
+
+    Uses the Lanczos filter to preserve smooth signal-strength gradients and
+    avoid harsh color-banding artefacts in the final PNG overlay.
+    """
     if png_path is None:
         png_path = os.path.splitext(ppm_path)[0] + ".png"
     convert = find_convert()
-    cmd = [convert, ppm_path, "-transparent", "white", png_path]
-    subprocess.run(cmd, check=True, capture_output=True)
+    # -filter Lanczos: high-quality sinc-based resampling keeps colour gradients
+    # smooth without the blocky quantisation you get with the default filter.
+    # -transparent white: make the Signal-Server background colour fully transparent.
+    cmd = [convert, ppm_path, "-filter", "Lanczos", "-transparent", "white", png_path]
+    result = subprocess.run(cmd, capture_output=True)
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"ImageMagick conversion failed: {result.stderr.decode(errors='replace')}"
+        )
     return png_path
+
 
 
 def parse_bbox(stdout_text: str):

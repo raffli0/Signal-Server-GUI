@@ -136,7 +136,6 @@ class MainWindow(QMainWindow):
         rl = QVBoxLayout(right)
         rl.setContentsMargins(0, 0, 0, 0)
         rl.setSpacing(0)
-        rl.addWidget(self.progress)
         rl.addWidget(self.map, 1)
         rl.addWidget(self.status)
 
@@ -168,7 +167,7 @@ class MainWindow(QMainWindow):
         else:
             self.form.toggle_section(key)
 
-    # ------------------------------------------------------------------ run
+
     def _dem_spec(self, p: dict) -> dict | None:
         if p.get("terrain_source") == "lidar" or p.get("sdf_dir"):
             return None
@@ -369,20 +368,4 @@ class MainWindow(QMainWindow):
             z.write(png, arcname=png_name)
             z.writestr("doc.kml", kml_text)
 
-    # ------------------------------------------------------------------ profile
-    def save_profile(self) -> None:
-        path, _ = QFileDialog.getSaveFileName(self, "Save profile", "", "JSON (*.json)")
-        if not path:
-            return
-        with open(path, "w", encoding="utf-8") as fh:
-            json.dump(self.form.collect(), fh, indent=2)
-        self.status.setText(f"Profile saved: {path}")
 
-    def load_profile(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(self, "Load profile", "", "JSON (*.json)")
-        if not path:
-            return
-        with open(path, "r", encoding="utf-8") as fh:
-            data = json.load(fh)
-        self.form.load(data)
-        self.status.setText(f"Profile loaded: {path}")
