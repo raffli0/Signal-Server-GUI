@@ -148,7 +148,10 @@ class MapView(QWebEngineView):
     def _on_loaded(self, _ok: bool) -> None:
         self._ready = True
         self._update_markers()
-        if self._focus is not None:
+        # When a coverage overlay is shown, loadCoverage() already fitBounds() to
+        # it -- don't clobber that with a forced zoom-14 fly-to (which would hide
+        # a large (e.g. 100 km) result). Only auto-fly on the blank initial load.
+        if self._coverage is None and self._focus is not None:
             lat, lon = self._focus
             self.page().runJavaScript(f"flyToSite({lat},{lon});")
 
@@ -282,7 +285,10 @@ class MapView(QWebEngineView):
     def _on_loaded(self, _ok: bool) -> None:
         self._ready = True
         self._update_markers()
-        if self._focus is not None:
+        # When a coverage overlay is shown, loadCoverage() already fitBounds() to
+        # it -- don't clobber that with a forced zoom-14 fly-to (which would hide
+        # a large (e.g. 100 km) result). Only auto-fly on the blank initial load.
+        if self._coverage is None and self._focus is not None:
             lat, lon = self._focus
             self.page().runJavaScript(f"flyToSite({lat},{lon});")
 

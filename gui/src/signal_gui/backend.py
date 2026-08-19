@@ -96,10 +96,13 @@ class RunWorker(QThread):
         sdf_exe = self.srtm2sdf_exe or dem_convert.which_srtm2sdf(
             "HD" if engine == "HD" else "Standard"
         )
+        clat = float(p.get("tx_lat") if p.get("tx_lat") is not None else (spec["lat_lo"] + spec["lat_hi"]) / 2.0)
+        clon = float(p.get("tx_lon") if p.get("tx_lon") is not None else (spec["lon_lo"] + spec["lon_hi"]) / 2.0)
         if "tile_code" in spec:
             self.progress.emit(f"Preparing DEM tile {spec['tile_code']} ...")
             sdf_dir = dem_convert.prepare_region(
-                spec["tile_code"], spec["resolution"], spec["cache_dir"], sdf_exe
+                spec["tile_code"], spec["resolution"], spec["cache_dir"], sdf_exe,
+                center_lat=clat, center_lon=clon,
             )
         else:
             self.progress.emit("Resolving DEM tile (Viewfinder) ...")
@@ -107,16 +110,16 @@ class RunWorker(QThread):
                 sdf_dir = dem_convert.ensure_dem_for_area(
                     spec["lat_lo"], spec["lat_hi"], spec["lon_lo"], spec["lon_hi"],
                     spec["resolution"], spec["cache_dir"], sdf_exe, engine,
+                    center_lat=clat, center_lon=clon,
                 )
             except DemResolveError as exc:
-                clat = (spec["lat_lo"] + spec["lat_hi"]) / 2.0
-                clon = (spec["lon_lo"] + spec["lon_hi"]) / 2.0
                 self.need_tile_code.emit(clat, clon, spec["resolution"])
                 raise
         p["sdf_dir"] = sdf_dir
         # The engine segfaults (SIGSEGV) in its "sea-level" fallback when the
         # required SDF terrain is missing. Refuse to launch if the matching
-        # SDF variant is absent (HD needs "-hd" tiles, others need plain ones).
+        # SDF variant is absent (HD needs "-hd" tiles, others need plain ones),
+        # or if the terrain does not actually cover the transmitter.
         self._require_sdf_variant(p, sdf_dir)
 
     def _require_sdf_variant(self, p: dict, sdf_dir: str) -> None:
@@ -139,6 +142,21 @@ class RunWorker(QThread):
                 f"Use a DEM resolution that matches the engine "
                 f"(HD engine requires 30 m; Standard/LIDAR use 90 m)."
             )
+        # Make sure the terrain we have actually covers the transmitter, not just
+        # any tile in the (per-tile) cache dir. Launching on terrain that omits
+        # the Tx cell yields a degenerate, line-shaped coverage. The SDF filenames
+        # use an opaque encoding, so we verify against the source .hgt files.
+        tx_lat = p.get("tx_lat")
+        tx_lon = p.get("tx_lon")
+        if tx_lat is not None and tx_lon is not None:
+            raw_dir = os.path.join(
+                os.path.dirname(os.path.dirname(sdf_dir)), "raw", os.path.basename(sdf_dir)
+            )
+            if not dem_convert.hgt_covers_center(raw_dir, float(tx_lat), float(tx_lon)):
+                raise RuntimeError(
+                    f"Prepared DEM in {sdf_dir} does not cover the transmitter "
+                    f"({tx_lat}, {tx_lon}). Pick the correct DEM tile for this location."
+                )
 
     def run(self) -> None:  # noqa: D401
         p = dict(self.parameters)
