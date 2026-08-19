@@ -151,6 +151,26 @@
       accent-color: #3182CE;
       cursor: pointer;
     }
+    #bottom-tools-pill .pill-toggle {
+      font-size: 11px;
+      font-weight: 700;
+      padding: 2px 8px;
+      border-radius: 10px;
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      color: #A0AEC0;
+      cursor: pointer;
+      user-select: none;
+      transition: all 0.15s ease;
+    }
+    #bottom-tools-pill .pill-toggle:hover {
+      border-color: #3182CE;
+      color: #E2E8F0;
+    }
+    #bottom-tools-pill .pill-toggle.active {
+      background: #3182CE;
+      border-color: #3182CE;
+      color: #FFFFFF;
+    }
 
     /* Bottom Left Attribution Bar */
     #bottom-left-attr {
@@ -202,16 +222,67 @@
     /* Hide Leaflet default controls to use custom CloudRF ones */
     .leaflet-control-attribution { display: none !important; }
 
-    /* === Blueprint: Crisp-Edges Zoom Raster ===
-       Prevent bilinear interpolation (blur) on PNG overlay when zooming in.
-       Uses pixelated / crisp-edges across all major browsers. */
-    .leaflet-image-layer {
+    /* === Crisp-Edges Raster ===
+       Force the browser to render raster pixels 1:1 with no bilinear
+       smoothing/interpolation (which otherwise blurs the coverage PNG and
+       strains the eyes when zoomed in). Applied to the coverage overlay and
+       any imagery/canvas inside the map pane so the GPU compositor (Skia)
+       keeps hard edges instead of resampling. */
+    #map img,
+    #map canvas,
+    .leaflet-image-layer,
+    .leaflet-tile,
+    .leaflet-zoom-animated {
       image-rendering: optimizeSpeed;
       image-rendering: -moz-crisp-edges;
       image-rendering: -o-crisp-edges;
       image-rendering: -webkit-optimize-contrast;
       image-rendering: pixelated;
       image-rendering: crisp-edges;
+    }
+    /* Keep edges hard even mid zoom-animation, where Leaflet scales via transform */
+    .leaflet-image-layer.leaflet-zoom-animated {
+      image-rendering: pixelated;
+      image-rendering: crisp-edges;
+    }
+
+    /* Basemap Style Picker Menu */
+    #style-menu {
+      position: absolute;
+      top: 15px;
+      right: 110px;
+      z-index: 1001;
+      background: rgba(27, 30, 34, 0.92);
+      backdrop-filter: blur(6px);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 6px;
+      padding: 6px;
+      display: none;
+      flex-direction: column;
+      gap: 4px;
+      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
+      min-width: 138px;
+    }
+    #style-menu.open { display: flex; }
+    .style-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 8px;
+      border-radius: 4px;
+      cursor: pointer;
+      color: #E2E8F0;
+      font-size: 12px;
+      white-space: nowrap;
+    }
+    .style-item:hover { background: rgba(49, 130, 206, 0.28); }
+    .style-item.active { background: #3182CE; color: #fff; }
+    .style-item .swatch {
+      width: 16px;
+      height: 16px;
+      border-radius: 3px;
+      border: 1px solid rgba(255, 255, 255, 0.25);
+      flex: 0 0 auto;
     }
   </style>
 </head>
@@ -243,14 +314,24 @@
   <div id="top-right-tools">
     <div class="map-btn" title="Search Location" onclick="searchLoc()"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg></div>
     <div class="map-btn" title="Reset View / Home" onclick="goHome()"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg></div>
-    <div class="map-btn" title="Switch Basemap Layer" onclick="toggleLayer()"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4 3 6v14l6-2 6 2 6-2V4l-6 2-6-2z"/><path d="M9 4v14"/><path d="M15 6v14"/></svg></div>
+    <div class="map-btn" id="style-btn" title="Pilih Gaya Peta" onclick="openStyleMenu()"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4 3 6v14l6-2 6 2 6-2V4l-6 2-6-2z"/><path d="M9 4v14"/><path d="M15 6v14"/></svg></div>
     <div class="compass-dial" title="3D Navigation View">N</div>
+  </div>
+
+  <!-- Basemap Style Picker -->
+  <div id="style-menu">
+    <div class="style-item" data-style="satellite" onclick="switchStyle('satellite')"><span class="swatch" style="background:linear-gradient(135deg,#4a7a3a,#9aa0a6)"></span>Satelit</div>
+    <div class="style-item" data-style="hybrid" onclick="switchStyle('hybrid')"><span class="swatch" style="background:linear-gradient(135deg,#2b3d2b,#cdd6df)"></span>Hibrida</div>
+    <div class="style-item" data-style="osm" onclick="switchStyle('osm')"><span class="swatch" style="background:#e8e4d8"></span>Jalan (OSM)</div>
+    <div class="style-item" data-style="dark" onclick="switchStyle('dark')"><span class="swatch" style="background:#1a1d23"></span>Gelap</div>
+    <div class="style-item" data-style="terrain" onclick="switchStyle('terrain')"><span class="swatch" style="background:linear-gradient(135deg,#d9c9a3,#7a8b5a)"></span>Medan</div>
   </div>
 
   <!-- Bottom Floating Toolbar Pill -->
   <div id="bottom-tools-pill">
     <span title="Contrast / Brightness" style="cursor:pointer"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 3v18"/><path d="M12 3a9 9 0 0 1 0 18z" fill="currentColor" stroke="none"/></svg></span>
     <input type="range" id="opacitySlider" min="0" max="100" value="75" title="Overlay Opacity" oninput="changeOpacity(this.value)">
+    <span id="adaptive-toggle" class="pill-toggle active" title="Opasitas Adaptif (Zoom): turunkan otomatis saat zoom dekat" onclick="toggleAdaptive()">Auto</span>
     <span title="Draw Polygon / Area" style="cursor:pointer"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg></span>
     <span title="Color Palette" style="cursor:pointer"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a9 9 0 1 0 0 18c1.7 0 2-1.2 2-2.2 0-1.2-1-1.4-1-2.6 0-.9.8-1.6 1.7-1.6H17a4 4 0 0 0 4-4c0-5-4.5-9-9-9z"/><circle cx="7.5" cy="11" r="1" fill="currentColor"/><circle cx="11" cy="7.5" r="1" fill="currentColor"/><circle cx="16" cy="8.5" r="1" fill="currentColor"/></svg></span>
     <span title="Code / API" style="cursor:pointer"><code>&lt;/&gt;</code></span>
@@ -264,26 +345,39 @@
   <!-- Bottom Right Coordinates & Scale Indicator -->
   <div id="bottom-right-info">
     <span id="scale-indicator">100.00 m</span>
-    <span id="coord-display">51.717470N -2.482561E</span>
+    <span id="coord-display">6.917464S 107.619123E</span>
     <span title="Toggle Fullscreen" style="cursor:pointer" onclick="toggleFS()"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9V3h6"/><path d="M21 9V3h-6"/><path d="M3 15v6h6"/><path d="M21 15v6h-6"/></svg></span>
   </div>
 
   <script>
     // Initialize Map with Satellite imagery by default
-    var satLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
-      maxZoom: 19,
-      attribution: 'Esri Satellite'
-    });
+    // === Multi-style basemap definitions ===
+    var baseLayers = {
+      satellite: L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+        maxZoom: 19, attribution: 'Esri Satellite'
+      }),
+      hybrid: L.layerGroup([
+        L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom: 19 }),
+        L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}', { maxZoom: 19 })
+      ]),
+      osm: L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 19, attribution: '© OpenStreetMap'
+      }),
+      dark: L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+        maxZoom: 19, attribution: '© OpenStreetMap, © CARTO'
+      }),
+      terrain: L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', {
+        maxZoom: 17, attribution: '© OpenStreetMap, OpenTopoMap'
+      })
+    };
 
-    var osmLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      maxZoom: 19
-    });
+    var activeStyle = 'satellite';
+    var currentBase = baseLayers[activeStyle];
 
-    var currentLayer = satLayer;
     var map = L.map('map', {
-      center: [51.717476, -2.483066],
+      center: [-6.917464, 107.619123],
       zoom: 15,
-      layers: [satLayer],
+      layers: [currentBase],
       zoomControl: false
     });
 
@@ -303,19 +397,72 @@
       }).addTo(map);
       map.fitBounds(bounds);
 
-      // === Blueprint: Adaptive Opacity based on Zoom Level ===
+      // === Adaptive Opacity based on Zoom Level ===
       // Unregister previous zoom listener to avoid stacking handlers
       map.off('zoomend', _onZoomOpacity);
       map.on('zoomend', _onZoomOpacity);
+      // Apply immediately for the (possibly new) zoom after fitBounds
+      _onZoomOpacity();
     }
 
+    // Smoothly fade the coverage overlay as the user zooms in, so dense
+    // rasters stop hiding basemap detail (buildings / roads) at street level.
+    // factor goes 1.0 -> MIN_FACTOR between ZOOM_START and ZOOM_END.
+    var ZOOM_START = 14, ZOOM_END = 18, MIN_FACTOR = 0.30;
+    var adaptiveOpacity = true;
     function _onZoomOpacity() {
       if (!overlay) return;
-      // At street level (zoom > 15), reduce opacity so buildings/roads show through
       var sliderVal = document.getElementById('opacitySlider').value / 100.0;
-      var currentZoom = map.getZoom();
-      var adaptedOp = (currentZoom > 15) ? Math.min(sliderVal, 0.50) : sliderVal;
-      overlay.setOpacity(adaptedOp);
+      if (!adaptiveOpacity) { overlay.setOpacity(sliderVal); return; }
+      var z = map.getZoom();
+      var factor = 1.0;
+      if (z > ZOOM_START) {
+        var t = Math.min(1, (z - ZOOM_START) / (ZOOM_END - ZOOM_START));
+        factor = 1.0 - (1.0 - MIN_FACTOR) * t;
+      }
+      overlay.setOpacity(sliderVal * factor);
+    }
+
+    function toggleAdaptive() {
+      adaptiveOpacity = !adaptiveOpacity;
+      var btn = document.getElementById('adaptive-toggle');
+      btn.classList.toggle('active', adaptiveOpacity);
+      btn.title = 'Opasitas Adaptif (Zoom): ' + (adaptiveOpacity ? 'ON' : 'OFF');
+      if (overlay) {
+        if (adaptiveOpacity) { _onZoomOpacity(); }
+        else { overlay.setOpacity(document.getElementById('opacitySlider').value / 100.0); }
+      }
+    }
+
+    // === Profile: Map State Serialization ===
+    function getMapState() {
+      var c = map.getCenter();
+      return JSON.stringify({
+        basemap: activeStyle,
+        adaptive: adaptiveOpacity,
+        opacity: parseInt(document.getElementById('opacitySlider').value, 10),
+        center: { lat: c.lat, lng: c.lng },
+        zoom: map.getZoom()
+      });
+    }
+    function setBasemap(name) {
+      if (baseLayers[name] && name !== activeStyle) { switchStyle(name); }
+    }
+    function setAdaptive(on) {
+      if (adaptiveOpacity !== !!on) { toggleAdaptive(); }
+    }
+    function applyMapState(s) {
+      if (!s) return;
+      if (s.basemap) { setBasemap(s.basemap); }
+      if (typeof s.adaptive === 'boolean') { setAdaptive(s.adaptive); }
+      if (typeof s.opacity === 'number') {
+        var ov = Math.max(0, Math.min(100, Math.round(s.opacity)));
+        document.getElementById('opacitySlider').value = ov;
+        if (typeof overlay !== 'undefined' && overlay !== null) {
+          if (typeof _onZoomOpacity === 'function') { _onZoomOpacity(); }
+        }
+      }
+      if (s.center && s.zoom) { map.setView([s.center.lat, s.center.lng], s.zoom); }
     }
 
     function placeMarkers(list) {
@@ -352,27 +499,43 @@
     }
 
     function changeOpacity(val) {
-      if (overlay) {
-        overlay.setOpacity(val / 100.0);
-      }
+      // Slider value is already updated by the input event; recompute the
+      // effective opacity (respecting the current zoom adaptation).
+      if (overlay) { _onZoomOpacity(); }
     }
 
-    function toggleLayer() {
-      if (map.hasLayer(satLayer)) {
-        map.removeLayer(satLayer);
-        map.addLayer(osmLayer);
-      } else {
-        map.removeLayer(osmLayer);
-        map.addLayer(satLayer);
+    // === Basemap Style Picker ===
+    function openStyleMenu() {
+      var m = document.getElementById('style-menu');
+      updateStyleMenu();
+      m.classList.toggle('open');
+    }
+    function closeStyleMenu() {
+      document.getElementById('style-menu').classList.remove('open');
+    }
+    function updateStyleMenu() {
+      document.querySelectorAll('#style-menu .style-item').forEach(function (el) {
+        el.classList.toggle('active', el.getAttribute('data-style') === activeStyle);
+      });
+    }
+    function switchStyle(name) {
+      if (!baseLayers[name]) { closeStyleMenu(); return; }
+      if (name !== activeStyle) {
+        map.removeLayer(currentBase);
+        activeStyle = name;
+        currentBase = baseLayers[name];
+        currentBase.addTo(map);
+        updateStyleMenu();
       }
+      closeStyleMenu();
     }
 
     function goHome() {
-      map.setView([51.717476, -2.483066], 15);
+      map.setView([-6.917464, 107.619123], 15);
     }
 
     function searchLoc() {
-      var query = prompt("Enter location (lat, lon or city name):", "51.717476, -2.483066");
+      var query = prompt("Enter location (lat, lon or city name):", "-6.917464, 107.619123");
       if (query) {
         var parts = query.split(",");
         if (parts.length === 2) {
@@ -406,6 +569,17 @@
     });
 
     window.__armedRole = 'tx';
+
+    // Initialize basemap style picker UI
+    updateStyleMenu();
+    document.addEventListener('click', function (e) {
+      var menu = document.getElementById('style-menu');
+      var btn = document.getElementById('style-btn');
+      if (!menu.contains(e.target) && !btn.contains(e.target)) {
+        menu.classList.remove('open');
+      }
+    });
+
     /*__DATA__*/
     if (window.__coverage) { loadCoverage(window.__coverage.dataUri, window.__coverage.bounds); }
     if (window.__markers) { placeMarkers(window.__markers); }

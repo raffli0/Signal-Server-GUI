@@ -26,8 +26,8 @@ _SECTION_ICON = {
 }
 
 
-def _browse(parent, caption: str, filter_: str, save: bool = False) -> Optional[str]:
-    dlg = QFileDialog(parent, caption, "", filter_)
+def _browse(parent, caption: str, filter_: str, start_dir: Optional[str] = None, save: bool = False) -> Optional[str]:
+    dlg = QFileDialog(parent, caption, start_dir or "", filter_)
     if save:
         if dlg.exec() and dlg.selectedFiles():
             return dlg.selectedFiles()[0]
@@ -269,6 +269,15 @@ class ParameterForm(QWidget):
         lbl.setStyleSheet("color: #CBD5E0; font-size: 11px; font-weight: 500;")
         form_layout.addRow(lbl, row_w)
 
+    def _sub_label(self, text: str) -> QLabel:
+        """Small uppercase group divider used inside a merged section."""
+        lbl = QLabel(text.upper())
+        lbl.setStyleSheet(
+            "color: #718096; font-size: 10px; font-weight: 700; "
+            "letter-spacing: 0.5px; padding-top: 6px; padding-bottom: 2px;"
+        )
+        return lbl
+
     def _section(self, key: str, icon: str, title: str, expanded: bool = False) -> QFormLayout:
         sec = CollapsibleSection(key, icon, title, expanded=expanded, parent=self)
         self.layout.addWidget(sec)
@@ -315,7 +324,7 @@ class ParameterForm(QWidget):
         """
         self.setStyleSheet(input_ss)
 
-        # -- 1. Site / Tx
+        # -- 1. Site / Tx  (merged: site + signal + feeder + antenna)
         fl = self._section("tx", _SECTION_ICON["tx"], "Site / Tx", expanded=False)
         self.units = QComboBox(); self.units.addItems(["Metric", "Imperial"])
         self._add_row_with_info(fl, "Units", self.units, "Unit system (Metric / Imperial)")
@@ -333,15 +342,15 @@ class ParameterForm(QWidget):
         self.dem_res = QComboBox(); self.dem_res.addItems(["90 m (dem3)", "30 m (dem1)", "15 m TIF"])
         self._add_row_with_info(fl, "Auto DEM resolution", self.dem_res, "Elevation data resolution")
 
-        # -- 2. Signal
-        fl = self._section("signal", _SECTION_ICON["signal"], "'T' Signal", expanded=False)
+        # Signal
+        fl.addRow(self._sub_label("Signal"))
         self.rf_power = QDoubleSpinBox(); self.rf_power.setRange(0, 1e7); self.rf_power.setValue(100)
         self._add_row_with_info(fl, "RF power (W)", self.rf_power, "Transmitter power output in Watts")
         self.tx_gain = QDoubleSpinBox(); self.tx_gain.setRange(-50, 50); self.tx_gain.setValue(10)
         self._add_row_with_info(fl, "Tx gain (dBi)", self.tx_gain, "Transmitter antenna gain in dBi")
 
-        # -- 3. Feeder
-        fl = self._section("feeder", _SECTION_ICON["feeder"], "Feeder", expanded=False)
+        # Feeder
+        fl.addRow(self._sub_label("Feeder"))
         self.cable_loss = QDoubleSpinBox(); self.cable_loss.setRange(0, 50); self.cable_loss.setValue(0)
         self._add_row_with_info(fl, "Cable loss (dB)", self.cable_loss, "Transmission line / cable loss")
         self.erp_label = QLabel("ERP: - W"); self.erp_label.setStyleSheet("color: #319795; font-size: 11px; font-weight: bold;")
@@ -350,12 +359,14 @@ class ParameterForm(QWidget):
         for w in (self.rf_power, self.tx_gain, self.cable_loss):
             w.valueChanged.connect(self._update_erp)
 
-        # -- 4. Antenna
-        fl = self._section("antenna", _SECTION_ICON["antenna"], "Antenna", expanded=False)
+        # Antenna
+        fl.addRow(self._sub_label("Antenna"))
         self.ant_btn = QPushButton("Select pattern (.az/.el)...")
         self.ant_btn.setStyleSheet(btn_ss)
-        self.ant_path = QLabel("")
-        self.ant_path.setStyleSheet("color: #A0AEC0; font-size: 10px;")
+        self.ant_path = QLineEdit()
+        self.ant_path.setReadOnly(True)
+        self.ant_path.setPlaceholderText("No pattern selected")
+        self.ant_path.setStyleSheet("background: #1B1E22; color: #A0AEC0; border: 1px solid #3F474F; border-radius: 3px; padding: 3px; font-size: 10px;")
         self.ant_btn.clicked.connect(self._pick_antenna)
         fl.addRow(self.ant_btn, self.ant_path)
         self.pol = QComboBox(); self.pol.addItems(["vertical", "horizontal"])
@@ -367,7 +378,7 @@ class ParameterForm(QWidget):
         self.downtilt_dir = QDoubleSpinBox(); self.downtilt_dir.setRange(0, 359); self.downtilt_dir.setValue(0)
         self._add_row_with_info(fl, "Downtilt dir (deg)", self.downtilt_dir, "Downtilt direction angle")
 
-        # -- 5. Mobile / Rx
+        # -- 2. Mobile / Rx
         fl = self._section("rx", _SECTION_ICON["rx"], "Mobile / Rx", expanded=False)
         self.rx_coord = SiteCoordWidget()
         self.rx_coord.set(51.75, -2.10)
@@ -385,7 +396,7 @@ class ParameterForm(QWidget):
         self.rx_thr = QDoubleSpinBox(); self.rx_thr.setRange(-200, 100); self.rx_thr.setValue(-110)
         self._add_row_with_info(fl, "Rx threshold (dBm)", self.rx_thr, "Minimum required signal threshold")
 
-        # -- 6. Model (EXPANDED BY DEFAULT, EXACTLY MATCHING CLOUDRF SCREENSHOT!)
+        # -- 3. Model (EXPANDED BY DEFAULT, EXACTLY MATCHING CLOUDRF SCREENSHOT!)
         fl = self._section("model", _SECTION_ICON["model"], "Model", expanded=True)
         self.model = QComboBox()
         for label, val in params_mod.MODELS:
@@ -413,7 +424,7 @@ class ParameterForm(QWidget):
         self.knife = QCheckBox("Knife-edge diffraction (-ked)")
         self.knife.setVisible(False)
 
-        # -- 7. Environment
+        # -- 4. Environment
         fl = self._section("env", _SECTION_ICON["env"], "Environment", expanded=False)
         self.climate = QComboBox()
         self.climate.addItem("(default)", 0)
@@ -422,8 +433,10 @@ class ParameterForm(QWidget):
         self._add_row_with_info(fl, "Radio climate", self.climate, "Radio climate zone")
         self.clutter_btn = QPushButton("Select clutter (.clt)...")
         self.clutter_btn.setStyleSheet(btn_ss)
-        self.clutter_path = QLabel("")
-        self.clutter_path.setStyleSheet("color: #A0AEC0; font-size: 10px;")
+        self.clutter_path = QLineEdit()
+        self.clutter_path.setReadOnly(True)
+        self.clutter_path.setPlaceholderText("No clutter file")
+        self.clutter_path.setStyleSheet("background: #1B1E22; color: #A0AEC0; border: 1px solid #3F474F; border-radius: 3px; padding: 3px; font-size: 10px;")
         self.clutter_btn.clicked.connect(lambda: self._pick(self.clutter_path, "Clutter (*.clt)"))
         fl.addRow(self.clutter_btn, self.clutter_path)
         self.gc = QDoubleSpinBox(); self.gc.setRange(0, 1000); self.gc.setValue(0)
@@ -433,7 +446,7 @@ class ParameterForm(QWidget):
         self.obstacles.setStyleSheet("background: #1B1E22; color: #E2E8F0; border: 1px solid #3F474F; font-size: 11px;")
         fl.addRow("Obstacles", self.obstacles)
 
-        # -- 8. Output / Engine
+        # -- 5. Output / Engine
         fl = self._section("output", _SECTION_ICON["output"], "Output", expanded=False)
         self.engine = QComboBox(); self.engine.addItems(list(params_mod.ENGINES.keys()))
         self._add_row_with_info(fl, "Engine", self.engine, "Signal-Server engine build")
@@ -441,14 +454,18 @@ class ParameterForm(QWidget):
         self._add_row_with_info(fl, "Terrain source", self.terrain, "Elevation data source format")
         self.sdf_btn = QPushButton("SDF directory...")
         self.sdf_btn.setStyleSheet(btn_ss)
-        self.sdf_path = QLabel("")
-        self.sdf_path.setStyleSheet("color: #A0AEC0; font-size: 10px;")
+        self.sdf_path = QLineEdit()
+        self.sdf_path.setReadOnly(True)
+        self.sdf_path.setPlaceholderText("No SDF directory")
+        self.sdf_path.setStyleSheet("background: #1B1E22; color: #A0AEC0; border: 1px solid #3F474F; border-radius: 3px; padding: 3px; font-size: 10px;")
         self.sdf_btn.clicked.connect(self._pick_dir)
         fl.addRow(self.sdf_btn, self.sdf_path)
         self.lidar_btn = QPushButton("LIDAR file...")
         self.lidar_btn.setStyleSheet(btn_ss)
-        self.lidar_path = QLabel("")
-        self.lidar_path.setStyleSheet("color: #A0AEC0; font-size: 10px;")
+        self.lidar_path = QLineEdit()
+        self.lidar_path.setReadOnly(True)
+        self.lidar_path.setPlaceholderText("No LIDAR file")
+        self.lidar_path.setStyleSheet("background: #1B1E22; color: #A0AEC0; border: 1px solid #3F474F; border-radius: 3px; padding: 3px; font-size: 10px;")
         self.lidar_btn.clicked.connect(lambda: self._pick(self.lidar_path, "LIDAR (*.asc)"))
         fl.addRow(self.lidar_btn, self.lidar_path)
         self.resolution = QComboBox()
@@ -460,12 +477,17 @@ class ParameterForm(QWidget):
         self._add_row_with_info(fl, "Radius (km)", self.radius, "Plot coverage radius in km")
         self.color_btn = QPushButton("Color table...")
         self.color_btn.setStyleSheet(btn_ss)
-        self.color_path = QLabel("")
-        self.color_path.setStyleSheet("color: #A0AEC0; font-size: 10px;")
+        self.color_path = QLineEdit()
+        self.color_path.setReadOnly(True)
+        self.color_path.setPlaceholderText("Default: rainbow.dcf")
+        self.color_path.setStyleSheet("background: #1B1E22; color: #A0AEC0; border: 1px solid #3F474F; border-radius: 3px; padding: 3px; font-size: 10px;")
         default_color = os.path.join(self.ss_root, "color", "rainbow.dcf") if self.ss_root else ""
         if default_color and os.path.exists(default_color):
             self.color_path.setText(default_color)
-        self.color_btn.clicked.connect(lambda: self._pick(self.color_path, "Color (*.dcf *.scf)"))
+        self.color_btn.clicked.connect(
+            lambda: self._pick(
+                self.color_path, "Color (*.dcf *.scf)",
+                os.path.join(self.ss_root, "color") if self.ss_root else None))
         fl.addRow(self.color_btn, self.color_path)
         self.dbm_color = QCheckBox("dBm colour scale")
         self.dbm_color.setChecked(True)
@@ -590,8 +612,8 @@ class ParameterForm(QWidget):
         # Keep lock button interactive
         self.btn_lock.setEnabled(True)
 
-    def _pick(self, label: QLabel, filter_: str) -> None:
-        p = _browse(self, "Select file", filter_)
+    def _pick(self, label: QLabel, filter_: str, start_dir: Optional[str] = None) -> None:
+        p = _browse(self, "Select file", filter_, start_dir)
         if p:
             label.setText(p)
 
@@ -674,5 +696,61 @@ class ParameterForm(QWidget):
             "dem_resolution": dem_res_map[self.dem_res.currentIndex()],
         }
         return d
+
+    def load(self, d: dict) -> None:
+        """Restore all form fields from a previously saved ``collect()`` dict."""
+        if not isinstance(d, dict):
+            return
+        # Site / Tx
+        self.units.setCurrentText("Metric" if d.get("units", "metric") == "metric" else "Imperial")
+        self.tx_coord.set(d.get("tx_lat"), d.get("tx_lon"))
+        self.tx_height.setValue(float(d.get("tx_height", 30)))
+        self.frequency.setValue(float(d.get("frequency_mhz", 900)))
+        dem_rev = {3: 0, 1: 1, 15: 2}
+        self.dem_res.setCurrentIndex(dem_rev.get(int(d.get("dem_resolution", 3)), 0))
+        # Signal
+        self.rf_power.setValue(float(d.get("rf_power_w", 100)))
+        self.tx_gain.setValue(float(d.get("tx_gain_dbi", 10)))
+        # Feeder
+        self.cable_loss.setValue(float(d.get("cable_loss_db", 0)))
+        self._update_erp()
+        # Antenna
+        self.ant_path.setText(d.get("antenna_basename") or "")
+        self.pol.setCurrentText(d.get("polarization", "vertical"))
+        self.azimuth.setValue(float(d.get("azimuth_deg", 0)))
+        self.downtilt.setValue(float(d.get("downtilt_deg", 0)))
+        self.downtilt_dir.setValue(float(d.get("downtilt_dir_deg", 0)))
+        # Mobile / Rx
+        self.rx_coord.set(d.get("rx_lat"), d.get("rx_lon"))
+        self.rx_height.setValue(float(d.get("rx_height", 1.5)))
+        self.rx_gain.setValue(float(d.get("rx_gain_dbd", 0)))
+        self.rx_thr.setValue(float(d.get("rx_threshold_dbm", -110)))
+        # Model
+        model_idx = self.model.findData(int(d.get("model_pm", 3)))
+        if model_idx >= 0:
+            self.model.setCurrentIndex(model_idx)
+        self.reliability.setCurrentText(f"{int(d.get('reliability', 50))}%")
+        ctx_map = {1: "Urban", 2: "Suburban", 3: "Rural"}
+        self.context.setCurrentText(ctx_map.get(int(d.get("context_pe", 3)), "Average / Mixed"))
+        self.diffraction.setCurrentText("Knife-edge (KED)" if d.get("knife_edge") else "Off (LOS)")
+        # Environment
+        climate = d.get("climate_zone")
+        if climate is not None:
+            self.climate.setCurrentData(climate)
+        self.clutter_path.setText(d.get("clutter_file") or "")
+        self.gc.setValue(float(d.get("ground_clutter", 0)))
+        self.obstacles.setPlainText("\n".join(str(o) for o in d.get("obstacles", [])))
+        # Output / Engine
+        self.engine.setCurrentText(d.get("engine", "Standard"))
+        self.terrain.setCurrentIndex(1 if d.get("terrain_source") == "lidar" else 0)
+        self.sdf_path.setText(d.get("sdf_dir") or "")
+        self.lidar_path.setText(d.get("lidar_file") or "")
+        res = d.get("resolution", 1200)
+        res_idx = self.resolution.findData(res)
+        if res_idx >= 0:
+            self.resolution.setCurrentIndex(res_idx)
+        self.radius.setValue(float(d.get("radius", 30)))
+        self.color_path.setText(d.get("color_file") or "")
+        self.dbm_color.setChecked(bool(d.get("dbm_color", True)))
 
 

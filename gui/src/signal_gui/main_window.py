@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
     QPushButton, QProgressBar, QLabel, QFileDialog, QInputDialog, QMessageBox,
     QScrollArea, QApplication, QFrame
 )
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 
 from . import backend, params as params_mod
 from .widgets import ParameterForm
@@ -140,12 +140,26 @@ class MainWindow(QMainWindow):
         rl.addWidget(self.status)
 
         # Horizontal Splitter between Left Sidebar & Right Map
+        self._sidebar = sidebar_container
         split = QSplitter(Qt.Orientation.Horizontal)
         split.addWidget(sidebar_container)
         split.addWidget(right)
-        split.setStretchFactor(0, 2)
-        split.setStretchFactor(1, 5)
+        # Keep the sidebar clearly narrower than the map viewport by default;
+        # its max width is recomputed responsively in _apply_responsive_width().
+        split.setStretchFactor(0, 1)
+        split.setStretchFactor(1, 4)
+        split.splitterMoved.connect(self._on_splitter_moved)
         central_layout.addWidget(split, 1)
+        self._splitter = split
+
+        # Debounced map re-layout after container resizes.
+        self._resize_timer = QTimer(self)
+        self._resize_timer.setSingleShot(True)
+        self._resize_timer.setInterval(120)
+        self._resize_timer.timeout.connect(self.map.invalidate_size)
+
+        # Apply an initial responsive sidebar width.
+        self._apply_responsive_width()
 
         self.setCentralWidget(central_w)
 
@@ -153,6 +167,8 @@ class MainWindow(QMainWindow):
         self.form.start_requested.connect(self.start)
         self.form.pick_requested.connect(self.map.arm)
         self.form.export_requested.connect(self.export_model)
+        self.header.save_profile_requested.connect(self.save_profile)
+        self.header.load_profile_requested.connect(self.load_profile)
         self.map.picked.connect(self._on_picked)
         self.form.tx_changed.connect(self._on_tx_coord_changed)
         self.form.rx_changed.connect(self._on_rx_coord_changed)
@@ -166,6 +182,29 @@ class MainWindow(QMainWindow):
             self.clear_propagation()
         else:
             self.form.toggle_section(key)
+
+    # ------------------------------------------------------------------ responsive
+    def _apply_responsive_width(self) -> None:
+        """Clamp the sidebar width to a fraction of the window on any size.
+
+        The sidebar stays clearly narrower than the map but never so small that
+        the form inputs overflow. The user can still drag the splitter.
+        """
+        w = self.width()
+        side_max = max(240, min(380, int(w * 0.32)))
+        self._sidebar.setMaximumWidth(side_max)
+        # Keep the map comfortably larger than the sidebar on small screens.
+        if w < 720:
+            self._sidebar.setMaximumWidth(max(200, int(w * 0.45)))
+
+    def _on_splitter_moved(self, *_args) -> None:
+        # Re-layout Leaflet after the container size changes (no window resize).
+        self._resize_timer.start()
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._apply_responsive_width()
+        self._resize_timer.start()
 
 
     def _dem_spec(self, p: dict) -> dict | None:
@@ -236,7 +275,7 @@ class MainWindow(QMainWindow):
         self.progress.setVisible(False)
         self.form.btn_run.setEnabled(True)
         if ok and result.get("bbox"):
-            self.map.show_coverage(result["png"], result["bbox"])
+            self.map.show_coverage(result["png"], result["bbox"], self.form.color_path.text())
             self._last_result = result
             self.status.setText("Done. Coverage shown on map.")
             if result.get("kml"):
@@ -292,6 +331,49 @@ class MainWindow(QMainWindow):
         except (ValueError, TypeError):
             return
         self.map.set_rx(lat, lon)
+
+    # ------------------------------------------------------------------ profile
+    def save_profile(self) -> None:
+        """Serialize the current form + map view into a JSON profile file."""
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Save Profile", "profile.json", "JSON (*.json)")
+        if not path:
+            return
+        form = self.form.collect()
+
+        def _write(map_state):
+            profile = {"version": 1, "form": form, "map": map_state or {}}
+            try:
+                with open(path, "w", encoding="utf-8") as fh:
+                    json.dump(profile, fh, indent=2)
+            except OSError as exc:
+                QMessageBox.warning(self, "Save Profile", f"Could not write file:\n{exc}")
+                return
+            self.status.setText(f"Profile saved: {os.path.basename(path)}")
+
+        self.map.get_state(_write)
+
+    def load_profile(self) -> None:
+        """Restore form + map view state from a JSON profile file."""
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Load Profile", "", "JSON (*.json)")
+        if not path:
+            return
+        try:
+            with open(path, "r", encoding="utf-8") as fh:
+                profile = json.load(fh)
+        except (OSError, ValueError) as exc:
+            QMessageBox.warning(self, "Load Profile", f"Could not read profile:\n{exc}")
+            return
+
+        form = profile.get("form")
+        if isinstance(form, dict):
+            self.form.load(form)
+            # Refresh map markers from the restored coordinates.
+            self._on_tx_coord_changed()
+            self._on_rx_coord_changed()
+        self.map.apply_state(profile.get("map") or {})
+        self.status.setText(f"Profile loaded: {os.path.basename(path)}")
 
     def stop(self) -> None:
         if self._worker:

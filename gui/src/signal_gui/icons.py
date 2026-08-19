@@ -72,6 +72,11 @@ _ICONS: dict[str, str] = {
         '<path d="M7 11l5 5 5-5"/>'
         '<path d="M5 21h14"/>'
     ),
+    "upload": (
+        '<path d="M12 21V9"/>'
+        '<path d="M7 13l5-5 5 5"/>'
+        '<path d="M5 3h14"/>'
+    ),
     "user": (
         '<circle cx="12" cy="8" r="4"/>'
         '<path d="M4 21c0-4 4-6.5 8-6.5s8 2.5 8 6.5"/>'

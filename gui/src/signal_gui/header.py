@@ -21,6 +21,8 @@ class CloudRFHeader(QFrame):
     """Header bar with CloudRF branding, preset bar, section icons, and version tags."""
 
     section_clicked = Signal(str)  # Emits key of section to expand/scroll to
+    save_profile_requested = Signal()
+    load_profile_requested = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -119,9 +121,6 @@ class CloudRFHeader(QFrame):
         # 3. Center Section Icons
         icons = [
             ("tx", "Site / Tx"),
-            ("signal", "Signal"),
-            ("feeder", "Feeder"),
-            ("antenna", "Antenna"),
             ("rx", "Mobile / Rx"),
             ("model", "Model"),
             ("env", "Environment"),
@@ -155,6 +154,53 @@ class CloudRFHeader(QFrame):
             icons_layout.addWidget(btn)
 
         layout.addLayout(icons_layout)
+
+        # Separator line
+        sep3 = QFrame()
+        sep3.setFrameShape(QFrame.Shape.VLine)
+        sep3.setStyleSheet("color: #373D44;")
+        layout.addWidget(sep3)
+
+        # Profile Save / Load (JSON)
+        self.btn_save_profile = QPushButton()
+        self.btn_save_profile.setIcon(svg_icon("download", 14, "#E2E8F0"))
+        self.btn_save_profile.setText(" Save")
+        self.btn_save_profile.setToolTip("Save profile (JSON)")
+        self.btn_save_profile.setFixedHeight(26)
+        self.btn_save_profile.setStyleSheet("""
+            QPushButton {
+                background: #2D3748;
+                color: #E2E8F0;
+                border: 1px solid #4A5568;
+                border-radius: 4px;
+                font-size: 12px;
+                font-weight: 600;
+                padding: 0 8px;
+            }
+            QPushButton:hover { background: #3182CE; color: #FFFFFF; }
+        """)
+        self.btn_save_profile.clicked.connect(lambda: self.save_profile_requested.emit())
+        layout.addWidget(self.btn_save_profile)
+
+        self.btn_load_profile = QPushButton()
+        self.btn_load_profile.setIcon(svg_icon("upload", 14, "#E2E8F0"))
+        self.btn_load_profile.setText(" Load")
+        self.btn_load_profile.setToolTip("Load profile (JSON)")
+        self.btn_load_profile.setFixedHeight(26)
+        self.btn_load_profile.setStyleSheet("""
+            QPushButton {
+                background: #2D3748;
+                color: #E2E8F0;
+                border: 1px solid #4A5568;
+                border-radius: 4px;
+                font-size: 12px;
+                font-weight: 600;
+                padding: 0 8px;
+            }
+            QPushButton:hover { background: #3182CE; color: #FFFFFF; }
+        """)
+        self.btn_load_profile.clicked.connect(lambda: self.load_profile_requested.emit())
+        layout.addWidget(self.btn_load_profile)
 
         # Spacer to push right elements
         layout.addStretch()
