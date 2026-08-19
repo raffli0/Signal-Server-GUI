@@ -194,7 +194,8 @@ class MainWindow(QMainWindow):
             lambda: self.map.set_site_labels(tx=self.form.tx_name.text().strip() or None))
         self.form.rx_name.textChanged.connect(
             lambda: self.map.set_site_labels(rx=self.form.rx_name.text().strip() or None))
-        self.form.demnas_path.textChanged.connect(self._save_demnas_config)
+        self.form.demnas_dir.textChanged.connect(self._save_demnas_config)
+        self.form.demnas_live.toggled.connect(self._update_demnas_live)
         self._load_demnas_config()
 
         # Place initial Tx/Rx markers from the default form values.
@@ -208,7 +209,7 @@ class MainWindow(QMainWindow):
         return os.path.join(self.cache_dir, "demnas_config.json")
 
     def _load_demnas_config(self) -> None:
-        """Restore the last-used DEMNAS .tif path so it persists across runs."""
+        """Restore the last-used DEMNAS folder so it persists across runs."""
         path = self._demnas_config_path()
         if not os.path.exists(path):
             return
@@ -217,20 +218,56 @@ class MainWindow(QMainWindow):
                 data = json.load(fh)
         except (OSError, ValueError):
             return
-        tif = data.get("demnas_path")
-        if tif and os.path.exists(tif):
-            self.form.demnas_path.setText(tif)
+        folder = data.get("demnas_dir")
+        if folder and os.path.isdir(folder):
+            self.form.demnas_dir.setText(folder)
+        self._update_demnas_live()
 
     def _save_demnas_config(self) -> None:
-        tif = self.form.demnas_path.text().strip()
-        if not tif:
+        folder = self.form.demnas_dir.text().strip()
+        if not folder:
             return
         path = self._demnas_config_path()
         try:
             with open(path, "w", encoding="utf-8") as fh:
-                json.dump({"demnas_path": tif}, fh)
+                json.dump({"demnas_dir": folder}, fh)
         except OSError:
             pass
+        self._update_demnas_live()
+
+    def _update_demnas_live(self) -> None:
+        """Live (toggleable) coverage indicator for the selected DEMNAS folder."""
+        form = self.form
+        if form.dem_source.currentIndex() != 1:
+            form.set_demnas_status("idle", "DEMNAS: online aktif")
+            return
+        if not form.demnas_live.isChecked():
+            form.set_demnas_status("idle", "DEMNAS: live check OFF")
+            return
+        folder = form.demnas_dir.text().strip()
+        if not folder or not os.path.isdir(folder):
+            form.set_demnas_status("idle", "DEMNAS: pilih folder")
+            return
+        tx = form.tx_coord.get()
+        if not tx:
+            form.set_demnas_status("idle", "DEMNAS: tunggu koordinat Tx")
+            return
+        try:
+            from . import dem_convert as dc
+            vrt = dc._demnas_vrt(folder, self.cache_dir)
+            lat, lon = tx
+            dc._assert_covers(vrt, lat, lon)
+            elev = dc._sample_elevation(vrt, lat, lon)
+            if elev is None:
+                form.set_demnas_status(
+                    "bad", f"DEMNAS: ✗ void di Tx ({lat:.3f}, {lon:.3f})"
+                )
+            else:
+                form.set_demnas_status(
+                    "ok", f"DEMNAS: ✓ Tx ({lat:.3f}, {lon:.3f}) elev {elev:.0f} m"
+                )
+        except Exception as exc:  # noqa: BLE001 - surface any gdal/IO issue as red
+            form.set_demnas_status("bad", f"DEMNAS: ✗ {exc}")
 
     def _on_header_section_clicked(self, key: str):
         if key == "clear":
@@ -263,13 +300,13 @@ class MainWindow(QMainWindow):
 
 
     def _dem_spec(self, p: dict) -> dict | None:
-        # ---- Offline: local DEMNAS .tif (no network) ----
+        # ---- Offline: local DEMNAS folder (no network) ----
         if p.get("dem_source") == "offline":
-            tif = p.get("demnas_path")
-            if not tif or not os.path.exists(tif):
+            folder = p.get("demnas_dir")
+            if not folder or not os.path.isdir(folder):
                 raise RuntimeError(
-                    "Mode Offline membutuhkan file DEMNAS .tif. "
-                    "Pilih file di baris 'DEMNAS .tif' (bagian Output)."
+                    "Mode Offline membutuhkan folder DEMNAS (.tif). "
+                    "Pilih folder di baris 'DEMNAS folder' (bagian Output)."
                 )
             res = int(p.get("dem_resolution", 3))
             if res == 15:
@@ -282,7 +319,7 @@ class MainWindow(QMainWindow):
             mode = "demnas_lidar" if engine == "LIDAR" else "demnas_sdf"
             return {
                 "mode": mode,
-                "tif": tif,
+                "folder": folder,
                 "engine": engine,
                 "ppd": int(p.get("resolution", 1200)),
                 "lat_lo": tx_lat - lat_deg, "lat_hi": tx_lat + lat_deg,
@@ -406,6 +443,7 @@ class MainWindow(QMainWindow):
             return
         self.map.set_tx(lat, lon)
         self.status.setText(f"Tx set: {lat:.5f}, {lon:.5f}")
+        self._update_demnas_live()
 
     def _on_rx_coord_changed(self) -> None:
         try:

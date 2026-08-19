@@ -367,8 +367,75 @@ def _gdal_extent(tif_path: str) -> tuple[float, float, float, float]:
     raise DemResolveError(f"Cannot read extent of {tif_path}")
 
 
-def demnas_tif_to_sdf(
-    tif_path: str,
+def _collect_demnas_tifs(folder: str) -> list[str]:
+    """Return every DEMNAS ``.tif``/``.tiff`` tile under ``folder`` (recursive)."""
+    found: list[str] = []
+    for root, _dirs, files in os.walk(folder):
+        for f in files:
+            low = f.lower()
+            if low.endswith(".tif") or low.endswith(".tiff"):
+                found.append(os.path.join(root, f))
+    return sorted(found)
+
+
+def _demnas_vrt(folder: str, cache_dir: str) -> str:
+    """Merge all DEMNAS ``.tif`` tiles in ``folder`` into one cached VRT.
+
+    The VRT is keyed by the folder path so a different folder (or a changed
+    selection) never reuses a stale virtual mosaic. The VRT itself is virtual
+    -- ``gdalwarp`` only reads the tiles covering the requested clip window.
+    """
+    key = hashlib.md5(os.path.abspath(folder).encode("utf-8")).hexdigest()[:10]
+    vrt_dir = _cache_sub(cache_dir, "demnas_vrt")
+    vrt = os.path.join(vrt_dir, f"{key}.vrt")
+    if os.path.exists(vrt) and os.path.getsize(vrt) > 0:
+        return vrt
+    tifs = _collect_demnas_tifs(folder)
+    if not tifs:
+        raise DemResolveError(
+            f"Folder DEMNAS '{folder}' tidak berisi file .tif/.tiff."
+        )
+    lst = os.path.join(vrt_dir, f"{key}.txt")
+    with open(lst, "w") as fh:
+        fh.write("\n".join(tifs))
+    # Force WGS84 so downstream sampling (gdallocationinfo -wgs84) and any
+    # per-tile reprojection are unambiguous; DEMNAS tiles are always EPSG:4326.
+    _run(["gdalbuildvrt", "-a_srs", "EPSG:4326", "-input_file_list", lst, vrt])
+    return vrt
+
+
+def _sample_elevation(vrt: str, lat: float, lon: float) -> Optional[float]:
+    """Sample the DEMNAS elevation (m) at (lat, lon); None if void/nodata."""
+    out = subprocess.run(
+        ["gdallocationinfo", "-valonly", "-wgs84", vrt, str(lon), str(lat)],
+        capture_output=True, text=True,
+    )
+    if out.returncode != 0:
+        return None
+    txt = out.stdout.strip()
+    if not txt:
+        return None
+    try:
+        return float(txt)
+    except ValueError:
+        return None
+
+
+def _assert_covers(vrt: str, lat: float, lon: float) -> None:
+    """Raise if the DEMNAS mosaic does not span the point (lat, lon)."""
+    minx, miny, maxx, maxy = _gdal_extent(vrt)
+    eps = 1e-3
+    if not (minx - eps <= lon <= maxx + eps
+            and miny - eps <= lat <= maxy + eps):
+        raise DemResolveError(
+            f"DEMNAS tidak mencakup lokasi ({lat:.4f}, {lon:.4f}). "
+            f"Pastikan folder DEMNAS mencakup area ini (mis. seluruh "
+            f"Indonesia)."
+        )
+
+
+def demnas_folder_to_sdf(
+    folder: str,
     cache_dir: str,
     srtm2sdf_exe: Optional[str],
     engine: str,
@@ -376,26 +443,29 @@ def demnas_tif_to_sdf(
     center_lat: Optional[float] = None,
     center_lon: Optional[float] = None,
 ) -> str:
-    """Convert a local DEMNAS ``.tif`` to SPLAT ``.sdf`` for offline use.
+    """Convert a local DEMNAS folder (``.tif`` tiles) to SPLAT ``.sdf``.
 
-    The ``.tif`` is reprojected to EPSG:4326, clipped to an integer-degree
-    aligned bounding box covering the run area, split into 1-degree SRTM
-    ``.hgt`` tiles, and each is run through ``srtm2sdf``. Results accumulate
-    in ``cache/dem/sdf/demnas`` (or ``demnas_hd``) so a region is processed
-    only once. Coverage of the transmitter is guaranteed by construction
-    (we clip from the source), provided the source actually spans it.
+    All tiles are merged into a VRT, reprojected to EPSG:4326, clipped to an
+    integer-degree aligned bounding box covering the run area, split into
+    1-degree SRTM ``.hgt`` tiles, and each is run through ``srtm2sdf``. Results
+    accumulate in ``cache/dem/sdf/demnas`` (or ``demnas_hd``) keyed by the
+    folder, so a region is processed only once. Coverage of the transmitter
+    is verified against the mosaic before conversion.
     """
     if not srtm2sdf_exe or not os.path.exists(srtm2sdf_exe):
         raise DemResolveError(
             f"srtm2sdf binary not found ({srtm2sdf_exe}); cannot build "
             f"offline SDF terrain."
         )
+    vrt = _demnas_vrt(folder, cache_dir)
+    if center_lat is not None and center_lon is not None:
+        _assert_covers(vrt, center_lat, center_lon)
     hd = engine == "HD"
     tile_size = 3601 if hd else 1201
     res_deg = 1.0 / (tile_size - 1)
-    # Namespace the cache by the source file so swapping DEMNAS files never
-    # reuses stale .sdf tiles produced from a different dataset.
-    key = hashlib.md5(os.path.abspath(tif_path).encode("utf-8")).hexdigest()[:10]
+    # Namespace the cache by the source folder so swapping DEMNAS datasets
+    # never reuses stale .sdf tiles produced from a different mosaic.
+    key = hashlib.md5(os.path.abspath(folder).encode("utf-8")).hexdigest()[:10]
     base = f"demnas_hd_{key}" if hd else f"demnas_{key}"
     raw_dir = _cache_sub(cache_dir, os.path.join("raw", base))
     sdf_dir = _cache_sub(cache_dir, os.path.join("sdf", base))
@@ -412,7 +482,7 @@ def demnas_tif_to_sdf(
         "gdalwarp", "-t_srs", "EPSG:4326",
         "-te", str(ilon_lo), str(ilat_lo), str(ilon_hi), str(ilat_hi),
         "-tr", str(res_deg), str(res_deg), "-r", "bilinear", "-overwrite",
-        tif_path, clipped,
+        vrt, clipped,
     ])
 
     # Split into 1-degree SRTM .hgt tiles, one per cell, named by the
@@ -437,44 +507,33 @@ def demnas_tif_to_sdf(
                 hgt_files.append(out_hgt)
     if not hgt_files:
         raise DemResolveError(
-            "Gagal mengonversi DEMNAS .tif menjadi .hgt (periksa CRS/proyeksi "
+            "Gagal mengonversi DEMNAS menjadi .hgt (periksa CRS/proyeksi "
             "file)."
         )
     for hgt in sorted(hgt_files):
         convert_hgt_to_sdf(srtm2sdf_exe, hgt, sdf_dir)
-
-    if center_lat is not None and center_lon is not None:
-        minx, miny, maxx, maxy = _gdal_extent(tif_path)
-        eps = 1e-3
-        if not (minx - eps <= center_lon <= maxx + eps
-                and miny - eps <= center_lat <= maxy + eps):
-            raise DemResolveError(
-                f"DEMNAS .tif tidak mencakup lokasi ({center_lat:.4f}, "
-                f"{center_lon:.4f}). Pastikan file DEMNAS mencakup area ini "
-                f"(mis. seluruh Indonesia)."
-            )
     return sdf_dir
 
 
-def demnas_tif_to_asc(
-    tif_path: str,
+def demnas_folder_to_asc(
+    folder: str,
     cache_dir: str,
     lat_lo: float, lat_hi: float, lon_lo: float, lon_hi: float,
     ppd: int = 1200,
 ) -> str:
-    """Convert a local DEMNAS ``.tif`` to a SPLAT LIDAR ``.asc`` (offline).
+    """Convert a local DEMNAS folder (``.tif`` tiles) to a LIDAR ``.asc``.
 
-    The ``.tif`` is reprojected to EPSG:4326 and clipped to the run bounding
-    box, resampled to roughly the engine's pixels-per-tile (``ppd``) so the
-    file stays small and fast to load (the engine resamples to its own output
-    grid anyway). The ASCII grid is written manually (not via
-    ``gdal_translate -of AAIGrid``) because Signal-Server's LIDAR loader
-    (``tile_load_lidar``) parses the header with a strict ``fscanf`` that
-    expects an *integer* ``NODATA_value``; GDAL emits it as a float (e.g.
-    ``-3.402823e+38`` for DEMNAS voids) which makes the parse fail.
+    The tiles are merged into a VRT, reprojected to EPSG:4326 and clipped to
+    the run bounding box, resampled to roughly the engine's pixels-per-tile
+    (``ppd``) so the file stays small and fast to load. The ASCII grid is
+    written manually (not via ``gdal_translate -of AAIGrid``) because
+    Signal-Server's LIDAR loader parses the header with a strict ``fscanf``
+    that expects an *integer* ``NODATA_value``; GDAL emits it as a float.
     """
     from osgeo import gdal  # local import; only needed here
     import numpy as np
+
+    vrt = _demnas_vrt(folder, cache_dir)
 
     # Resample so the grid is ~ppd cells across the (larger) span. This bounds
     # the file size regardless of how fine the source DEMNAS DEM actually is.
@@ -487,7 +546,7 @@ def demnas_tif_to_asc(
         "gdalwarp", "-t_srs", "EPSG:4326",
         "-te", str(lon_lo), str(lat_lo), str(lon_hi), str(lat_hi),
         "-tr", str(cellsize_deg), str(cellsize_deg), "-r", "bilinear", "-overwrite",
-        tif_path, clipped,
+        vrt, clipped,
     ])
 
     ds = gdal.Open(clipped)

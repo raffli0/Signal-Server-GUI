@@ -481,19 +481,30 @@ class ParameterForm(QWidget):
             fl, "DEM source", self.dem_source,
             "Sumber elevasi: Online (unduh Viewfinder SRTM) atau Offline (file DEMNAS .tif lokal, tanpa internet)")
         demnas_row = QWidget()
-        demnas_h = QHBoxLayout(demnas_row)
-        demnas_h.setContentsMargins(0, 0, 0, 0)
-        demnas_h.setSpacing(6)
-        self.demnas_btn = QPushButton("DEMNAS .tif...")
+        dv = QVBoxLayout(demnas_row)
+        dv.setContentsMargins(0, 0, 0, 0)
+        dv.setSpacing(4)
+        demnas_top = QHBoxLayout()
+        demnas_top.setContentsMargins(0, 0, 0, 0)
+        demnas_top.setSpacing(6)
+        self.demnas_btn = QPushButton("DEMNAS folder...")
         self.demnas_btn.setStyleSheet(btn_ss)
-        self.demnas_path = QLineEdit()
-        self.demnas_path.setReadOnly(True)
-        self.demnas_path.setPlaceholderText("Pilih file DEMNAS .tif")
-        self.demnas_path.setStyleSheet("background: #1B1E22; color: #A0AEC0; border: 1px solid #3F474F; border-radius: 3px; padding: 3px; font-size: 10px;")
-        self.demnas_btn.clicked.connect(lambda: self._pick(self.demnas_path, "DEMNAS (*.tif *.tiff)"))
-        demnas_h.addWidget(self.demnas_btn)
-        demnas_h.addWidget(self.demnas_path, 1)
-        demnas_lbl = QLabel("DEMNAS .tif")
+        self.demnas_dir = QLineEdit()
+        self.demnas_dir.setReadOnly(True)
+        self.demnas_dir.setPlaceholderText("Pilih folder DEMNAS (.tif)")
+        self.demnas_dir.setStyleSheet("background: #1B1E22; color: #A0AEC0; border: 1px solid #3F474F; border-radius: 3px; padding: 3px; font-size: 10px;")
+        self.demnas_btn.clicked.connect(self._pick_demnas_folder)
+        demnas_top.addWidget(self.demnas_btn)
+        demnas_top.addWidget(self.demnas_dir, 1)
+        self.demnas_live = QCheckBox("Live check")
+        self.demnas_live.setChecked(True)
+        self.demnas_live.setStyleSheet("color: #CBD5E0; font-size: 10px;")
+        demnas_top.addWidget(self.demnas_live)
+        dv.addLayout(demnas_top)
+        self.demnas_status = QLabel("DEMNAS: –")
+        self.demnas_status.setStyleSheet("color: #718096; font-size: 10px; padding: 2px 0;")
+        dv.addWidget(self.demnas_status)
+        demnas_lbl = QLabel("DEMNAS folder")
         demnas_lbl.setStyleSheet("color: #CBD5E0; font-size: 11px; font-weight: 500;")
         fl.addRow(demnas_lbl, demnas_row)
         self.dem_source.currentTextChanged.connect(self._update_demnas_visibility)
@@ -679,7 +690,25 @@ class ParameterForm(QWidget):
     def _update_demnas_visibility(self) -> None:
         offline = self.dem_source.currentIndex() == 1
         self.demnas_btn.setVisible(offline)
-        self.demnas_path.setVisible(offline)
+        self.demnas_dir.setVisible(offline)
+        self.demnas_live.setVisible(offline)
+        self.demnas_status.setVisible(offline)
+        if not offline:
+            self.set_demnas_status("idle", "DEMNAS: online aktif")
+
+    def _pick_demnas_folder(self) -> None:
+        folder = QFileDialog.getExistingDirectory(
+            self, "Pilih folder DEMNAS", self.demnas_dir.text() or os.path.expanduser("~")
+        )
+        if folder:
+            self.demnas_dir.setText(folder)
+
+    def set_demnas_status(self, state: str, text: str) -> None:
+        colors = {"ok": "#2ECC71", "bad": "#E53E3E", "idle": "#718096"}
+        self.demnas_status.setStyleSheet(
+            f"color: {colors.get(state, '#718096')}; font-size: 10px; padding: 2px 0;"
+        )
+        self.demnas_status.setText(text)
 
     def _update_erp(self) -> None:
         erp = params_mod.compute_erp(
@@ -742,7 +771,7 @@ class ParameterForm(QWidget):
             "obstacles": list(params_mod.iter_obstacles(self.obstacles.toPlainText())),
             "engine": self.engine.currentText(),
             "dem_source": "offline" if self.dem_source.currentIndex() == 1 else "online",
-            "demnas_path": self.demnas_path.text().strip() or None,
+            "demnas_dir": self.demnas_dir.text().strip() or None,
             "terrain_source": "lidar" if self.terrain.currentText().startswith("LIDAR") else "sdf",
             "sdf_dir": self.sdf_path.text() or None,
             "lidar_file": self.lidar_path.text() or None,
@@ -804,7 +833,7 @@ class ParameterForm(QWidget):
         # Output / Engine
         self.engine.setCurrentText(d.get("engine", "Standard"))
         self.dem_source.setCurrentIndex(1 if d.get("dem_source") == "offline" else 0)
-        self.demnas_path.setText(d.get("demnas_path") or "")
+        self.demnas_dir.setText(d.get("demnas_dir") or "")
         self._update_demnas_visibility()
         self.terrain.setCurrentIndex(1 if d.get("terrain_source") == "lidar" else 0)
         self.sdf_path.setText(d.get("sdf_dir") or "")

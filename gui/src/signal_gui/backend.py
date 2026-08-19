@@ -100,9 +100,12 @@ class RunWorker(QThread):
         clon = float(p.get("tx_lon") if p.get("tx_lon") is not None else (spec["lon_lo"] + spec["lon_hi"]) / 2.0)
         mode = spec.get("mode", "auto")
         if mode == "demnas_sdf":
-            self.progress.emit("Menyiapkan DEMNAS .tif -> SDF (offline) ...")
-            sdf_dir = dem_convert.demnas_tif_to_sdf(
-                spec["tif"], spec["cache_dir"], sdf_exe, engine,
+            self.progress.emit("Menyiapkan DEMNAS (folder) -> SDF (offline) ...")
+            vrt = dem_convert._demnas_vrt(spec["folder"], spec["cache_dir"])
+            dem_convert._assert_covers(vrt, clat, clon)
+            self._log_demnas_elevation(vrt, clat, clon)
+            sdf_dir = dem_convert.demnas_folder_to_sdf(
+                spec["folder"], spec["cache_dir"], sdf_exe, engine,
                 spec["lat_lo"], spec["lat_hi"], spec["lon_lo"], spec["lon_hi"],
                 center_lat=clat, center_lon=clon,
             )
@@ -115,9 +118,12 @@ class RunWorker(QThread):
             self._require_sdf_variant(p, sdf_dir)
             return
         if mode == "demnas_lidar":
-            self.progress.emit("Menyiapkan DEMNAS .tif -> LIDAR .asc (offline) ...")
-            asc = dem_convert.demnas_tif_to_asc(
-                spec["tif"], spec["cache_dir"],
+            self.progress.emit("Menyiapkan DEMNAS (folder) -> LIDAR .asc (offline) ...")
+            vrt = dem_convert._demnas_vrt(spec["folder"], spec["cache_dir"])
+            dem_convert._assert_covers(vrt, clat, clon)
+            self._log_demnas_elevation(vrt, clat, clon)
+            asc = dem_convert.demnas_folder_to_asc(
+                spec["folder"], spec["cache_dir"],
                 spec["lat_lo"], spec["lat_hi"], spec["lon_lo"], spec["lon_hi"],
                 ppd=spec.get("ppd", 1200),
             )
@@ -147,6 +153,19 @@ class RunWorker(QThread):
         # SDF variant is absent (HD needs "-hd" tiles, others need plain ones),
         # or if the terrain does not actually cover the transmitter.
         self._require_sdf_variant(p, sdf_dir)
+
+    def _log_demnas_elevation(self, vrt: str, lat: float, lon: float) -> None:
+        """Log the DEMNAS elevation at the transmitter so the run is auditable."""
+        elev = dem_convert._sample_elevation(vrt, lat, lon)
+        if elev is None:
+            self.progress.emit(
+                f"PERINGATAN: DEMNAS void di Tx ({lat:.4f}, {lon:.4f}); "
+                f"engine akan pakai sea-level."
+            )
+        else:
+            self.progress.emit(
+                f"Elevasi Tx (DEMNAS): {elev:.1f} m  |  lokasi ({lat:.4f}, {lon:.4f})"
+            )
 
     def _require_sdf_variant(self, p: dict, sdf_dir: str) -> None:
         if not os.path.isdir(sdf_dir):
