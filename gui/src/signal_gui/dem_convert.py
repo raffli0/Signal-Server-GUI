@@ -13,9 +13,11 @@ Tile resolution (verified working endpoints):
 
 from __future__ import annotations
 
+import math
 import os
 import re
 import json
+import hashlib
 import shutil
 import subprocess
 import urllib.request
@@ -179,6 +181,21 @@ def extract_hgt(zip_path: str, extract_dir: str) -> list[str]:
     return sorted(hgt_files)
 
 
+def _normalize_sdf_names(sdf_dir: str) -> None:
+    """Rename any ``a:b:c:d.sdf`` produced by some ``srtm2sdf`` builds to the
+    ``a_b_c_d.sdf`` form the engine actually looks up.
+
+    The engine computes the region name with underscores (e.g.
+    ``-7_-6_252_253``); a few ``srtm2sdf`` binaries emit colons instead, which
+    the engine then fails to find (falling back to sea-level terrain). This
+    keeps the two consistent. Idempotent.
+    """
+    for f in os.listdir(sdf_dir):
+        if ":" in f and f.endswith(".sdf"):
+            os.rename(os.path.join(sdf_dir, f),
+                      os.path.join(sdf_dir, f.replace(":", "_")))
+
+
 def convert_hgt_to_sdf(srtm2sdf_exe: str, hgt_path: str, sdf_dir: str) -> Optional[str]:
     """Convert one ``.hgt`` to ``.sdf`` in ``sdf_dir`` (skips if present).
 
@@ -190,6 +207,7 @@ def convert_hgt_to_sdf(srtm2sdf_exe: str, hgt_path: str, sdf_dir: str) -> Option
     before = set(os.listdir(sdf_dir))
     subprocess.run([srtm2sdf_exe, hgt_path], cwd=sdf_dir,
                    check=True, capture_output=True)
+    _normalize_sdf_names(sdf_dir)
     after = set(os.listdir(sdf_dir))
     new_sdf = sorted(f for f in (after - before) if f.endswith(".sdf"))
     if new_sdf:
@@ -309,6 +327,201 @@ def ensure_dem_for_area(
     raise DemResolveError(
         str(last_err) if last_err else "No Viewfinder DEM tile covers this location"
     )
+
+
+# ---------------------------------------------------------------------------
+# Offline DEM source: local DEMNAS GeoTIFF
+# ---------------------------------------------------------------------------
+
+def _run(cmd: list[str]) -> None:
+    """Run a GDAL subprocess, raising DemResolveError with stderr on failure."""
+    try:
+        subprocess.run(cmd, check=True, capture_output=True, text=True)
+    except FileNotFoundError as exc:
+        raise DemResolveError(f"GDAL tool not found: {cmd[0]} ({exc})")
+    except subprocess.CalledProcessError as exc:
+        stderr = (exc.stderr or "").strip().splitlines()[-5:]
+        raise DemResolveError(
+            f"GDAL step failed: {' '.join(cmd)}\n" + "\n".join(stderr)
+        )
+
+
+def _gdal_extent(tif_path: str) -> tuple[float, float, float, float]:
+    """Return the (minx, miny, maxx, maxy) WGS84 extent of a raster."""
+    out = subprocess.run(
+        ["gdalinfo", "-json", tif_path], capture_output=True, text=True
+    )
+    if out.returncode != 0:
+        raise DemResolveError(f"gdalinfo failed for {tif_path}")
+    info = json.loads(out.stdout)
+    if "wgs84Extent" in info:
+        coords = info["wgs84Extent"]["coordinates"][0]
+        xs = [c[0] for c in coords]
+        ys = [c[1] for c in coords]
+        return min(xs), min(ys), max(xs), max(ys)
+    cc = info.get("cornerCoordinates", {})
+    ll = cc.get("lowerLeft")
+    ur = cc.get("upperRight")
+    if ll and ur:
+        return ll[0], ll[1], ur[0], ur[1]
+    raise DemResolveError(f"Cannot read extent of {tif_path}")
+
+
+def demnas_tif_to_sdf(
+    tif_path: str,
+    cache_dir: str,
+    srtm2sdf_exe: Optional[str],
+    engine: str,
+    lat_lo: float, lat_hi: float, lon_lo: float, lon_hi: float,
+    center_lat: Optional[float] = None,
+    center_lon: Optional[float] = None,
+) -> str:
+    """Convert a local DEMNAS ``.tif`` to SPLAT ``.sdf`` for offline use.
+
+    The ``.tif`` is reprojected to EPSG:4326, clipped to an integer-degree
+    aligned bounding box covering the run area, split into 1-degree SRTM
+    ``.hgt`` tiles, and each is run through ``srtm2sdf``. Results accumulate
+    in ``cache/dem/sdf/demnas`` (or ``demnas_hd``) so a region is processed
+    only once. Coverage of the transmitter is guaranteed by construction
+    (we clip from the source), provided the source actually spans it.
+    """
+    if not srtm2sdf_exe or not os.path.exists(srtm2sdf_exe):
+        raise DemResolveError(
+            f"srtm2sdf binary not found ({srtm2sdf_exe}); cannot build "
+            f"offline SDF terrain."
+        )
+    hd = engine == "HD"
+    tile_size = 3601 if hd else 1201
+    res_deg = 1.0 / (tile_size - 1)
+    # Namespace the cache by the source file so swapping DEMNAS files never
+    # reuses stale .sdf tiles produced from a different dataset.
+    key = hashlib.md5(os.path.abspath(tif_path).encode("utf-8")).hexdigest()[:10]
+    base = f"demnas_hd_{key}" if hd else f"demnas_{key}"
+    raw_dir = _cache_sub(cache_dir, os.path.join("raw", base))
+    sdf_dir = _cache_sub(cache_dir, os.path.join("sdf", base))
+
+    # Expand to integer-degree aligned bounds so every produced .hgt is a full
+    # 1-degree tile (the SRTMHGT driver requires exact dimensions).
+    ilat_lo = math.floor(lat_lo)
+    ilat_hi = math.ceil(lat_hi)
+    ilon_lo = math.floor(lon_lo)
+    ilon_hi = math.ceil(lon_hi)
+
+    clipped = os.path.join(raw_dir, "clip.tif")
+    _run([
+        "gdalwarp", "-t_srs", "EPSG:4326",
+        "-te", str(ilon_lo), str(ilat_lo), str(ilon_hi), str(ilat_hi),
+        "-tr", str(res_deg), str(res_deg), "-r", "bilinear", "-overwrite",
+        tif_path, clipped,
+    ])
+
+    # Split into 1-degree SRTM .hgt tiles, one per cell, named by the
+    # south-west corner (standard SRTM convention, e.g. S07E107.hgt).
+    hgt_files: list[str] = []
+    for ilat in range(ilat_lo, ilat_hi):
+        for ilon in range(ilon_lo, ilon_hi):
+            ns = "S" if ilat < 0 else "N"
+            ew = "W" if ilon < 0 else "E"
+            name = f"{ns}{abs(ilat):02d}{ew}{abs(ilon):03d}.hgt"
+            out_hgt = os.path.join(raw_dir, name)
+            if os.path.exists(out_hgt):
+                hgt_files.append(out_hgt)
+                continue
+            _run([
+                "gdal_translate", "-of", "SRTMHGT",
+                "-outsize", str(tile_size), str(tile_size),
+                "-projwin", str(ilon), str(ilat + 1), str(ilon + 1), str(ilat),
+                clipped, out_hgt,
+            ])
+            if os.path.exists(out_hgt):
+                hgt_files.append(out_hgt)
+    if not hgt_files:
+        raise DemResolveError(
+            "Gagal mengonversi DEMNAS .tif menjadi .hgt (periksa CRS/proyeksi "
+            "file)."
+        )
+    for hgt in sorted(hgt_files):
+        convert_hgt_to_sdf(srtm2sdf_exe, hgt, sdf_dir)
+
+    if center_lat is not None and center_lon is not None:
+        minx, miny, maxx, maxy = _gdal_extent(tif_path)
+        eps = 1e-3
+        if not (minx - eps <= center_lon <= maxx + eps
+                and miny - eps <= center_lat <= maxy + eps):
+            raise DemResolveError(
+                f"DEMNAS .tif tidak mencakup lokasi ({center_lat:.4f}, "
+                f"{center_lon:.4f}). Pastikan file DEMNAS mencakup area ini "
+                f"(mis. seluruh Indonesia)."
+            )
+    return sdf_dir
+
+
+def demnas_tif_to_asc(
+    tif_path: str,
+    cache_dir: str,
+    lat_lo: float, lat_hi: float, lon_lo: float, lon_hi: float,
+    ppd: int = 1200,
+) -> str:
+    """Convert a local DEMNAS ``.tif`` to a SPLAT LIDAR ``.asc`` (offline).
+
+    The ``.tif`` is reprojected to EPSG:4326 and clipped to the run bounding
+    box, resampled to roughly the engine's pixels-per-tile (``ppd``) so the
+    file stays small and fast to load (the engine resamples to its own output
+    grid anyway). The ASCII grid is written manually (not via
+    ``gdal_translate -of AAIGrid``) because Signal-Server's LIDAR loader
+    (``tile_load_lidar``) parses the header with a strict ``fscanf`` that
+    expects an *integer* ``NODATA_value``; GDAL emits it as a float (e.g.
+    ``-3.402823e+38`` for DEMNAS voids) which makes the parse fail.
+    """
+    from osgeo import gdal  # local import; only needed here
+    import numpy as np
+
+    # Resample so the grid is ~ppd cells across the (larger) span. This bounds
+    # the file size regardless of how fine the source DEMNAS DEM actually is.
+    span = max(lon_hi - lon_lo, lat_hi - lat_lo)
+    cellsize_deg = span / float(max(1, ppd)) if ppd else (1.0 / 1200.0)
+
+    out_dir = _cache_sub(cache_dir, "lidar")
+    clipped = os.path.join(out_dir, "clip.tif")
+    _run([
+        "gdalwarp", "-t_srs", "EPSG:4326",
+        "-te", str(lon_lo), str(lat_lo), str(lon_hi), str(lat_hi),
+        "-tr", str(cellsize_deg), str(cellsize_deg), "-r", "bilinear", "-overwrite",
+        tif_path, clipped,
+    ])
+
+    ds = gdal.Open(clipped)
+    if ds is None:
+        raise DemResolveError(f"Tidak dapat membuka hasil clip: {clipped}")
+    band = ds.GetRasterBand(1)
+    gt = ds.GetGeoTransform()
+    arr = band.ReadAsArray()
+    nodata = band.GetNoDataValue()
+    ds = None
+
+    height, width = arr.shape
+    xll = gt[0]
+    yll = gt[3] + height * gt[5]  # gt[5] is negative (north-up)
+    cellsize = gt[1]
+    NODATA = -9999
+
+    # Vectorised: non-finite / nodata -> NODATA, else rounded integer metres.
+    valid = np.isfinite(arr)
+    if nodata is not None:
+        valid = valid & (arr != nodata)
+    int_arr = np.full(arr.shape, NODATA, dtype=np.int32)
+    int_arr[valid] = np.round(arr[valid]).astype(np.int32)
+
+    asc = os.path.join(out_dir, "demnas.asc")
+    with open(asc, "w") as fh:
+        fh.write(f"ncols        {width}\n")
+        fh.write(f"nrows        {height}\n")
+        fh.write(f"xllcorner    {xll:.10f}\n")
+        fh.write(f"yllcorner    {yll:.10f}\n")
+        fh.write(f"cellsize     {cellsize:.10f}\n")
+        fh.write(f"NODATA_value {NODATA}\n")
+        np.savetxt(fh, int_arr, fmt="%d")
+    return asc
 
 
 def which_srtm2sdf(variant: str = "Standard") -> Optional[str]:

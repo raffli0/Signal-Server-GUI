@@ -194,12 +194,43 @@ class MainWindow(QMainWindow):
             lambda: self.map.set_site_labels(tx=self.form.tx_name.text().strip() or None))
         self.form.rx_name.textChanged.connect(
             lambda: self.map.set_site_labels(rx=self.form.rx_name.text().strip() or None))
+        self.form.demnas_path.textChanged.connect(self._save_demnas_config)
+        self._load_demnas_config()
 
         # Place initial Tx/Rx markers from the default form values.
         self._on_tx_coord_changed()
         self._on_rx_coord_changed()
         # Open the map centered on the transmitter by default (not Rx).
         self.map._focus = self.map.tx_pos
+
+    # ------------------------------------------------------------------ DEMNAS config
+    def _demnas_config_path(self) -> str:
+        return os.path.join(self.cache_dir, "demnas_config.json")
+
+    def _load_demnas_config(self) -> None:
+        """Restore the last-used DEMNAS .tif path so it persists across runs."""
+        path = self._demnas_config_path()
+        if not os.path.exists(path):
+            return
+        try:
+            with open(path, "r", encoding="utf-8") as fh:
+                data = json.load(fh)
+        except (OSError, ValueError):
+            return
+        tif = data.get("demnas_path")
+        if tif and os.path.exists(tif):
+            self.form.demnas_path.setText(tif)
+
+    def _save_demnas_config(self) -> None:
+        tif = self.form.demnas_path.text().strip()
+        if not tif:
+            return
+        path = self._demnas_config_path()
+        try:
+            with open(path, "w", encoding="utf-8") as fh:
+                json.dump({"demnas_path": tif}, fh)
+        except OSError:
+            pass
 
     def _on_header_section_clicked(self, key: str):
         if key == "clear":
@@ -232,6 +263,33 @@ class MainWindow(QMainWindow):
 
 
     def _dem_spec(self, p: dict) -> dict | None:
+        # ---- Offline: local DEMNAS .tif (no network) ----
+        if p.get("dem_source") == "offline":
+            tif = p.get("demnas_path")
+            if not tif or not os.path.exists(tif):
+                raise RuntimeError(
+                    "Mode Offline membutuhkan file DEMNAS .tif. "
+                    "Pilih file di baris 'DEMNAS .tif' (bagian Output)."
+                )
+            res = int(p.get("dem_resolution", 3))
+            if res == 15:
+                res = 3  # DEMNAS resolution is intrinsic; ignore Viewfinder setting
+            engine = p.get("engine", "Standard")
+            tx_lat, tx_lon = p["tx_lat"], p["tx_lon"]
+            radius_km = float(p.get("radius", 30))
+            lat_deg = radius_km / 111.0
+            lon_deg = radius_km / (111.32 * max(0.01, math.cos(math.radians(tx_lat))))
+            mode = "demnas_lidar" if engine == "LIDAR" else "demnas_sdf"
+            return {
+                "mode": mode,
+                "tif": tif,
+                "engine": engine,
+                "ppd": int(p.get("resolution", 1200)),
+                "lat_lo": tx_lat - lat_deg, "lat_hi": tx_lat + lat_deg,
+                "lon_lo": tx_lon - lon_deg, "lon_hi": tx_lon + lon_deg,
+                "resolution": res, "cache_dir": self.cache_dir,
+            }
+        # ---- Online: Viewfinder SRTM (automatic download) ----
         if p.get("terrain_source") == "lidar" or p.get("sdf_dir"):
             return None
         res = int(p.get("dem_resolution", 3))

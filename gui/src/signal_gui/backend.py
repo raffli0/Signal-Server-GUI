@@ -98,6 +98,32 @@ class RunWorker(QThread):
         )
         clat = float(p.get("tx_lat") if p.get("tx_lat") is not None else (spec["lat_lo"] + spec["lat_hi"]) / 2.0)
         clon = float(p.get("tx_lon") if p.get("tx_lon") is not None else (spec["lon_lo"] + spec["lon_hi"]) / 2.0)
+        mode = spec.get("mode", "auto")
+        if mode == "demnas_sdf":
+            self.progress.emit("Menyiapkan DEMNAS .tif -> SDF (offline) ...")
+            sdf_dir = dem_convert.demnas_tif_to_sdf(
+                spec["tif"], spec["cache_dir"], sdf_exe, engine,
+                spec["lat_lo"], spec["lat_hi"], spec["lon_lo"], spec["lon_hi"],
+                center_lat=clat, center_lon=clon,
+            )
+            p["sdf_dir"] = sdf_dir
+            p["_demnas"] = True
+            # The engine segfaults (SIGSEGV) in its "sea-level" fallback when the
+            # required SDF terrain is missing. Refuse to launch if the matching
+            # SDF variant is absent (HD needs "-hd" tiles, others need plain ones),
+            # or if the terrain does not actually cover the transmitter.
+            self._require_sdf_variant(p, sdf_dir)
+            return
+        if mode == "demnas_lidar":
+            self.progress.emit("Menyiapkan DEMNAS .tif -> LIDAR .asc (offline) ...")
+            asc = dem_convert.demnas_tif_to_asc(
+                spec["tif"], spec["cache_dir"],
+                spec["lat_lo"], spec["lat_hi"], spec["lon_lo"], spec["lon_hi"],
+                ppd=spec.get("ppd", 1200),
+            )
+            p["lidar_file"] = asc
+            p["terrain_source"] = "lidar"
+            return
         if "tile_code" in spec:
             self.progress.emit(f"Preparing DEM tile {spec['tile_code']} ...")
             sdf_dir = dem_convert.prepare_region(
@@ -146,6 +172,10 @@ class RunWorker(QThread):
         # any tile in the (per-tile) cache dir. Launching on terrain that omits
         # the Tx cell yields a degenerate, line-shaped coverage. The SDF filenames
         # use an opaque encoding, so we verify against the source .hgt files.
+        # (Offline DEMNAS terrain is clipped from the source by construction, so
+        # this per-tile check is skipped for that mode.)
+        if p.get("_demnas"):
+            return
         tx_lat = p.get("tx_lat")
         tx_lon = p.get("tx_lon")
         if tx_lat is not None and tx_lon is not None:
