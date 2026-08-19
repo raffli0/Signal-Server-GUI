@@ -329,7 +329,7 @@ class ParameterForm(QWidget):
         self.units = QComboBox(); self.units.addItems(["Metric", "Imperial"])
         self._add_row_with_info(fl, "Units", self.units, "Unit system (Metric / Imperial)")
         self.tx_coord = SiteCoordWidget()
-        self.tx_coord.set(51.849, -2.2299)
+        self.tx_coord.set(-6.916667, 107.6083)
         fl.addRow(QLabel("Coordinates"), self.tx_coord)
         self.btn_pick_tx = QPushButton("Pick on map (Tx)")
         self.btn_pick_tx.setStyleSheet(btn_ss)
@@ -381,7 +381,7 @@ class ParameterForm(QWidget):
         # -- 2. Mobile / Rx
         fl = self._section("rx", _SECTION_ICON["rx"], "Mobile / Rx", expanded=False)
         self.rx_coord = SiteCoordWidget()
-        self.rx_coord.set(51.75, -2.10)
+        self.rx_coord.set(-6.834056, 107.738457)
         fl.addRow(QLabel("Coordinates"), self.rx_coord)
         self.tx_coord.changed.connect(self.tx_changed)
         self.rx_coord.changed.connect(self.rx_changed)

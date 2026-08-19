@@ -15,7 +15,7 @@ def main() -> int:
     os.environ.setdefault("QTWEBENGINE_CHROMIUM_FLAGS",
                           os.environ.get("QTWEBENGINE_CHROMIUM_FLAGS", ""))
     app = QApplication(sys.argv)
-    app.setApplicationName("Signal-Server GUI")
+    app.setApplicationName("RF Propagation GUI")
     win = MainWindow()
     win.show()
     return app.exec()

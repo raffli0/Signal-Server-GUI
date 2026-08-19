@@ -176,6 +176,8 @@ class MainWindow(QMainWindow):
         # Place initial Tx/Rx markers from the default form values.
         self._on_tx_coord_changed()
         self._on_rx_coord_changed()
+        # Open the map centered on the transmitter by default (not Rx).
+        self.map._focus = self.map.tx_pos
 
     def _on_header_section_clicked(self, key: str):
         if key == "clear":
