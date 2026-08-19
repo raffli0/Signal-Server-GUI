@@ -14,10 +14,25 @@ from PySide6.QtWidgets import (
     QPushButton, QProgressBar, QLabel, QFileDialog, QInputDialog, QMessageBox,
     QScrollArea, QApplication, QFrame
 )
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QTimer, QObject, QEvent
 
 from . import backend, params as params_mod
 from .widgets import ParameterForm
+
+
+class _MouseWheelGuard(QObject):
+    """Ignore mouse-wheel events unless the pointer is actually over the widget.
+
+    Stops touchpad scroll/pinch gestures aimed at the map (or anywhere else)
+    from accidentally scrolling or zooming sibling widgets such as the
+    parameter panel or the terminal log.
+    """
+
+    def eventFilter(self, obj, event):
+        if event.type() == QEvent.Type.Wheel and not obj.underMouse():
+            event.ignore()
+            return True
+        return False
 from .map_view import MapView
 from .header import CloudRFHeader
 
@@ -97,11 +112,14 @@ class MainWindow(QMainWindow):
         left_scroll.setWidget(self.form)
         left_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         left_scroll.setStyleSheet("QScrollArea { border: none; background-color: #1B1E22; }")
+        _wheel_guard = _MouseWheelGuard(self)
+        left_scroll.viewport().installEventFilter(_wheel_guard)
 
         # Terminal Log widget inside Left Sidebar Bottom (matching CloudRF UI screenshot!)
         self.terminal = QPlainTextEdit()
         self.terminal.setReadOnly(True)
         self.terminal.setMaximumHeight(140)
+        self.terminal.installEventFilter(_wheel_guard)
         self.terminal.setStyleSheet("""
             QPlainTextEdit {
                 background-color: #121417;
@@ -172,6 +190,10 @@ class MainWindow(QMainWindow):
         self.map.picked.connect(self._on_picked)
         self.form.tx_changed.connect(self._on_tx_coord_changed)
         self.form.rx_changed.connect(self._on_rx_coord_changed)
+        self.form.tx_name.textChanged.connect(
+            lambda: self.map.set_site_labels(tx=self.form.tx_name.text().strip() or None))
+        self.form.rx_name.textChanged.connect(
+            lambda: self.map.set_site_labels(rx=self.form.rx_name.text().strip() or None))
 
         # Place initial Tx/Rx markers from the default form values.
         self._on_tx_coord_changed()

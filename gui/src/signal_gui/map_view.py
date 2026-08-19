@@ -100,6 +100,8 @@ class MapView(QWebEngineView):
         self._focus = None               # (lat, lon) to fly to after load
         self._page = PickerPage(self)
         self.setPage(self._page)
+        self.tx_label = "Tx"
+        self.rx_label = "Rx"
         self.loadFinished.connect(self._on_loaded)
         self.show_blank()
 
@@ -108,11 +110,18 @@ class MapView(QWebEngineView):
         out = []
         if self.tx_pos:
             out.append({"role": "tx", "lat": self.tx_pos[0], "lon": self.tx_pos[1],
-                        "color": TX_COLOR, "label": "Tx"})
+                        "color": TX_COLOR, "label": self.tx_label})
         if self.rx_pos:
             out.append({"role": "rx", "lat": self.rx_pos[0], "lon": self.rx_pos[1],
-                        "color": RX_COLOR, "label": "Rx"})
+                        "color": RX_COLOR, "label": self.rx_label})
         return out
+
+    def set_site_labels(self, tx: str = None, rx: str = None) -> None:
+        if tx is not None:
+            self.tx_label = tx or "Tx"
+        if rx is not None:
+            self.rx_label = rx or "Rx"
+        self._update_markers()
 
     def arm(self, role: str) -> None:
         self._armed = role
@@ -225,6 +234,8 @@ class MapView(QWebEngineView):
         self._focus = None               # (lat, lon) to fly to after load
         self._page = PickerPage(self)
         self.setPage(self._page)
+        self.tx_label = "Tx"
+        self.rx_label = "Rx"
         self.loadFinished.connect(self._on_loaded)
         self.show_blank()
 
@@ -233,11 +244,18 @@ class MapView(QWebEngineView):
         out = []
         if self.tx_pos:
             out.append({"role": "tx", "lat": self.tx_pos[0], "lon": self.tx_pos[1],
-                        "color": TX_COLOR, "label": "Tx"})
+                        "color": TX_COLOR, "label": self.tx_label})
         if self.rx_pos:
             out.append({"role": "rx", "lat": self.rx_pos[0], "lon": self.rx_pos[1],
-                        "color": RX_COLOR, "label": "Rx"})
+                        "color": RX_COLOR, "label": self.rx_label})
         return out
+
+    def set_site_labels(self, tx: str = None, rx: str = None) -> None:
+        if tx is not None:
+            self.tx_label = tx or "Tx"
+        if rx is not None:
+            self.rx_label = rx or "Rx"
+        self._update_markers()
 
     def arm(self, role: str) -> None:
         self._armed = role

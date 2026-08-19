@@ -203,9 +203,28 @@
     }
 
     /* Marker styling */
+    .mk-container {
+      position: relative;
+    }
     .tx-pin, .rx-pin {
       display: block;
       filter: drop-shadow(0 2px 4px rgba(0,0,0,0.5));
+    }
+    .mk-label {
+      position: absolute;
+      top: 47px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(18,20,23,0.92);
+      color: #E2E8F0;
+      font-size: 10px;
+      font-weight: 600;
+      padding: 1px 6px;
+      border-radius: 4px;
+      border: 1px solid #3F474F;
+      white-space: nowrap;
+      pointer-events: none;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.5);
     }
     .rx-badge {
       background: #D69E2E;
@@ -321,7 +340,7 @@
   <!-- Basemap Style Picker -->
   <div id="style-menu">
     <div class="style-item" data-style="satellite" onclick="switchStyle('satellite')"><span class="swatch" style="background:linear-gradient(135deg,#4a7a3a,#9aa0a6)"></span>Satelit</div>
-    <div class="style-item" data-style="hybrid" onclick="switchStyle('hybrid')"><span class="swatch" style="background:linear-gradient(135deg,#2b3d2b,#cdd6df)"></span>Hibrida</div>
+    <div class="style-item" data-style="hybrid" onclick="switchStyle('hybrid')"><span class="swatch" style="background:linear-gradient(135deg,#2b3d2b,#cdd6df)"></span>Hybrid</div>
     <div class="style-item" data-style="osm" onclick="switchStyle('osm')"><span class="swatch" style="background:#e8e4d8"></span>Jalan (OSM)</div>
     <div class="style-item" data-style="dark" onclick="switchStyle('dark')"><span class="swatch" style="background:#1a1d23"></span>Gelap</div>
     <div class="style-item" data-style="terrain" onclick="switchStyle('terrain')"><span class="swatch" style="background:linear-gradient(135deg,#d9c9a3,#7a8b5a)"></span>Medan</div>
@@ -474,7 +493,7 @@
             html: '<svg class="tx-pin" width="38" height="48" viewBox="0 0 46 50" xmlns="http://www.w3.org/2000/svg">' +
                     '<path d="M 10 3 H 36 A 6 6 0 0 1 42 9 V 27 A 6 6 0 0 1 36 33 H 28 L 23 47 L 18 33 H 10 A 6 6 0 0 1 4 27 V 9 A 6 6 0 0 1 10 3 Z" fill="#F59E0B" stroke="#FFFFFF" stroke-width="2"/>' +
                     '<text x="23" y="18" text-anchor="middle" dominant-baseline="central" font-family="Segoe UI, system-ui, sans-serif" font-size="15" font-weight="bold" fill="#FFFFFF" stroke="#000000" stroke-width="0.8" paint-order="stroke fill">Tx</text>' +
-                  '</svg>',
+                   '</svg>' + '<div class="mk-label">' + (m.label || '') + '</div>',
             iconSize: [38, 48],
             iconAnchor: [19, 47],
             popupAnchor: [0, -44]
@@ -486,7 +505,7 @@
             html: '<svg class="rx-pin" width="38" height="48" viewBox="0 0 46 50" xmlns="http://www.w3.org/2000/svg">' +
                     '<path d="M 10 3 H 36 A 6 6 0 0 1 42 9 V 27 A 6 6 0 0 1 36 33 H 28 L 23 47 L 18 33 H 10 A 6 6 0 0 1 4 27 V 9 A 6 6 0 0 1 10 3 Z" fill="#3182CE" stroke="#FFFFFF" stroke-width="2"/>' +
                     '<text x="23" y="18" text-anchor="middle" dominant-baseline="central" font-family="Segoe UI, system-ui, sans-serif" font-size="15" font-weight="bold" fill="#FFFFFF" stroke="#000000" stroke-width="0.8" paint-order="stroke fill">Rx</text>' +
-                  '</svg>',
+                   '</svg>' + '<div class="mk-label">' + (m.label || '') + '</div>',
             iconSize: [38, 48],
             iconAnchor: [19, 47],
             popupAnchor: [0, -44]
@@ -557,13 +576,48 @@
       }
     }
 
+    // === Elevation readout (mdpl) for #scale-indicator ===
+    var _elevTimer = null;
+    function updateElevation(lat, lon) {
+      var el = document.getElementById('scale-indicator');
+      el.innerText = '… m';
+      var url = 'https://api.open-meteo.com/v1/elevation?latitude='
+              + lat + '&longitude=' + lon;
+      var xhr = new XMLHttpRequest();
+      xhr.open('GET', url, true);
+      xhr.onload = function () {
+        try {
+          var data = JSON.parse(xhr.responseText);
+          var elev = data && data.elevation && data.elevation[0];
+          if (typeof elev === 'number' && !isNaN(elev)) {
+            el.innerText = elev.toFixed(1) + ' m mdpl';
+            return;
+          }
+        } catch (e) {}
+        el.innerText = 'mdpl ?';
+      };
+      xhr.onerror = function () { el.innerText = 'mdpl ?'; };
+      xhr.send();
+    }
+    function scheduleElevation(lat, lon) {
+      if (_elevTimer) { clearTimeout(_elevTimer); }
+      _elevTimer = setTimeout(function () { updateElevation(lat, lon); }, 250);
+    }
+
     map.on('mousemove', function (e) {
       var lat = e.latlng.lat;
       var lon = e.latlng.lng;
       var latStr = Math.abs(lat).toFixed(6) + (lat >= 0 ? 'N' : 'S');
       var lonStr = Math.abs(lon).toFixed(6) + (lon >= 0 ? 'E' : 'W');
       document.getElementById('coord-display').innerText = latStr + ' ' + lonStr;
+      scheduleElevation(lat, lon);
     });
+
+    // Initial elevation for the map centre.
+    (function () {
+      var c = map.getCenter();
+      updateElevation(c.lat, c.lng);
+    })();
 
     map.on('click', function (e) {
       var lat = e.latlng.lat.toFixed(6), lon = e.latlng.lng.toFixed(6);

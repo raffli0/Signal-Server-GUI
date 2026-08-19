@@ -15,10 +15,26 @@ from PySide6.QtWidgets import (
     QHBoxLayout, QLabel, QSpinBox, QFrame, QScrollArea, QSizePolicy
 )
 from PySide6.QtCore import Signal, Qt
+from PySide6.QtGui import QWheelEvent
 
 from . import params as params_mod
 from . import coords
 from .icons import pixmap as _pixmap
+
+
+class FocusWheelSpinBox(QDoubleSpinBox):
+    """QDoubleSpinBox that ignores the mouse wheel unless it has keyboard focus.
+
+    Prevents accidentally changing a value while scrolling the panel past a
+    field that has the +/- stepper buttons.
+    """
+
+    def wheelEvent(self, event: QWheelEvent) -> None:
+        if self.hasFocus():
+            super().wheelEvent(event)
+        else:
+            event.ignore()
+
 
 _SECTION_ICON = {
     "tx": "tower", "signal": "wifi", "feeder": "database", "antenna": "antenna",
@@ -328,6 +344,12 @@ class ParameterForm(QWidget):
         fl = self._section("tx", _SECTION_ICON["tx"], "Site / Tx", expanded=False)
         self.units = QComboBox(); self.units.addItems(["Metric", "Imperial"])
         self._add_row_with_info(fl, "Units", self.units, "Unit system (Metric / Imperial)")
+        self.tx_name = QLineEdit()
+        self.tx_name.setPlaceholderText("Site name (e.g. BTS-01)")
+        self._add_row_with_info(fl, "Site name", self.tx_name, "Label for this transmitter site")
+        self.tx_network = QLineEdit()
+        self.tx_network.setPlaceholderText("Network (e.g. Telkomsel)")
+        self._add_row_with_info(fl, "Network", self.tx_network, "Operator / network identifier")
         self.tx_coord = SiteCoordWidget()
         self.tx_coord.set(-6.916667, 107.6083)
         fl.addRow(QLabel("Coordinates"), self.tx_coord)
@@ -335,23 +357,23 @@ class ParameterForm(QWidget):
         self.btn_pick_tx.setStyleSheet(btn_ss)
         self.btn_pick_tx.clicked.connect(lambda: self.pick_requested.emit("tx"))
         fl.addRow(self.btn_pick_tx)
-        self.tx_height = QDoubleSpinBox(); self.tx_height.setRange(0, 10000); self.tx_height.setValue(30)
-        self._add_row_with_info(fl, "Height (m)", self.tx_height, "Transmitter antenna height above ground")
-        self.frequency = QDoubleSpinBox(); self.frequency.setRange(0.1, 100000); self.frequency.setValue(900)
+        self.tx_height = FocusWheelSpinBox(); self.tx_height.setRange(0, 10000); self.tx_height.setValue(1)
+        self._add_row_with_info(fl, "Height AGL (m)", self.tx_height, "Transmitter antenna height above ground")
+        self.frequency = FocusWheelSpinBox(); self.frequency.setRange(0.1, 100000); self.frequency.setValue(900)
         self._add_row_with_info(fl, "Frequency (MHz)", self.frequency, "Operating frequency in MHz")
         self.dem_res = QComboBox(); self.dem_res.addItems(["90 m (dem3)", "30 m (dem1)", "15 m TIF"])
         self._add_row_with_info(fl, "Auto DEM resolution", self.dem_res, "Elevation data resolution")
 
         # Signal
         fl.addRow(self._sub_label("Signal"))
-        self.rf_power = QDoubleSpinBox(); self.rf_power.setRange(0, 1e7); self.rf_power.setValue(100)
-        self._add_row_with_info(fl, "RF power (W)", self.rf_power, "Transmitter power output in Watts")
-        self.tx_gain = QDoubleSpinBox(); self.tx_gain.setRange(-50, 50); self.tx_gain.setValue(10)
+        self.rf_power = FocusWheelSpinBox(); self.rf_power.setRange(0, 1e7); self.rf_power.setValue(1)
+        self._add_row_with_info(fl, "RF power (Watt)", self.rf_power, "Transmitter power output in Watts")
+        self.tx_gain = FocusWheelSpinBox(); self.tx_gain.setRange(-50, 50); self.tx_gain.setValue(10)
         self._add_row_with_info(fl, "Tx gain (dBi)", self.tx_gain, "Transmitter antenna gain in dBi")
 
         # Feeder
         fl.addRow(self._sub_label("Feeder"))
-        self.cable_loss = QDoubleSpinBox(); self.cable_loss.setRange(0, 50); self.cable_loss.setValue(0)
+        self.cable_loss = FocusWheelSpinBox(); self.cable_loss.setRange(0, 50); self.cable_loss.setValue(0)
         self._add_row_with_info(fl, "Cable loss (dB)", self.cable_loss, "Transmission line / cable loss")
         self.erp_label = QLabel("ERP: - W"); self.erp_label.setStyleSheet("color: #319795; font-size: 11px; font-weight: bold;")
         self.eirp_label = QLabel("EIRP: - dBm"); self.eirp_label.setStyleSheet("color: #319795; font-size: 11px; font-weight: bold;")
@@ -371,15 +393,18 @@ class ParameterForm(QWidget):
         fl.addRow(self.ant_btn, self.ant_path)
         self.pol = QComboBox(); self.pol.addItems(["vertical", "horizontal"])
         self._add_row_with_info(fl, "Polarisation", self.pol, "Antenna polarization")
-        self.azimuth = QDoubleSpinBox(); self.azimuth.setRange(0, 359); self.azimuth.setValue(0)
+        self.azimuth = FocusWheelSpinBox(); self.azimuth.setRange(0, 359); self.azimuth.setValue(0)
         self._add_row_with_info(fl, "Azimuth (deg)", self.azimuth, "Antenna orientation / azimuth angle")
-        self.downtilt = QDoubleSpinBox(); self.downtilt.setRange(-10, 90); self.downtilt.setValue(0)
+        self.downtilt = FocusWheelSpinBox(); self.downtilt.setRange(-10, 90); self.downtilt.setValue(0)
         self._add_row_with_info(fl, "Downtilt (deg)", self.downtilt, "Electrical / mechanical downtilt angle")
-        self.downtilt_dir = QDoubleSpinBox(); self.downtilt_dir.setRange(0, 359); self.downtilt_dir.setValue(0)
+        self.downtilt_dir = FocusWheelSpinBox(); self.downtilt_dir.setRange(0, 359); self.downtilt_dir.setValue(0)
         self._add_row_with_info(fl, "Downtilt dir (deg)", self.downtilt_dir, "Downtilt direction angle")
 
         # -- 2. Mobile / Rx
         fl = self._section("rx", _SECTION_ICON["rx"], "Mobile / Rx", expanded=False)
+        self.rx_name = QLineEdit()
+        self.rx_name.setPlaceholderText("Site name (e.g. UE-01)")
+        self._add_row_with_info(fl, "Site name", self.rx_name, "Label for this receiver site")
         self.rx_coord = SiteCoordWidget()
         self.rx_coord.set(-6.834056, 107.738457)
         fl.addRow(QLabel("Coordinates"), self.rx_coord)
@@ -389,11 +414,11 @@ class ParameterForm(QWidget):
         self.btn_pick_rx.setStyleSheet(btn_ss)
         self.btn_pick_rx.clicked.connect(lambda: self.pick_requested.emit("rx"))
         fl.addRow(self.btn_pick_rx)
-        self.rx_height = QDoubleSpinBox(); self.rx_height.setRange(0, 10000); self.rx_height.setValue(1.5)
-        self._add_row_with_info(fl, "Height (m)", self.rx_height, "Receiver height above ground")
-        self.rx_gain = QDoubleSpinBox(); self.rx_gain.setRange(-50, 50); self.rx_gain.setValue(0)
+        self.rx_height = FocusWheelSpinBox(); self.rx_height.setRange(0, 10000); self.rx_height.setValue(1)
+        self._add_row_with_info(fl, "Height AGL (m)", self.rx_height, "Receiver height above ground")
+        self.rx_gain = FocusWheelSpinBox(); self.rx_gain.setRange(-50, 50); self.rx_gain.setValue(0)
         self._add_row_with_info(fl, "Rx gain (dBd)", self.rx_gain, "Receiver antenna gain in dBd")
-        self.rx_thr = QDoubleSpinBox(); self.rx_thr.setRange(-200, 100); self.rx_thr.setValue(-110)
+        self.rx_thr = FocusWheelSpinBox(); self.rx_thr.setRange(-200, 100); self.rx_thr.setValue(-110)
         self._add_row_with_info(fl, "Rx threshold (dBm)", self.rx_thr, "Minimum required signal threshold")
 
         # -- 3. Model (EXPANDED BY DEFAULT, EXACTLY MATCHING CLOUDRF SCREENSHOT!)
@@ -439,7 +464,7 @@ class ParameterForm(QWidget):
         self.clutter_path.setStyleSheet("background: #1B1E22; color: #A0AEC0; border: 1px solid #3F474F; border-radius: 3px; padding: 3px; font-size: 10px;")
         self.clutter_btn.clicked.connect(lambda: self._pick(self.clutter_path, "Clutter (*.clt)"))
         fl.addRow(self.clutter_btn, self.clutter_path)
-        self.gc = QDoubleSpinBox(); self.gc.setRange(0, 1000); self.gc.setValue(0)
+        self.gc = FocusWheelSpinBox(); self.gc.setRange(0, 1000); self.gc.setValue(0)
         self._add_row_with_info(fl, "Ground clutter (m)", self.gc, "Clutter height in meters")
         self.obstacles = QPlainTextEdit(); self.obstacles.setPlaceholderText("lat,lon,height per line (-udt)")
         self.obstacles.setMaximumHeight(60)
@@ -473,7 +498,7 @@ class ParameterForm(QWidget):
             self.resolution.addItem(str(r), r)
         self.resolution.setCurrentText("1200")
         self._add_row_with_info(fl, "Resolution", self.resolution, "Tile pixel resolution")
-        self.radius = QDoubleSpinBox(); self.radius.setRange(0.1, 10000); self.radius.setValue(30)
+        self.radius = FocusWheelSpinBox(); self.radius.setRange(0.1, 10000); self.radius.setValue(2)
         self._add_row_with_info(fl, "Radius (km)", self.radius, "Plot coverage radius in km")
         self.color_btn = QPushButton("Color table...")
         self.color_btn.setStyleSheet(btn_ss)
@@ -662,6 +687,9 @@ class ParameterForm(QWidget):
 
         d = {
             "tx_lat": tx_lat, "tx_lon": tx_lon,
+            "tx_name": self.tx_name.text().strip() or None,
+            "tx_network": self.tx_network.text().strip() or None,
+            "rx_name": self.rx_name.text().strip() or None,
             "tx_height": self.tx_height.value(),
             "frequency_mhz": self.frequency.value(),
             "rf_power_w": self.rf_power.value(),
@@ -703,13 +731,15 @@ class ParameterForm(QWidget):
             return
         # Site / Tx
         self.units.setCurrentText("Metric" if d.get("units", "metric") == "metric" else "Imperial")
+        self.tx_name.setText(d.get("tx_name") or "")
+        self.tx_network.setText(d.get("tx_network") or "")
         self.tx_coord.set(d.get("tx_lat"), d.get("tx_lon"))
-        self.tx_height.setValue(float(d.get("tx_height", 30)))
+        self.tx_height.setValue(float(d.get("tx_height", 1)))
         self.frequency.setValue(float(d.get("frequency_mhz", 900)))
         dem_rev = {3: 0, 1: 1, 15: 2}
-        self.dem_res.setCurrentIndex(dem_rev.get(int(d.get("dem_resolution", 3)), 0))
+        self.dem_res.setCurrentIndex(dem_rev.get(int(d.get("dem_resolution", 1)), 0))
         # Signal
-        self.rf_power.setValue(float(d.get("rf_power_w", 100)))
+        self.rf_power.setValue(float(d.get("rf_power_w", 1)))
         self.tx_gain.setValue(float(d.get("tx_gain_dbi", 10)))
         # Feeder
         self.cable_loss.setValue(float(d.get("cable_loss_db", 0)))
@@ -721,6 +751,7 @@ class ParameterForm(QWidget):
         self.downtilt.setValue(float(d.get("downtilt_deg", 0)))
         self.downtilt_dir.setValue(float(d.get("downtilt_dir_deg", 0)))
         # Mobile / Rx
+        self.rx_name.setText(d.get("rx_name") or "")
         self.rx_coord.set(d.get("rx_lat"), d.get("rx_lon"))
         self.rx_height.setValue(float(d.get("rx_height", 1.5)))
         self.rx_gain.setValue(float(d.get("rx_gain_dbd", 0)))
