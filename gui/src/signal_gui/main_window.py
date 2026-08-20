@@ -1,5 +1,6 @@
+# Copyright (c) 2026-2029, RF Propagation Flintflow. All rights reserved.
 """Main application window: sidebar form + map + terminal + controls matching CloudRF UI."""
-# Copyright (c) 2026-2029, RF Propagation. All rights reserved.
+
 from __future__ import annotations
 
 import json
@@ -18,6 +19,27 @@ from PySide6.QtCore import Qt, QTimer, QObject, QEvent
 
 from . import backend, params as params_mod
 from .widgets import ParameterForm
+
+
+def _dir_size(path: str) -> int:
+    """Return total size in bytes of everything under ``path``."""
+    total = 0
+    for root, _dirs, files in os.walk(path):
+        for f in files:
+            try:
+                total += os.path.getsize(os.path.join(root, f))
+            except OSError:
+                pass
+    return total
+
+
+def _human_size(num: int) -> str:
+    """Format a byte count into a human-readable string."""
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if num < 1024 or unit == "TB":
+            return f"{num:.0f} {unit}" if unit == "B" else f"{num:.1f} {unit}"
+        num /= 1024.0
+    return f"{num:.0f} B"
 
 
 class _MouseWheelGuard(QObject):
@@ -222,6 +244,7 @@ class MainWindow(QMainWindow):
         self.header.save_profile_requested.connect(self.save_profile)
         self.header.load_profile_requested.connect(self.load_profile)
         self.header.radio_link_requested.connect(lambda: self.start(link=True))
+        self.header.clear_cache_requested.connect(self.clear_cache)
         self.map.picked.connect(self._on_picked)
         self.form.tx_changed.connect(self._on_tx_coord_changed)
         self.form.rx_changed.connect(self._on_rx_coord_changed)
@@ -642,6 +665,51 @@ class MainWindow(QMainWindow):
         self.progress.setVisible(False)
         self.form.btn_run.setEnabled(True)
         self.status.setText("Ready")
+
+    def clear_cache(self) -> None:
+        """Delete all on-disk cache (downloaded DEM/SDF tiles, DEMNAS data, and
+        temporary run directories) to free disk space.
+
+        Only the *contents* of ``self.cache_dir`` (``.../gui/cache/dem``) are
+        removed; the directory itself is recreated so the app keeps working.
+        """
+        if self._worker and self._worker.isRunning():
+            QMessageBox.information(
+                self, "Cache sibuk",
+                "Sedang memproses simulasi. Tunggu hingga selesai sebelum "
+                "menghapus cache.")
+            return
+
+        reply = QMessageBox.question(
+            self, "Hapus semua cache?",
+            "Ini akan menghapus semua data cache (tile DEM/SDF, DEMNAS, "
+            "direktori sementara) di:\n\n" + self.cache_dir +
+            "\n\nTindakan ini tidak dapat dibatalkan. Lanjutkan?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        freed = 0
+        removed = 0
+        for entry in os.scandir(self.cache_dir):
+            try:
+                if entry.is_dir(follow_symlinks=False):
+                    freed += _dir_size(entry.path)
+                    shutil.rmtree(entry.path)
+                else:
+                    freed += entry.stat(follow_symlinks=False).st_size
+                    os.remove(entry.path)
+                removed += 1
+            except OSError as exc:
+                self.terminal.append(f"[cache] gagal hapus {entry.name}: {exc}")
+        os.makedirs(self.cache_dir, exist_ok=True)
+
+        size_str = _human_size(freed)
+        msg = f"Cache dibersihkan: {removed} item ({size_str}) dihapus dari {self.cache_dir}"
+        self.status.setText("Cache cleared")
+        self.terminal.append("[cache] " + msg)
 
     # ------------------------------------------------------------------ export
     def export_model(self, fmt: str) -> None:

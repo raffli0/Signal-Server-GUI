@@ -24,6 +24,7 @@ class CloudRFHeader(QFrame):
     save_profile_requested = Signal()
     load_profile_requested = Signal()
     radio_link_requested = Signal()
+    clear_cache_requested = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -258,6 +259,27 @@ class CloudRFHeader(QFrame):
         """)
         clear_btn.clicked.connect(lambda: self.section_clicked.emit("clear"))
         layout.addWidget(clear_btn)
+
+        # Clear all on-disk cache (downloaded DEM/SDF tiles + temp run dirs)
+        cache_btn = QPushButton()
+        cache_btn.setIcon(svg_icon("database", 14, "#F6AD55"))
+        cache_btn.setText(" Cache")
+        cache_btn.setToolTip("Hapus semua cache DEM/SDF — bebaskan ruang disk")
+        cache_btn.setFixedHeight(26)
+        cache_btn.setStyleSheet("""
+            QPushButton {
+                background: #2D3748;
+                color: #F6AD55;
+                border: 1px solid #4A5568;
+                border-radius: 4px;
+                font-size: 12px;
+                font-weight: 600;
+                padding: 0 8px;
+            }
+            QPushButton:hover { background: #C05621; color: #FFFFFF; }
+        """)
+        cache_btn.clicked.connect(lambda: self.clear_cache_requested.emit())
+        layout.addWidget(cache_btn)
 
         # user_btn = QPushButton()
         # user_btn.setIcon(svg_icon("user", 14, _ICON_COLOR))

@@ -419,7 +419,7 @@ class ParameterForm(QWidget):
         self._add_row_with_info(fl, "Height AGL (m)", self.rx_height, "Receiver height above ground")
         self.rx_gain = FocusWheelSpinBox(); self.rx_gain.setRange(-50, 50); self.rx_gain.setValue(0)
         self._add_row_with_info(fl, "Rx gain (dBd)", self.rx_gain, "Receiver antenna gain in dBd")
-        self.rx_thr = FocusWheelSpinBox(); self.rx_thr.setRange(-200, 100); self.rx_thr.setValue(-110)
+        self.rx_thr = FocusWheelSpinBox(); self.rx_thr.setRange(-200, 100); self.rx_thr.setValue(-100)
         self._add_row_with_info(fl, "Rx threshold (dBm)", self.rx_thr, "Minimum required signal threshold")
 
         # -- 3. Model (EXPANDED BY DEFAULT, EXACTLY MATCHING CLOUDRF SCREENSHOT!)
@@ -439,11 +439,12 @@ class ParameterForm(QWidget):
         self._add_row_with_info(fl, "Reliability", self.reliability, "ITM statistical time/location reliability")
 
         self.context = QComboBox()
-        self.context.addItems(["Average / Mixed", "Urban", "Suburban", "Rural"])
+        self.context.addItems(["Urban", "Suburban", "Rural"])
+        self.context.setCurrentText("Rural")
         self._add_row_with_info(fl, "Context", self.context, "Propagation environment classification")
 
         self.diffraction = QComboBox()
-        self.diffraction.addItems(["Off (LOS)", "Knife-edge (KED)", "Deygout"])
+        self.diffraction.addItems(["Off (LOS)", "Knife-edge (KED)"])
         self._add_row_with_info(fl, "Diffraction", self.diffraction, "Diffraction loss routine")
 
         # Hidden fields for backward compatibility
@@ -816,14 +817,14 @@ class ParameterForm(QWidget):
         self.rx_coord.set(d.get("rx_lat"), d.get("rx_lon"))
         self.rx_height.setValue(float(d.get("rx_height", 1.5)))
         self.rx_gain.setValue(float(d.get("rx_gain_dbd", 0)))
-        self.rx_thr.setValue(float(d.get("rx_threshold_dbm", -110)))
+        self.rx_thr.setValue(float(d.get("rx_threshold_dbm", -100)))
         # Model
         model_idx = self.model.findData(int(d.get("model_pm", 3)))
         if model_idx >= 0:
             self.model.setCurrentIndex(model_idx)
         self.reliability.setCurrentText(f"{int(d.get('reliability', 50))}%")
         ctx_map = {1: "Urban", 2: "Suburban", 3: "Rural"}
-        self.context.setCurrentText(ctx_map.get(int(d.get("context_pe", 3)), "Average / Mixed"))
+        self.context.setCurrentText(ctx_map.get(int(d.get("context_pe", 3)), "Rural"))
         self.diffraction.setCurrentText("Knife-edge (KED)" if d.get("knife_edge") else "Off (LOS)")
         # Environment
         climate = d.get("climate_zone")
