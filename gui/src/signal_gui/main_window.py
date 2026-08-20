@@ -1,5 +1,5 @@
 """Main application window: sidebar form + map + terminal + controls matching CloudRF UI."""
-
+# Copyright (c) 2026-2029, RF Propagation. All rights reserved.
 from __future__ import annotations
 
 import json
