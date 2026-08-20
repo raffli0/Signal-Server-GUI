@@ -23,6 +23,7 @@ class CloudRFHeader(QFrame):
     section_clicked = Signal(str)  # Emits key of section to expand/scroll to
     save_profile_requested = Signal()
     load_profile_requested = Signal()
+    radio_link_requested = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -201,6 +202,33 @@ class CloudRFHeader(QFrame):
         """)
         self.btn_load_profile.clicked.connect(lambda: self.load_profile_requested.emit())
         layout.addWidget(self.btn_load_profile)
+
+        # Radio Link (point-to-point) — runs a Tx->Rx link analysis directly
+        sep_rl = QFrame()
+        sep_rl.setFrameShape(QFrame.Shape.VLine)
+        sep_rl.setStyleSheet("color: #373D44;")
+        layout.addWidget(sep_rl)
+
+        self.btn_radio_link = QPushButton()
+        self.btn_radio_link.setIcon(svg_icon("radio", 14, "#FFFFFF"))
+        self.btn_radio_link.setText(" Radio Link")
+        self.btn_radio_link.setToolTip("Compute a point-to-point Radio Link (Tx -> Rx) analysis")
+        self.btn_radio_link.setFixedHeight(26)
+        self.btn_radio_link.setStyleSheet("""
+            QPushButton {
+                background: #3182CE;
+                color: #FFFFFF;
+                border: 1px solid #2B6CB0;
+                border-radius: 4px;
+                font-size: 12px;
+                font-weight: 700;
+                padding: 0 10px;
+            }
+            QPushButton:hover { background: #2B6CB0; color: #FFFFFF; }
+            QPushButton:pressed { background: #1A365D; }
+        """)
+        self.btn_radio_link.clicked.connect(lambda: self.radio_link_requested.emit())
+        layout.addWidget(self.btn_radio_link)
 
         # Spacer to push right elements
         layout.addStretch()

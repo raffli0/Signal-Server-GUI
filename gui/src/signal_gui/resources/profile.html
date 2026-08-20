@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Path Profile</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #0f1115; color: #cbd5e0;
+    font-family: -apple-system, Segoe UI, Roboto, sans-serif; overflow: hidden; }
+  #wrap { position: absolute; inset: 0; display: flex; flex-direction: column; }
+  #bar { padding: 4px 8px; font-size: 11px; color: #94a3b8; background: #15181d;
+    border-bottom: 1px solid #23272e; }
+  #bar b { color: #e2e8f0; }
+  #bar .bad { color: #fc8181; font-weight: 700; }
+  #bar .ok { color: #68d391; font-weight: 700; }
+  #hint { float: right; color: #5b6675; font-weight: 400; }
+  #canvas { flex: 1; width: 100%; cursor: crosshair; }
+  .legend { display: inline-block; margin-left: 12px; }
+  .sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px;
+    vertical-align: middle; margin: 0 3px 0 8px; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="bar">
+    <span id="title"><b>Radio Link Path Profile</b></span>
+    <span id="hint">hover to track the Fresnel zone</span>
+    <span class="legend"><span class="sw" style="background:#a16207"></span>Terrain</span>
+    <span class="legend"><span class="sw" style="background:#4299e1"></span>LOS</span>
+    <span class="legend"><span class="sw" style="background:#48bb78"></span>60% Fresnel</span>
+    <span class="legend"><span class="sw" style="background:#fc8181"></span>Obstruction</span>
+  </div>
+  <canvas id="canvas"></canvas>
+</div>
+<script>
+/*__DATA__*/
+var canvas = document.getElementById('canvas');
+var ctx = canvas.getContext('2d');
+var profile = null, obstructed = false, hoverIdx = null, geom = null;
+
+function niceStep(x) {
+  if (x <= 0) return 1;
+  var p = Math.pow(10, Math.floor(Math.log10(x)));
+  var f = x / p;
+  var s = f < 1.5 ? 1 : f < 3 ? 2 : f < 7 ? 5 : 10;
+  return s * p;
+}
+
+function toLocal(e) {
+  var r = canvas.getBoundingClientRect();
+  return { x: e.clientX - r.left, y: e.clientY - r.top };
+}
+
+function clearProfile() {
+  profile = null; obstructed = false; hoverIdx = null; geom = null;
+  ctx.clearRect(0, 0, canvas.clientWidth, canvas.clientHeight);
+  document.getElementById('title').innerHTML = '<b>Radio Link Path Profile</b>';
+}
+
+function drawProfile(p, obs) {
+  profile = p; obstructed = obs; hoverIdx = null;
+  if (!p || !p.distance_km || p.distance_km.length < 2) { clearProfile(); return; }
+  render();
+}
+
+function render() {
+  if (!profile) return;
+  var d = profile.distance_km, t = profile.terrain_m, l = profile.los_m,
+      fl = profile.fresnel_lower_m, fu = profile.fresnel_upper_m;
+  var n = d.length;
+  var W = canvas.clientWidth, H = canvas.clientHeight;
+  var dpr = window.devicePixelRatio || 1;
+  canvas.width = W * dpr; canvas.height = H * dpr;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, W, H);
+
+  var dmin = d[0], dmax = d[n - 1];
+  var all = t.concat(l, fl, fu);
+  var emin = Math.min.apply(null, all), emax = Math.max.apply(null, all);
+  var pad = (emax - emin) * 0.08 || 10;
+  emin -= pad; emax += pad;
+  var mLeft = 52, mRight = 12, mTop = 12, mBot = 26;
+  var pw = W - mLeft - mRight, ph = H - mTop - mBot;
+  geom = { mLeft: mLeft, mRight: mRight, mTop: mTop, mBot: mBot, pw: pw, ph: ph,
+           dmin: dmin, dmax: dmax, emin: emin, emax: emax, n: n };
+  function X(i) { return mLeft + (d[i] - dmin) / (dmax - dmin || 1) * pw; }
+  function Y(v) { return mTop + (emax - v) / (emax - emin || 1) * ph; }
+
+  // grid
+  ctx.strokeStyle = '#23272e'; ctx.fillStyle = '#5b6675';
+  ctx.font = '10px sans-serif'; ctx.lineWidth = 1;
+  var rows = 5;
+  for (var r = 0; r <= rows; r++) {
+    var ey = emin + (emax - emin) * r / rows;
+    var yy = Y(ey);
+    ctx.beginPath(); ctx.moveTo(mLeft, yy); ctx.lineTo(W - mRight, yy); ctx.stroke();
+    ctx.fillText(Math.round(ey) + ' m', 4, yy + 3);
+  }
+  var cols = 5;
+  for (var c = 0; c <= cols; c++) {
+    var ex = dmin + (dmax - dmin) * c / cols;
+    var xx = mLeft + pw * c / cols;
+    ctx.beginPath(); ctx.moveTo(xx, mTop); ctx.lineTo(xx, H - mBot); ctx.stroke();
+    ctx.fillText(ex.toFixed(1) + ' km', xx - 10, H - 8);
+  }
+
+  // Fresnel zone (between lower and upper)
+  ctx.fillStyle = 'rgba(72,187,120,0.18)';
+  ctx.beginPath();
+  ctx.moveTo(X(0), Y(fu[0]));
+  for (var i = 1; i < n; i++) ctx.lineTo(X(i), Y(fu[i]));
+  for (var i = n - 1; i >= 0; i--) ctx.lineTo(X(i), Y(fl[i]));
+  ctx.closePath(); ctx.fill();
+
+  // ----- Terrain: hypsometric relief + contour lines (like a topo map) -----
+  function terrainPath() {
+    ctx.beginPath();
+    ctx.moveTo(X(0), Y(t[0]));
+    for (var i = 1; i < n; i++) ctx.lineTo(X(i), Y(t[i]));
+    ctx.lineTo(X(n - 1), H - mBot); ctx.lineTo(X(0), H - mBot);
+    ctx.closePath();
+  }
+  // Hypsometric vertical gradient (high = light, low = dark green)
+  var grad = ctx.createLinearGradient(0, Y(emax), 0, Y(emin));
+  grad.addColorStop(0.00, '#d9c9a3');
+  grad.addColorStop(0.20, '#b08a4f');
+  grad.addColorStop(0.45, '#8a7d33');
+  grad.addColorStop(0.70, '#4f7a3a');
+  grad.addColorStop(1.00, '#234d2b');
+  terrainPath();
+  ctx.fillStyle = grad; ctx.fill();
+
+  // Contour lines inside the terrain polygon (mimics map contours)
+  var step = niceStep((emax - emin) / 6);
+  ctx.save();
+  terrainPath(); ctx.clip();
+  ctx.strokeStyle = 'rgba(15,25,15,0.35)'; ctx.lineWidth = 1;
+  for (var e = Math.ceil(emin / step) * step; e < emax; e += step) {
+    var yy = Y(e);
+    ctx.beginPath(); ctx.moveTo(mLeft, yy); ctx.lineTo(W - mRight, yy); ctx.stroke();
+  }
+  ctx.restore();
+
+  // Bold terrain outline
+  ctx.strokeStyle = '#fbbf24'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(X(0), Y(t[0]));
+  for (var i = 1; i < n; i++) ctx.lineTo(X(i), Y(t[i]));
+  ctx.stroke();
+
+  // LOS line
+  ctx.strokeStyle = '#4299e1'; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.moveTo(X(0), Y(l[0]));
+  for (var i = 1; i < n; i++) ctx.lineTo(X(i), Y(l[i]));
+  ctx.stroke();
+
+  // Obstruction markers: where terrain enters fresnel zone
+  ctx.fillStyle = '#fc8181';
+  for (var i = 0; i < n; i++) {
+    if (t[i] > fl[i]) {
+      ctx.beginPath();
+      ctx.arc(X(i), Y(t[i]), 3.5, 0, 2 * Math.PI); ctx.fill();
+    }
+  }
+
+  // Antenna endpoints
+  function dot(i, col) { ctx.fillStyle = col; ctx.beginPath();
+    ctx.arc(X(i), Y(t[i]), 4, 0, 2 * Math.PI); ctx.fill(); }
+  dot(0, '#ffd400'); dot(n - 1, '#ff00ff');
+
+  // Hover crosshair + readout
+  if (hoverIdx != null && hoverIdx >= 0 && hoverIdx < n) {
+    var hx = X(hoverIdx);
+    ctx.strokeStyle = 'rgba(226,232,240,0.55)'; ctx.lineWidth = 1;
+    ctx.setLineDash([4, 3]);
+    ctx.beginPath(); ctx.moveTo(hx, mTop); ctx.lineTo(hx, H - mBot); ctx.stroke();
+    ctx.setLineDash([]);
+    // markers on the tracked curves
+    ctx.fillStyle = '#f6c453';
+    ctx.beginPath(); ctx.arc(hx, Y(t[hoverIdx]), 4, 0, 2 * Math.PI); ctx.fill();
+    ctx.fillStyle = '#4299e1';
+    ctx.beginPath(); ctx.arc(hx, Y(l[hoverIdx]), 3.5, 0, 2 * Math.PI); ctx.fill();
+    ctx.fillStyle = '#48bb78';
+    ctx.beginPath(); ctx.arc(hx, Y(fl[hoverIdx]), 3, 0, 2 * Math.PI); ctx.fill();
+    ctx.beginPath(); ctx.arc(hx, Y(fu[hoverIdx]), 3, 0, 2 * Math.PI); ctx.fill();
+    drawReadout(hoverIdx, hx);
+  }
+
+  // status text
+  var bar = document.getElementById('title');
+  if (obstructed) {
+    bar.innerHTML = '<b>Radio Link Path Profile</b> &nbsp; <span class="bad">OBSTRUCTED</span>';
+  } else {
+    bar.innerHTML = '<b>Radio Link Path Profile</b> &nbsp; <span class="ok">CLEAR</span>';
+  }
+}
+
+function drawReadout(i, hx) {
+  var d = profile.distance_km, t = profile.terrain_m, l = profile.los_m,
+      fl = profile.fresnel_lower_m;
+  var frad = l[i] - fl[i];          // 60% Fresnel radius (fl = los - radius)
+  var clr = l[i] - t[i];            // terrain -> LOS clearance
+  var blocked = t[i] > fl[i];
+  var lines = [
+    'Dist: ' + d[i].toFixed(2) + ' km',
+    'Terrain: ' + t[i].toFixed(1) + ' m',
+    'LOS: ' + l[i].toFixed(1) + ' m',
+    'Fresnel60 r: ' + frad.toFixed(1) + ' m',
+    'Terrain->LOS: ' + clr.toFixed(1) + ' m',
+    blocked ? 'OBSTRUCTED' : 'CLEAR'
+  ];
+  ctx.font = '10px monospace';
+  var bw = 150, bh = lines.length * 13 + 8;
+  var bx = hx + 12;
+  if (bx + bw > geom.mLeft + geom.pw) bx = hx - bw - 12;
+  var by = geom.mTop + 6;
+  ctx.fillStyle = 'rgba(15,17,21,0.92)';
+  ctx.strokeStyle = '#3182CE'; ctx.lineWidth = 1;
+  ctx.fillRect(bx, by, bw, bh); ctx.strokeRect(bx, by, bw, bh);
+  for (var k = 0; k < lines.length; k++) {
+    if (lines[k] === 'OBSTRUCTED') ctx.fillStyle = '#fc8181';
+    else if (lines[k] === 'CLEAR') ctx.fillStyle = '#68d391';
+    else ctx.fillStyle = '#cbd5e0';
+    ctx.fillText(lines[k], bx + 6, by + 14 + k * 13);
+  }
+}
+
+canvas.addEventListener('mousemove', function (e) {
+  if (!profile || !geom) return;
+  var c = toLocal(e);
+  if (c.x < geom.mLeft || c.x > geom.mLeft + geom.pw) {
+    if (hoverIdx !== null) { hoverIdx = null; render(); }
+    return;
+  }
+  var frac = (c.x - geom.mLeft) / geom.pw;
+  var i = Math.round(frac * (geom.n - 1));
+  i = Math.max(0, Math.min(geom.n - 1, i));
+  if (i !== hoverIdx) { hoverIdx = i; render(); }
+});
+canvas.addEventListener('mouseleave', function () {
+  if (hoverIdx !== null) { hoverIdx = null; render(); }
+});
+
+window.addEventListener('resize', function () { if (profile) render(); });
+if (window.__profile) drawProfile(window.__profile, false);
+else { ctx.clearRect(0, 0, canvas.clientWidth, canvas.clientHeight); }
+</script>
+</body>
+</html>

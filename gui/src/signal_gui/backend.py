@@ -16,6 +16,7 @@ from PySide6.QtCore import QThread, Signal
 from . import params as params_mod
 from . import output_stage
 from . import dem_convert
+from . import link_parse
 from .dem_convert import DemResolveError
 
 
@@ -233,6 +234,29 @@ class RunWorker(QThread):
                 stdout_text.append(line)
                 self.output_line.emit(line)
             proc.wait()
+            # --- Radio Link (point-to-point) mode ---
+            if p.get("path_profile"):
+                report_file = self.output_basename + ".txt"
+                if not os.path.exists(report_file):
+                    if proc.returncode != 0:
+                        self.error_occurred.emit(
+                            f"Signal-Server exited with code {proc.returncode}"
+                        )
+                    else:
+                        self.error_occurred.emit(
+                            "Engine finished but link report not found."
+                        )
+                    return
+                try:
+                    link = link_parse.parse_link_output(
+                        self.output_basename, p.get("rx_threshold_dbm")
+                    )
+                except Exception as exc:  # pragma: no cover
+                    self.error_occurred.emit(f"Failed to parse link output: {exc}")
+                    return
+                self.finished.emit(True, "\n".join(stdout_text), {"link": link})
+                return
+
             ppm = self.output_basename + ".ppm"
             output_exists = os.path.exists(ppm)
             if proc.returncode != 0 and not output_exists:

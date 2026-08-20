@@ -378,14 +378,43 @@ def _collect_demnas_tifs(folder: str) -> list[str]:
     return sorted(found)
 
 
+def _demnas_folder_signature(folder: str) -> str:
+    """Stable hash of a DEMNAS folder's ``.tif`` contents (recursive).
+
+    Keyed by the sorted list of tiles plus their size and mtime, so adding,
+    removing, or replacing a tile invalidates the cached VRT/SDF (instead of
+    the folder *path* alone, which never changes when a new tile is dropped
+    into an existing folder).
+    """
+    parts: list[str] = []
+    for root, _dirs, files in os.walk(folder):
+        for f in files:
+            low = f.lower()
+            if low.endswith(".tif") or low.endswith(".tiff"):
+                p = os.path.join(root, f)
+                rel = os.path.relpath(p, folder)
+                try:
+                    st = os.stat(p)
+                    parts.append(f"{rel}:{st.st_size}:{int(st.st_mtime)}")
+                except OSError:
+                    parts.append(rel)
+    if not parts:
+        raise DemResolveError(
+            f"Folder DEMNAS '{folder}' tidak berisi file .tif/.tiff."
+        )
+    parts.sort()
+    return hashlib.md5("|".join(parts).encode("utf-8")).hexdigest()[:10]
+
+
 def _demnas_vrt(folder: str, cache_dir: str) -> str:
     """Merge all DEMNAS ``.tif`` tiles in ``folder`` into one cached VRT.
 
-    The VRT is keyed by the folder path so a different folder (or a changed
-    selection) never reuses a stale virtual mosaic. The VRT itself is virtual
-    -- ``gdalwarp`` only reads the tiles covering the requested clip window.
+    The VRT is keyed by the folder's *contents* (tile list + size + mtime) so
+    adding, removing, or replacing a ``.tif`` invalidates the stale virtual
+    mosaic. ``gdalwarp`` only reads the tiles covering the requested clip
+    window, so the VRT itself stays cheap to rebuild.
     """
-    key = hashlib.md5(os.path.abspath(folder).encode("utf-8")).hexdigest()[:10]
+    key = _demnas_folder_signature(folder)
     vrt_dir = _cache_sub(cache_dir, "demnas_vrt")
     vrt = os.path.join(vrt_dir, f"{key}.vrt")
     if os.path.exists(vrt) and os.path.getsize(vrt) > 0:
@@ -463,9 +492,10 @@ def demnas_folder_to_sdf(
     hd = engine == "HD"
     tile_size = 3601 if hd else 1201
     res_deg = 1.0 / (tile_size - 1)
-    # Namespace the cache by the source folder so swapping DEMNAS datasets
-    # never reuses stale .sdf tiles produced from a different mosaic.
-    key = hashlib.md5(os.path.abspath(folder).encode("utf-8")).hexdigest()[:10]
+    # Namespace the cache by the folder's *contents* (not its path) so dropping
+    # a new .tif into an existing folder rebuilds the .sdf tiles instead of
+    # reusing a stale mosaic.
+    key = _demnas_folder_signature(folder)
     base = f"demnas_hd_{key}" if hd else f"demnas_{key}"
     raw_dir = _cache_sub(cache_dir, os.path.join("raw", base))
     sdf_dir = _cache_sub(cache_dir, os.path.join("sdf", base))

@@ -368,3 +368,12 @@ class MapView(QWebEngineView):
         self.page().runJavaScript(
             "if (typeof map !== 'undefined' && map) { map.invalidateSize(false); }")
 
+    def draw_link(self, tx_lat: float, tx_lon: float, rx_lat: float, rx_lon: float) -> None:
+        """Draw the Tx->Rx Radio Link polyline on the map."""
+        self.page().runJavaScript(
+            f"drawLink({tx_lat},{tx_lon},{rx_lat},{rx_lon});")
+
+    def clear_link(self) -> None:
+        """Remove the Radio Link polyline from the map."""
+        self.page().runJavaScript("clearLink();")
+

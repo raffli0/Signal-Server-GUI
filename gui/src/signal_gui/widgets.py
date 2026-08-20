@@ -258,6 +258,7 @@ class ParameterForm(QWidget):
     start_requested = Signal()
     stop_requested = Signal()
     export_requested = Signal(str)  # selected export format (e.g. "KMZ")
+    demnas_dir_picked = Signal()    # DEMNAS folder (re)selected, even if unchanged
 
     def __init__(self, signal_server_root: str = "", parent=None):
         super().__init__(parent)
@@ -702,6 +703,7 @@ class ParameterForm(QWidget):
         )
         if folder:
             self.demnas_dir.setText(folder)
+            self.demnas_dir_picked.emit()
 
     def set_demnas_status(self, state: str, text: str) -> None:
         colors = {"ok": "#2ECC71", "bad": "#E53E3E", "idle": "#718096"}

@@ -705,6 +705,22 @@
       map.flyTo([lat, lon], Math.max(map.getZoom(), 14));
     }
 
+    // === Radio Link (Tx -> Rx) polyline ===
+    var linkLine = null;
+    function drawLink(txLat, txLon, rxLat, rxLon) {
+      if (linkLine) { map.removeLayer(linkLine); linkLine = null; }
+      var pts = [], n = 64;
+      for (var i = 0; i <= n; i++) {
+        var f = i / n;
+        pts.push([txLat + (rxLat - txLat) * f, txLon + (rxLon - txLon) * f]);
+      }
+      linkLine = L.polyline(pts, { color: '#ffec3d', weight: 3, opacity: 0.9, dashArray: '6,6' }).addTo(map);
+      map.fitBounds(L.latLngBounds([[txLat, txLon], [rxLat, rxLon]]), { padding: [40, 40] });
+    }
+    function clearLink() {
+      if (linkLine) { map.removeLayer(linkLine); linkLine = null; }
+    }
+
     function changeOpacity(val) {
       // Slider value is already updated by the input event; recompute the
       // effective opacity (respecting the current zoom adaptation).
