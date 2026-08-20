@@ -9,3 +9,13 @@ venv/
 
 # App cache (downloaded DEM / SDF terrain data, regenerable)
 cache/
+
+# PyInstaller build artefacts
+dist/
+build/
+*.spec.bak
+
+# Built (Windows) engine binaries dropped in for packaging — not committed
+packaging/engine/**/*.exe
+packaging/engine/**/*.dll
+

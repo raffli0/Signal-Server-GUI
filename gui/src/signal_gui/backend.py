@@ -18,6 +18,7 @@ from . import output_stage
 from . import dem_convert
 from . import link_parse
 from .dem_convert import DemResolveError
+from ._bundle import app_root, exe as _exe
 
 
 def find_engines(root: Optional[str] = None) -> dict:
@@ -27,9 +28,8 @@ def find_engines(root: Optional[str] = None) -> dict:
     Falls back to common build locations and PATH.
     """
     if root is None:
-        here = os.path.dirname(os.path.abspath(__file__))
-        # .../gui/src/signal_gui -> .../RF-Propagation
-        root = os.path.dirname(os.path.dirname(os.path.dirname(here)))
+        from ._bundle import app_root
+        root = app_root()
     ss = os.path.join(root, "Signal-Server")
     out = {}
     for key, name in (
@@ -38,30 +38,30 @@ def find_engines(root: Optional[str] = None) -> dict:
         ("signalserverLIDAR", "signalserverLIDAR"),
     ):
         cands = [
-            os.path.join(ss, "build", name),
-            os.path.join(ss, "src", "build", name),
-            os.path.join(ss, name),
-            name,
+            os.path.join(ss, "build", _exe(name)),
+            os.path.join(ss, "src", "build", _exe(name)),
+            os.path.join(ss, _exe(name)),
+            _exe(name),
         ]
         for c in cands:
-            if c and (os.path.exists(c) or c == name):
+            if c and (os.path.exists(c) or c == _exe(name)):
                 if os.path.exists(c):
                     out[key] = c
                     break
-                out[key] = name  # rely on PATH
+                out[key] = _exe(name)  # rely on PATH
                 break
     for key, name in (("srtm2sdf", "srtm2sdf"), ("srtm2sdf-hd", "srtm2sdf-hd")):
         cands = [
-            os.path.join(ss, "utils", "sdf", "usgs2sdf", "build", name),
-            os.path.join(ss, "utils", "sdf", "usgs2sdf", name),
-            name,
+            os.path.join(ss, "utils", "sdf", "usgs2sdf", "build", _exe(name)),
+            os.path.join(ss, "utils", "sdf", "usgs2sdf", _exe(name)),
+            _exe(name),
         ]
         for c in cands:
-            if c and (os.path.exists(c) or c == name):
+            if c and (os.path.exists(c) or c == _exe(name)):
                 if os.path.exists(c):
                     out[key] = c
                     break
-                out[key] = name
+                out[key] = _exe(name)
                 break
     return out
 

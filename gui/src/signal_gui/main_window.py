@@ -60,8 +60,8 @@ class MainWindow(QMainWindow):
         self._apply_global_theme()
 
     def _detect_root(self) -> str:
-        here = os.path.dirname(os.path.abspath(__file__))
-        return os.path.dirname(os.path.dirname(os.path.dirname(here)))
+        from ._bundle import app_root
+        return app_root()
 
     def _apply_global_theme(self):
         """Apply sleek dark theme matching CloudRF."""

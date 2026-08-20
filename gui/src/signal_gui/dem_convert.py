@@ -616,13 +616,13 @@ def demnas_folder_to_asc(
 def which_srtm2sdf(variant: str = "Standard") -> Optional[str]:
     """Locate the built srtm2sdf / srtm2sdf-hd binary."""
     name = "srtm2sdf-hd" if variant == "HD" else "srtm2sdf"
-    repo = os.path.dirname(os.path.dirname(os.path.dirname(
-        os.path.dirname(os.path.abspath(__file__)))))
+    from ._bundle import app_root, exe as _exe
+    repo = app_root()
     # repo/gui/src/signal_gui/params.py -> walk up to Signal-Server
     candidates = [
-        os.path.join(repo, "Signal-Server", "utils", "sdf", "usgs2sdf", "build", name),
-        os.path.join(repo, "Signal-Server", "utils", "sdf", "usgs2sdf", name),
-        shutil.which(name),
+        os.path.join(repo, "Signal-Server", "utils", "sdf", "usgs2sdf", "build", _exe(name)),
+        os.path.join(repo, "Signal-Server", "utils", "sdf", "usgs2sdf", _exe(name)),
+        shutil.which(_exe(name)),
     ]
     for c in candidates:
         if c and os.path.exists(c):
