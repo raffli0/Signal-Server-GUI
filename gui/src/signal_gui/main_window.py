@@ -393,9 +393,14 @@ class MainWindow(QMainWindow):
                     "Mode Offline membutuhkan folder DEMNAS (.tif). "
                     "Pilih folder di baris 'DEMNAS folder' (bagian Output)."
                 )
+            # Target terrain cell size for the offline conversion, derived
+            # from the DEM resolution setting (arc-seconds / metres -> degrees).
+            # 3"~90 m, 1"~30 m, 15 m. The actual cell size is clamped to the
+            # source resolution and a maximum cell count in dem_convert.
             res = int(p.get("dem_resolution", 3))
-            if res == 15:
-                res = 3  # DEMNAS resolution is intrinsic; ignore Viewfinder setting
+            dem_cellsize = {3: 3.0 / 3600.0,
+                            1: 1.0 / 3600.0,
+                            15: 15.0 / 111320.0}.get(res)
             engine = p.get("engine", "Standard")
             tx_lat, tx_lon = p["tx_lat"], p["tx_lon"]
             if p.get("path_profile"):
@@ -414,7 +419,7 @@ class MainWindow(QMainWindow):
                 "ppd": int(p.get("resolution", 1200)),
                 "lat_lo": lat_lo, "lat_hi": lat_hi,
                 "lon_lo": lon_lo, "lon_hi": lon_hi,
-                "resolution": res, "cache_dir": self.cache_dir,
+                "dem_cellsize": dem_cellsize, "cache_dir": self.cache_dir,
             }
         # ---- Online: Viewfinder SRTM (automatic download) ----
         if p.get("terrain_source") == "lidar" or p.get("sdf_dir"):

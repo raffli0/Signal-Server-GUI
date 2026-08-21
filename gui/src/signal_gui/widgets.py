@@ -368,7 +368,13 @@ class ParameterForm(QWidget):
         self.frequency = FocusWheelSpinBox(); self.frequency.setRange(0.1, 100000); self.frequency.setValue(900)
         self._add_row_with_info(fl, "Frequency (MHz)", self.frequency, "Operating frequency in MHz")
         self.dem_res = QComboBox(); self.dem_res.addItems(["90 m (dem3)", "30 m (dem1)", "15 m TIF"])
-        self._add_row_with_info(fl, "Auto DEM resolution", self.dem_res, "Elevation data resolution")
+        self._add_row_with_info(
+            fl, "Auto DEM resolution", self.dem_res,
+            "Resolusi data elevasi. Mode Online: memilih produk Viewfinder "
+            "(dem3≈90 m, dem1≈30 m, TIF15). Mode Offline DEMNAS: target "
+            "resolusi konversi terrain LIDAR (3\"≈90 m, 1\"≈30 m, 15 m), "
+            "otomatis dibatasi ukuran file maksimum. Tidak berpengaruh pada "
+            "mode SDF (resolusi mengikuti varian engine).")
 
         # Signal
         fl.addRow(self._sub_label("Signal"))

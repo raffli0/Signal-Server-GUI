@@ -566,18 +566,50 @@ def demnas_folder_to_sdf(
     return sdf_dir
 
 
+def _asc_cellsize(
+    span: float,
+    native: float,
+    target: Optional[float],
+    max_cells: int,
+    ppd: int = 1200,
+) -> float:
+    """Pick the LIDAR ``.asc`` cell size (degrees) for a run bounding box.
+
+    Starts from the requested ``target`` (from the DEM resolution setting),
+    falling back to the legacy ``span/ppd`` behaviour when unspecified, then
+    clamps so that:
+
+    * the grid is never finer than the source data (``native``), and
+    * the total cell count stays under ``max_cells`` (bounds file size and
+      engine load time — the .asc is plain text).
+    """
+    if target and target > 0:
+        cellsize = float(target)
+    else:
+        cellsize = span / float(max(1, ppd)) if ppd else (1.0 / 1200.0)
+    if native and native > 0:
+        cellsize = max(cellsize, native)
+    if span > 0 and max_cells > 0:
+        cellsize = max(cellsize, span / math.sqrt(max_cells))
+    return cellsize
+
+
 def demnas_folder_to_asc(
     folder: str,
     cache_dir: str,
     lat_lo: float, lat_hi: float, lon_lo: float, lon_hi: float,
     ppd: int = 1200,
+    target_cellsize: Optional[float] = None,
+    max_cells: int = 6_000_000,
 ) -> str:
     """Convert a local DEMNAS folder (``.tif`` tiles) to a LIDAR ``.asc``.
 
     The tiles are merged into a VRT, reprojected to EPSG:4326 and clipped to
-    the run bounding box, resampled to roughly the engine's pixels-per-tile
-    (``ppd``) so the file stays small and fast to load. The ASCII grid is
-    written manually (not via ``gdal_translate -of AAIGrid``) because
+    the run bounding box, then resampled to the requested ``target_cellsize``
+    (degrees; from the DEM resolution setting). When unspecified, the legacy
+    ``span/ppd`` heuristic applies. The cell size is clamped to the source
+    resolution and by ``max_cells`` so the file stays loadable. The ASCII grid
+    is written manually (not via ``gdal_translate -of AAIGrid``) because
     Signal-Server's LIDAR loader parses the header with a strict ``fscanf``
     that expects an *integer* ``NODATA_value``; GDAL emits it as a float.
     """
@@ -586,10 +618,12 @@ def demnas_folder_to_asc(
 
     vrt = _demnas_vrt(folder, cache_dir)
 
-    # Resample so the grid is ~ppd cells across the (larger) span. This bounds
-    # the file size regardless of how fine the source DEMNAS DEM actually is.
     span = max(lon_hi - lon_lo, lat_hi - lat_lo)
-    cellsize_deg = span / float(max(1, ppd)) if ppd else (1.0 / 1200.0)
+    ds_vrt = gdal.Open(vrt)
+    native = abs(ds_vrt.GetGeoTransform()[1]) if ds_vrt is not None else None
+    ds_vrt = None
+    cellsize_deg = _asc_cellsize(span, native or 0.0, target_cellsize,
+                                 max_cells, ppd)
 
     out_dir = _cache_sub(cache_dir, "lidar")
     clipped = os.path.join(out_dir, "clip.tif")

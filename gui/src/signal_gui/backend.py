@@ -128,6 +128,7 @@ class RunWorker(QThread):
                 spec["folder"], spec["cache_dir"],
                 spec["lat_lo"], spec["lat_hi"], spec["lon_lo"], spec["lon_hi"],
                 ppd=spec.get("ppd", 1200),
+                target_cellsize=spec.get("dem_cellsize"),
             )
             p["lidar_file"] = asc
             p["terrain_source"] = "lidar"
