@@ -35,6 +35,11 @@ class FocusWheelSpinBox(QDoubleSpinBox):
         else:
             event.ignore()
 
+    def textFromValue(self, val: float) -> str:
+        # Clean display: "1200.00" -> "1200", "1.50" -> "1.5", "0.10" -> "0.1".
+        s = f"{val:.2f}".rstrip("0").rstrip(".")
+        return s or "0"
+
 
 _SECTION_ICON = {
     "tx": "tower", "signal": "wifi", "feeder": "database", "antenna": "antenna",
