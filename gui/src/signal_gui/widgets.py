@@ -446,11 +446,18 @@ class ParameterForm(QWidget):
         self.context = QComboBox()
         self.context.addItems(["Urban", "Suburban", "Rural"])
         self.context.setCurrentText("Rural")
-        self._add_row_with_info(fl, "Context", self.context, "Propagation environment classification")
+        self._add_row_with_info(
+            fl, "Context", self.context,
+            "Propagation environment classification. Only used by empirical "
+            "models (Hata, ECC33, SUI, COST231-Hata, Ericsson); ignored by "
+            "ITM, LOS, FSPL, ITWOM, Plane Earth, Egli and Soil.")
 
         self.diffraction = QComboBox()
         self.diffraction.addItems(["Off (LOS)", "Knife-edge (KED)"])
-        self._add_row_with_info(fl, "Diffraction", self.diffraction, "Diffraction loss routine")
+        self._add_row_with_info(
+            fl, "Diffraction", self.diffraction,
+            "Knife-edge diffraction (-ked) adds terrain diffraction loss for "
+            "empirical models. ITM/ITWOM already include diffraction built-in.")
 
         # Hidden fields for backward compatibility
         self.knife = QCheckBox("Knife-edge diffraction (-ked)")
@@ -638,7 +645,7 @@ class ParameterForm(QWidget):
         row_exp = QHBoxLayout()
         row_exp.setSpacing(6)
         self.export_fmt = QComboBox()
-        self.export_fmt.addItems(["KMZ", "PNG", "GeoTIFF", "KMZ (3D)", "SHP"])
+        self.export_fmt.addItems(["KMZ", "KML", "PNG", "GeoTIFF", "KMZ (3D)", "SHP"])
         self.export_fmt.setStyleSheet("""
             QComboBox {
                 background: #121417;

@@ -748,7 +748,25 @@ class MainWindow(QMainWindow):
                 self, "Export KMZ", base + ".kmz", "KMZ (*.kmz)")
             if not path:
                 return
-            self._export_kmz(result, png, bbox, path)
+            self._export_kmz(result, png, bbox, path, base)
+        elif fmt == "KML":
+            path, _ = QFileDialog.getSaveFileName(
+                self, "Export KML", base + ".kml", "KML (*.kml)")
+            if not path:
+                return
+            kml_path = result.get("kml")
+            if kml_path and os.path.exists(kml_path):
+                with open(kml_path, "r", encoding="utf-8") as fh:
+                    kml_text = fh.read()
+            elif bbox is not None:
+                from . import output_stage
+                kml_text = output_stage.build_kml(os.path.basename(png), bbox, base)
+            else:
+                QMessageBox.warning(self, "Export", "No bounding box available for KML.")
+                return
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(kml_text)
+            self.status.setText(f"Exported KML: {path}")
         elif fmt == "PNG":
             path, _ = QFileDialog.getSaveFileName(
                 self, "Export PNG", base + ".png", "PNG (*.png)")
@@ -765,7 +783,7 @@ class MainWindow(QMainWindow):
         if fmt in ("KMZ", "KMZ (3D)"):
             self.status.setText(f"Exported {fmt}: {path}")
 
-    def _export_kmz(self, result: dict, png: str, bbox, path: str) -> None:
+    def _export_kmz(self, result: dict, png: str, bbox, path: str, base: str) -> None:
         """Build a KMZ (zipped KML GroundOverlay + PNG image)."""
         import zipfile
 

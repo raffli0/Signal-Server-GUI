@@ -175,7 +175,13 @@ def build_argv(
 
     # --- Model ---
     _opt(args, "-pm", params.get("model_pm"))
-    _opt(args, "-pe", params.get("context_pe"))
+    # Ericsson (-pm 9) maps its environment variant differently from the other
+    # empirical models (ericsson.cc: 1=Rural, 2=Suburban, anything else=Urban),
+    # so translate the GUI's Urban/Suburban/Rural (1/2/3) accordingly.
+    pe = params.get("context_pe")
+    if params.get("model_pm") == 9 and pe:
+        pe = {3: 1, 2: 2}.get(pe, 0)  # Rural->1, Suburban->2, Urban->0
+    _opt(args, "-pe", pe)
     if params.get("knife_edge"):
         args.append("-ked")
     _opt(args, "-rel", params.get("reliability"))
