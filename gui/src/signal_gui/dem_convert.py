@@ -381,12 +381,13 @@ def _collect_demnas_tifs(folder: str) -> list[str]:
 def _demnas_folder_signature(folder: str) -> str:
     """Stable hash of a DEMNAS folder's ``.tif`` contents (recursive).
 
-    Keyed by the sorted list of tiles plus their size and mtime, so adding,
-    removing, or replacing a tile invalidates the cached VRT/SDF (instead of
-    the folder *path* alone, which never changes when a new tile is dropped
-    into an existing folder).
+    Keyed by the folder's absolute location plus the sorted list of tiles and
+    their size and mtime, so adding, removing, or replacing a tile — or moving
+    the whole folder to a different path — invalidates the cached VRT/SDF
+    (instead of the folder *path* alone, which never changes when a new tile is
+    dropped into an existing folder).
     """
-    parts: list[str] = []
+    parts: list[str] = [os.path.realpath(folder)]
     for root, _dirs, files in os.walk(folder):
         for f in files:
             low = f.lower()
@@ -398,7 +399,7 @@ def _demnas_folder_signature(folder: str) -> str:
                     parts.append(f"{rel}:{st.st_size}:{int(st.st_mtime)}")
                 except OSError:
                     parts.append(rel)
-    if not parts:
+    if len(parts) < 2:
         raise DemResolveError(
             f"Folder DEMNAS '{folder}' tidak berisi file .tif/.tiff."
         )
@@ -409,16 +410,23 @@ def _demnas_folder_signature(folder: str) -> str:
 def _demnas_vrt(folder: str, cache_dir: str) -> str:
     """Merge all DEMNAS ``.tif`` tiles in ``folder`` into one cached VRT.
 
-    The VRT is keyed by the folder's *contents* (tile list + size + mtime) so
-    adding, removing, or replacing a ``.tif`` invalidates the stale virtual
-    mosaic. ``gdalwarp`` only reads the tiles covering the requested clip
-    window, so the VRT itself stays cheap to rebuild.
+    The VRT is keyed by the folder's location plus its contents (tile list +
+    size + mtime) so adding, removing, or replacing a ``.tif`` — or moving the
+    folder — invalidates the stale virtual mosaic. ``gdalwarp`` only reads the
+    tiles covering the requested clip window, so the VRT itself stays cheap to
+    rebuild.
     """
     key = _demnas_folder_signature(folder)
     vrt_dir = _cache_sub(cache_dir, "demnas_vrt")
     vrt = os.path.join(vrt_dir, f"{key}.vrt")
     if os.path.exists(vrt) and os.path.getsize(vrt) > 0:
-        return vrt
+        if _vrt_sources_exist(vrt):
+            return vrt
+        # Stale VRT: its source tiles were moved/deleted — rebuild below.
+        try:
+            os.remove(vrt)
+        except OSError:
+            pass
     tifs = _collect_demnas_tifs(folder)
     if not tifs:
         raise DemResolveError(
@@ -431,6 +439,19 @@ def _demnas_vrt(folder: str, cache_dir: str) -> str:
     # per-tile reprojection are unambiguous; DEMNAS tiles are always EPSG:4326.
     _run(["gdalbuildvrt", "-a_srs", "EPSG:4326", "-input_file_list", lst, vrt])
     return vrt
+
+
+def _vrt_sources_exist(vrt: str) -> bool:
+    """True if every ``SourceFilename`` referenced by a cached VRT still exists."""
+    try:
+        with open(vrt, "r", encoding="utf-8") as fh:
+            txt = fh.read()
+    except OSError:
+        return False
+    for m in re.findall(r"<SourceFilename[^>]*>([^<]+)</SourceFilename>", txt):
+        if not os.path.exists(m):
+            return False
+    return True
 
 
 def _sample_elevation(vrt: str, lat: float, lon: float) -> Optional[float]:

@@ -112,6 +112,7 @@ class RunWorker(QThread):
             )
             p["sdf_dir"] = sdf_dir
             p["_demnas"] = True
+            p["_demnas_mode"] = "demnas_sdf"
             # The engine segfaults (SIGSEGV) in its "sea-level" fallback when the
             # required SDF terrain is missing. Refuse to launch if the matching
             # SDF variant is absent (HD needs "-hd" tiles, others need plain ones),
@@ -130,6 +131,8 @@ class RunWorker(QThread):
             )
             p["lidar_file"] = asc
             p["terrain_source"] = "lidar"
+            p["_demnas"] = True
+            p["_demnas_mode"] = "demnas_lidar"
             return
         if "tile_code" in spec:
             self.progress.emit(f"Preparing DEM tile {spec['tile_code']} ...")
@@ -215,6 +218,8 @@ class RunWorker(QThread):
             argv = params_mod.build_argv(
                 p, engine_exe=self.engine_exe, output_basename=self.output_basename
             )
+            for line in params_mod.format_run_summary(p, argv, self.engine_exe):
+                self.output_line.emit(line)
             self.progress.emit("Running Signal-Server: " + " ".join(argv))
             # Suppress LeakSanitizer post-run reports: the Signal-Server binary
             # is built with -fsanitize=address which includes LSan. LSan fires
@@ -277,7 +282,8 @@ class RunWorker(QThread):
                 except (ValueError, TypeError):
                     pass
             result = output_stage.stage_output(
-                ppm, "\n".join(stdout_text), title="Signal-Server Coverage", tx_coords=tx_coords
+                ppm, "\n".join(stdout_text), title="Signal-Server Coverage",
+                tx_coords=tx_coords, color_file=p.get("color_file")
             )
             self.finished.emit(True, "\n".join(stdout_text), result)
         except DemResolveError:

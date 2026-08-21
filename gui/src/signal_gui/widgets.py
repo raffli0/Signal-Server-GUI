@@ -476,9 +476,11 @@ class ParameterForm(QWidget):
         # -- 5. Output / Engine
         fl = self._section("output", _SECTION_ICON["output"], "Output", expanded=False)
         self.engine = QComboBox(); self.engine.addItems(list(params_mod.ENGINES.keys()))
+        self.engine.setCurrentText("LIDAR")
         self._add_row_with_info(fl, "Engine", self.engine, "Signal-Server engine build")
         self.dem_source = QComboBox()
         self.dem_source.addItems(["Online – Viewfinder SRTM", "Offline – DEMNAS (.tif)"])
+        self.dem_source.setCurrentIndex(1)
         self._add_row_with_info(
             fl, "DEM source", self.dem_source,
             "Sumber elevasi: Online (unduh Viewfinder SRTM) atau Offline (file DEMNAS .tif lokal, tanpa internet)")
@@ -512,6 +514,7 @@ class ParameterForm(QWidget):
         self.dem_source.currentTextChanged.connect(self._update_demnas_visibility)
         self._update_demnas_visibility()
         self.terrain = QComboBox(); self.terrain.addItems(["SDF (terrain)", "LIDAR (.asc)"])
+        self.terrain.setCurrentIndex(1)
         self._add_row_with_info(fl, "Terrain source", self.terrain, "Elevation data source format (SDF = engine sama dgn online; LIDAR = engine LIDAR)")
         self.sdf_btn = QPushButton("SDF directory...")
         self.sdf_btn.setStyleSheet(btn_ss)
@@ -540,10 +543,17 @@ class ParameterForm(QWidget):
         self.color_btn.setStyleSheet(btn_ss)
         self.color_path = QLineEdit()
         self.color_path.setReadOnly(True)
-        self.color_path.setPlaceholderText("Default: rainbow.dcf")
+        self.color_path.setPlaceholderText("Default: radiomobile.dcf")
         self.color_path.setStyleSheet("background: #1B1E22; color: #A0AEC0; border: 1px solid #3F474F; border-radius: 3px; padding: 3px; font-size: 10px;")
-        default_color = os.path.join(self.ss_root, "color", "rainbow.dcf") if self.ss_root else ""
-        if default_color and os.path.exists(default_color):
+        # Radio Mobile palette by default; bundled copy as fallback when the
+        # Signal-Server tree (ss_root) is not available (packaged builds).
+        default_color = ""
+        if self.ss_root:
+            default_color = os.path.join(self.ss_root, "color", "radiomobile.dcf")
+        if not default_color or not os.path.exists(default_color):
+            default_color = os.path.join(
+                os.path.dirname(__file__), "resources", "radiomobile.dcf")
+        if os.path.exists(default_color):
             self.color_path.setText(default_color)
         self.color_btn.clicked.connect(
             lambda: self._pick(
@@ -834,11 +844,11 @@ class ParameterForm(QWidget):
         self.gc.setValue(float(d.get("ground_clutter", 0)))
         self.obstacles.setPlainText("\n".join(str(o) for o in d.get("obstacles", [])))
         # Output / Engine
-        self.engine.setCurrentText(d.get("engine", "Standard"))
-        self.dem_source.setCurrentIndex(1 if d.get("dem_source") == "offline" else 0)
+        self.engine.setCurrentText(d.get("engine", "LIDAR"))
+        self.dem_source.setCurrentIndex(1 if d.get("dem_source", "offline") == "offline" else 0)
         self.demnas_dir.setText(d.get("demnas_dir") or "")
         self._update_demnas_visibility()
-        self.terrain.setCurrentIndex(1 if d.get("terrain_source") == "lidar" else 0)
+        self.terrain.setCurrentIndex(1 if d.get("terrain_source", "lidar") == "lidar" else 0)
         self.sdf_path.setText(d.get("sdf_dir") or "")
         self.lidar_path.setText(d.get("lidar_file") or "")
         res = d.get("resolution", 1200)

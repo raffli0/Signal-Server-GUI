@@ -8,6 +8,7 @@ vector. Flag semantics were verified against Signal-Server ``src/main.cc``.
 from __future__ import annotations
 
 import math
+import os
 from typing import Iterable
 
 
@@ -204,6 +205,85 @@ def build_argv(
         args.append("-m")
     args += ["-o", output_basename]
     return args
+
+
+def format_run_summary(params: dict, argv: list[str], engine_exe: str) -> list[str]:
+    """Human-readable summary of the effective run parameters (one list entry
+    per terminal line). Lets the user audit/replicate a run in other tools
+    (e.g. Radio Mobile) with exactly the same inputs.
+    """
+    def model_label(pm) -> str:
+        try:
+            pm = int(pm)
+        except (TypeError, ValueError):
+            return str(pm)
+        for label, val in MODELS:
+            if val == pm:
+                return f"{label} (-pm {pm})"
+        return f"pm {pm}"
+
+    ctx = params.get("context_pe")
+    ctx_label = next((name for name, val in CONTEXTS if val == ctx), None)
+
+    erp = params.get("erp_w")
+    if erp is None:
+        erp = compute_erp(
+            float(params.get("rf_power_w", 0) or 0),
+            float(params.get("tx_gain_dbi", 0) or 0),
+            float(params.get("cable_loss_db", 0) or 0),
+        )
+
+    engine_name = os.path.basename(engine_exe or "signalserver")
+
+    # DEM source actually used (post _prepare_dem: lidar_file/sdf_dir resolved).
+    if params.get("_demnas"):
+        dem = f"DEMNAS offline ({params.get('_demnas_mode', 'demnas')})"
+        folder = params.get("demnas_dir")
+        if folder:
+            dem += f" folder={folder}"
+        if params.get("lidar_file"):
+            dem += f" -> {params['lidar_file']}"
+        elif params.get("sdf_dir"):
+            dem += f" -> {params['sdf_dir']}"
+    elif params.get("lidar_file"):
+        dem = f"LIDAR file {params['lidar_file']}"
+    elif params.get("sdf_dir"):
+        dem = f"SDF dir {params['sdf_dir']}"
+    else:
+        dem = "auto (Viewfinder SRTM download)"
+
+    lines = [
+        "[run] ============ Parameter efektif ============",
+        f"[run] Engine    : {engine_name} ({engine_exe})",
+        f"[run] Model     : {model_label(params.get('model_pm'))}"
+        + (f" | context {ctx_label} (-pe {ctx})" if ctx_label else "")
+        + f" | reliability {params.get('reliability', 50)}%",
+        f"[run] Tx        : ({params.get('tx_lat')}, {params.get('tx_lon')})"
+        f" tinggi {params.get('tx_height')} m AGL",
+        f"[run] Rx        : tinggi {params.get('rx_height')} m"
+        f" | gain {params.get('rx_gain_dbd')} dBd"
+        f" | threshold {params.get('rx_threshold_dbm')} dBm",
+        f"[run] ERP       : {erp:.2f} W"
+        f" (power {params.get('rf_power_w')} W,"
+        f" gain {params.get('tx_gain_dbi')} dBi,"
+        f" loss {params.get('cable_loss_db')} dB)",
+        f"[run] Frekuensi : {params.get('frequency_mhz')} MHz",
+        f"[run] DEM       : {dem}",
+        f"[run] Output    : res {params.get('resolution')}"
+        f" | radius {params.get('radius')} km"
+        f" | units {params.get('units', 'metric')}"
+        f" | color {params.get('color_file') or '(engine default)'}"
+        + (" | -dbm" if params.get("dbm_color") else ""),
+    ]
+    if params.get("antenna_basename"):
+        lines.append(
+            f"[run] Antena    : {params['antenna_basename']}"
+            f" | pol {params.get('polarization')}"
+            f" | azimuth {params.get('azimuth_deg')}"
+            f" | downtilt {params.get('downtilt_deg')}")
+    lines.append("[run] Argv      : " + " ".join(argv))
+    lines.append("[run] ===========================================")
+    return lines
 
 
 def iter_obstacles(text: str) -> Iterable[str]:

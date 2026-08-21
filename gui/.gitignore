@@ -10,6 +10,9 @@ venv/
 # App cache (downloaded DEM / SDF terrain data, regenerable)
 cache/
 
+# Local DEMNAS GeoTIFF tiles (user-supplied, too large to commit)
+data/
+
 # PyInstaller build artefacts
 dist/
 build/

@@ -435,20 +435,20 @@
     // === Multi-style basemap definitions ===
     var baseLayers = {
       satellite: L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
-        maxZoom: 19, attribution: 'Esri Satellite'
+        maxZoom: 22, maxNativeZoom: 19, attribution: 'Esri Satellite'
       }),
       hybrid: L.layerGroup([
-        L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom: 19 }),
-        L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}', { maxZoom: 19 })
+        L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom: 22, maxNativeZoom: 19 }),
+        L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}', { maxZoom: 22, maxNativeZoom: 19 })
       ]),
       osm: L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        maxZoom: 19, attribution: '© OpenStreetMap'
+        maxZoom: 22, maxNativeZoom: 19, attribution: '© OpenStreetMap'
       }),
       dark: L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-        maxZoom: 19, attribution: '© OpenStreetMap, © CARTO'
+        maxZoom: 22, maxNativeZoom: 20, attribution: '© OpenStreetMap, © CARTO'
       }),
       terrain: L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', {
-        maxZoom: 17, attribution: '© OpenStreetMap, OpenTopoMap'
+        maxZoom: 22, maxNativeZoom: 17, attribution: '© OpenStreetMap, OpenTopoMap'
       })
     };
 
@@ -458,6 +458,7 @@
     var map = L.map('map', {
       center: [-6.917464, 107.619123],
       zoom: 15,
+      maxZoom: 22,
       layers: [currentBase],
       zoomControl: false
     });
@@ -469,15 +470,16 @@
     var markersLayer = L.layerGroup().addTo(map);
 
     // ---- Per-colour (per dBm band) layer toggling ----
-    // 8 legend colours (strong -> weak), matching #dbm-legend .gradient-bar.
+    // 9 legend colours (strong -> weak), matching radiomobile.dcf exactly.
     var PALETTE = [
-      [0xE5,0x3E,0x3E], [0xDD,0x6B,0x20], [0xD6,0x9E,0x2E], [0x38,0xA1,0x69],
-      [0x31,0x97,0x95], [0x31,0x82,0xCE], [0x2B,0x6C,0xB0], [0x1A,0x36,0x5D]
+      [255,0,0], [255,128,0], [255,255,0], [128,255,0],
+      [0,255,0], [0,255,128], [0,255,255], [0,128,255],
+      [0,0,255]
     ];
     // Gradient stop fractions (0=top/strong .. 1=bottom/weak) for each colour.
-    var PALETTE_FRAC = [0, 0.10, 0.22, 0.35, 0.50, 0.70, 0.85, 1.0];
-    // dBm tick labels at even 10% steps (top=-20 .. bottom=-112).
-    var TICKS = [-20,-28,-35,-44,-52,-60,-72,-83,-92,-104,-112];
+    var PALETTE_FRAC = [0, 0.125, 0.25, 0.375, 0.50, 0.625, 0.75, 0.875, 1.0];
+    // dBm scale endpoints interpolated by dbmAtFraction (-40 top .. -120 bottom).
+    var TICKS = [-40, -120];
     function dbmAtFraction(f) {
       var x = f * (TICKS.length - 1);
       var i = Math.floor(x);
@@ -672,7 +674,20 @@
     function placeMarkers(list) {
       markersLayer.clearLayers();
       (list || []).forEach(function (m) {
-        if (m.role === 'tx') {
+        if (m.role === 'tx_saved') {
+          // Black pin: the Tx used by the last finished propagation run.
+          var savedIcon = L.divIcon({
+            className: 'mk-container',
+            html: '<svg class="tx-pin" width="38" height="48" viewBox="0 0 46 50" xmlns="http://www.w3.org/2000/svg" style="opacity:0.85">' +
+                    '<path d="M 10 3 H 36 A 6 6 0 0 1 42 9 V 27 A 6 6 0 0 1 36 33 H 28 L 23 47 L 18 33 H 10 A 6 6 0 0 1 4 27 V 9 A 6 6 0 0 1 10 3 Z" fill="#1A202C" stroke="#718096" stroke-width="2"/>' +
+                    '<text x="23" y="18" text-anchor="middle" dominant-baseline="central" font-family="Segoe UI, system-ui, sans-serif" font-size="15" font-weight="bold" fill="#A0AEC0">Tx</text>' +
+                   '</svg>' + '<div class="mk-label" style="color:#A0AEC0;">' + (m.label || '') + ' (saved)</div>',
+            iconSize: [38, 48],
+            iconAnchor: [19, 47],
+            popupAnchor: [0, -44]
+          });
+          var marker = L.marker([m.lat, m.lon], {icon: savedIcon}).addTo(markersLayer);
+        } else if (m.role === 'tx') {
           var txIcon = L.divIcon({
             className: 'mk-container',
             html: '<svg class="tx-pin" width="38" height="48" viewBox="0 0 46 50" xmlns="http://www.w3.org/2000/svg">' +

@@ -127,7 +127,7 @@ class CloudRFHeader(QFrame):
             ("model", "Model"),
             ("env", "Environment"),
             ("output", "Output"),
-            ("clear", "Clear Propagation"),
+            # ("clear", "Clear Propagation"),
         ]
 
         icons_layout = QHBoxLayout()

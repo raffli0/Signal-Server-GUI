@@ -94,6 +94,7 @@ class MainWindow(QMainWindow):
         self._pending = None
         self._worker = None
         self._last_result = None
+        self._pick_no_fly = False
         self._build_ui()
         self._apply_global_theme()
 
@@ -268,10 +269,13 @@ class MainWindow(QMainWindow):
             lambda: self.map.set_site_labels(tx=self.form.tx_name.text().strip() or None))
         self.form.rx_name.textChanged.connect(
             lambda: self.map.set_site_labels(rx=self.form.rx_name.text().strip() or None))
-        self.form.demnas_dir.textChanged.connect(self._save_demnas_config)
         self.form.demnas_dir_picked.connect(self._update_demnas_live)
         self.form.demnas_live.toggled.connect(self._update_demnas_live)
-        self._load_demnas_config()
+        # Default DEMNAS folder (always wins on startup): first subdir of
+        # <root>/gui/data named "demnas" in any letter case, else create one.
+        self.demnas_default_dir = self._find_demnas_default()
+        self.form.demnas_dir.setText(self.demnas_default_dir)
+        self._update_demnas_live()
 
         # Place initial Tx/Rx markers from the default form values.
         self._on_tx_coord_changed()
@@ -279,37 +283,22 @@ class MainWindow(QMainWindow):
         # Open the map centered on the transmitter by default (not Rx).
         self.map._focus = self.map.tx_pos
 
-    # ------------------------------------------------------------------ DEMNAS config
-    def _demnas_config_path(self) -> str:
-        return os.path.join(self.cache_dir, "demnas_config.json")
-
-    def _load_demnas_config(self) -> None:
-        """Restore the last-used DEMNAS folder so it persists across runs."""
-        path = self._demnas_config_path()
-        if not os.path.exists(path):
-            return
+    def _find_demnas_default(self) -> str:
+        """Return the default DEMNAS folder: ``<root>/gui/data/<name>`` where
+        ``<name>`` matches "demnas" case-insensitively; created if missing."""
+        base = os.path.join(self.root, "gui", "data")
+        os.makedirs(base, exist_ok=True)
         try:
-            with open(path, "r", encoding="utf-8") as fh:
-                data = json.load(fh)
-        except (OSError, ValueError):
-            return
-        folder = data.get("demnas_dir")
-        if folder and os.path.isdir(folder):
-            self.form.demnas_dir.setText(folder)
-        self._update_demnas_live()
-
-    def _save_demnas_config(self) -> None:
-        folder = self.form.demnas_dir.text().strip()
-        if not folder:
-            return
-        path = self._demnas_config_path()
-        try:
-            with open(path, "w", encoding="utf-8") as fh:
-                json.dump({"demnas_dir": folder}, fh)
+            for entry in os.scandir(base):
+                if entry.is_dir() and entry.name.lower() == "demnas":
+                    return entry.path
         except OSError:
             pass
-        self._update_demnas_live()
+        fallback = os.path.join(base, "Demnas")
+        os.makedirs(fallback, exist_ok=True)
+        return fallback
 
+    # ------------------------------------------------------------------ DEMNAS config
     def _update_demnas_live(self) -> None:
         """Live (toggleable) coverage indicator for the selected DEMNAS folder."""
         form = self.form
@@ -489,6 +478,9 @@ class MainWindow(QMainWindow):
             return
         sdf_exe = self.engines.get("srtm2sdf-hd" if p["engine"] == "HD" else "srtm2sdf")
 
+        # A new run invalidates the previous run's saved-Tx indicator.
+        self.map.clear_tx_saved()
+
         run_dir = tempfile.mkdtemp(prefix="siggui_", dir=self.cache_dir)
         out_base = os.path.join(run_dir, "coverage")
 
@@ -517,6 +509,7 @@ class MainWindow(QMainWindow):
             p = self._pending[0] if self._pending else {}
             tx = (float(p.get("tx_lat")), float(p.get("tx_lon")))
             rx = (float(p.get("rx_lat")), float(p.get("rx_lon")))
+            self.map.mark_tx_saved(*tx)
             self._show_link_panel(result["link"], tx, rx)
             return
         # Area coverage (clear any previous link result)
@@ -524,6 +517,9 @@ class MainWindow(QMainWindow):
         self.link_panel.setVisible(False)
         if ok and result.get("bbox"):
             self.map.show_coverage(result["png"], result["bbox"], self.form.color_path.text())
+            p = self._pending[0] if self._pending else {}
+            if p.get("tx_lat") is not None and p.get("tx_lon") is not None:
+                self.map.mark_tx_saved(float(p["tx_lat"]), float(p["tx_lon"]))
             self._last_result = result
             self.status.setText("Done. Coverage shown on map.")
             if result.get("kml"):
@@ -594,14 +590,19 @@ class MainWindow(QMainWindow):
         self._launch()
 
     def _on_picked(self, role: str, lat: float, lon: float) -> None:
-        if role == "tx":
-            self.form.tx_coord.set(lat, lon)
-            self.map.set_tx(lat, lon)
-        elif role == "rx":
-            self.form.rx_coord.set(lat, lon)
-            self.map.set_rx(lat, lon)
-        else:
-            return
+        # Picking on the map must not move/zoom the view: the clicked point is
+        # already visible. The guard makes the tx_changed/rx_changed handlers
+        # update markers without flyToSite (form coordinate sets emit synchronously).
+        self._pick_no_fly = True
+        try:
+            if role == "tx":
+                self.form.tx_coord.set(lat, lon)
+            elif role == "rx":
+                self.form.rx_coord.set(lat, lon)
+            else:
+                return
+        finally:
+            self._pick_no_fly = False
         self.status.setText(f"{role.upper()} set: {lat:.5f}, {lon:.5f}")
 
     def _on_tx_coord_changed(self) -> None:
@@ -609,7 +610,7 @@ class MainWindow(QMainWindow):
             lat, lon = self.form.tx_coord.get()
         except (ValueError, TypeError):
             return
-        self.map.set_tx(lat, lon)
+        self.map.set_tx(lat, lon, fly=not self._pick_no_fly)
         self.status.setText(f"Tx set: {lat:.5f}, {lon:.5f}")
         self._update_demnas_live()
 
@@ -618,7 +619,7 @@ class MainWindow(QMainWindow):
             lat, lon = self.form.rx_coord.get()
         except (ValueError, TypeError):
             return
-        self.map.set_rx(lat, lon)
+        self.map.set_rx(lat, lon, fly=not self._pick_no_fly)
 
     # ------------------------------------------------------------------ profile
     def save_profile(self) -> None:

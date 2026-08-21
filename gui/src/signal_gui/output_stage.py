@@ -94,76 +94,124 @@ def build_kml(png_name: str, bbox, title: str = "Coverage") -> str:
 """
 
 
-def fill_center_hole(png_path: str, bbox: tuple[float, float, float, float], tx_lat: float, tx_lon: float) -> None:
-    """Fills the transparent center hole of the coverage PNG at the Tx location."""
+def _strongest_band_rgb(color_file: Optional[str]) -> Optional[tuple]:
+    """Return the RGB of the strongest band (first entry) of a colour file."""
+    if not color_file:
+        return None
+    path = color_file if os.path.exists(color_file) else None
+    if not path:
+        # Fall back to the bundled Radio Mobile palette.
+        bundled = os.path.join(os.path.dirname(__file__), "resources", "radiomobile.dcf")
+        path = bundled if os.path.exists(bundled) else None
+    if not path:
+        return None
+    try:
+        with open(path, "r", encoding="utf-8", errors="ignore") as fh:
+            for line in fh:
+                m = re.match(r"\s*([+-]?\d+)\s*:\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*$", line)
+                if m:
+                    return (int(m.group(2)), int(m.group(3)), int(m.group(4)))
+    except OSError:
+        pass
+    return None
+
+
+def fill_center_hole(png_path: str, bbox: tuple[float, float, float, float],
+                     tx_lat: float, tx_lon: float,
+                     color_file: Optional[str] = None) -> None:
+    """Fill the transparent hole the engine leaves around the Tx location.
+
+    Signal-Server writes white/greyscale terrain (no palette colour) for cells
+    right around the transmitter; PPM->PNG conversion turns white into alpha 0,
+    leaving a see-through hole at the centre of the coverage. The hole is
+    closed by flood-filling the *contiguous* transparent region touching the
+    Tx pixel with the strongest-band colour of the active palette (capped to a
+    fraction of the image so a pathological overlay can never be swallowed).
+    """
     from PIL import Image
-    
+
     if not os.path.exists(png_path):
         return
-        
+
     try:
         img = Image.open(png_path).convert("RGBA")
         width, height = img.size
-        
+        if width == 0 or height == 0:
+            return
+
         n, e, s, w = bbox
         lon_span = e - w
         lat_span = n - s
         if lon_span == 0 or lat_span == 0:
             return
-            
+
         x_pct = (tx_lon - w) / lon_span
         y_pct = (n - tx_lat) / lat_span
-        
+
         tx_x = int(x_pct * width)
         tx_y = int(y_pct * height)
-        
+
         if not (0 <= tx_x < width and 0 <= tx_y < height):
             return
-            
-        # Search for a nearby colored pixel to copy its color
-        replacement_color = None
-        for r in range(1, 15):
-            found_color = False
-            for dx in range(-r, r + 1):
-                for dy in range(-r, r + 1):
-                    nx, ny = tx_x + dx, tx_y + dy
-                    if 0 <= nx < width and 0 <= ny < height:
-                        r_val, g_val, b_val, a_val = img.getpixel((nx, ny))
-                        if a_val > 0:
-                            replacement_color = (r_val, g_val, b_val, a_val)
-                            found_color = True
-                            break
-                if found_color:
-                    break
-            if found_color:
-                break
-                
-        if replacement_color is None:
-            return
-            
-        # Fill all transparent pixels in a small radius around the Tx
+
         pixels = img.load()
-        fill_radius = 6
-        for dx in range(-fill_radius, fill_radius + 1):
-            for dy in range(-fill_radius, fill_radius + 1):
-                if dx*dx + dy*dy <= fill_radius*fill_radius:
-                    nx, ny = tx_x + dx, tx_y + dy
-                    if 0 <= nx < width and 0 <= ny < height:
-                        _, _, _, a_val = pixels[nx, ny]
-                        if a_val == 0:
-                            pixels[nx, ny] = replacement_color
-                            
+        if pixels[tx_x, tx_y][3] != 0:
+            return  # Tx pixel already coloured — no hole here.
+
+        fill_rgb = _strongest_band_rgb(color_file)
+        if fill_rgb is None:
+            # Fallback: copy the nearest opaque pixel's colour.
+            fill_rgb = None
+            for r in range(1, max(width, height)):
+                found = False
+                for dx in range(-r, r + 1):
+                    for dy in range(-r, r + 1):
+                        nx, ny = tx_x + dx, tx_y + dy
+                        if 0 <= nx < width and 0 <= ny < height \
+                                and pixels[nx, ny][3] > 0:
+                            pr, pg, pb, _ = pixels[nx, ny]
+                            fill_rgb = (pr, pg, pb)
+                            found = True
+                            break
+                    if found:
+                        break
+                if found:
+                    break
+            if fill_rgb is None:
+                return
+
+        # Flood-fill the transparent blob connected to the Tx pixel.
+        max_fill = max(1, int(width * height * 0.05))  # safety cap: 5% of image
+        filled = 0
+        stack = [(tx_x, tx_y)]
+        seen = {(tx_x, tx_y)}
+        while stack and filled < max_fill:
+            x, y = stack.pop()
+            if not (0 <= x < width and 0 <= y < height):
+                continue
+            if pixels[x, y][3] != 0:
+                continue
+            pixels[x, y] = (*fill_rgb, 255)
+            filled += 1
+            for nx, ny in ((x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)):
+                if (nx, ny) not in seen:
+                    seen.add((nx, ny))
+                    stack.append((nx, ny))
+
         img.save(png_path)
     except Exception as exc:
         print(f"Error filling center hole: {exc}")
 
 
-def stage_output(ppm_path: str, stdout_text: str, title: str = "Coverage", tx_coords: Optional[tuple[float, float]] = None) -> dict:
+def stage_output(ppm_path: str, stdout_text: str, title: str = "Coverage",
+                 tx_coords: Optional[tuple[float, float]] = None,
+                 color_file: Optional[str] = None) -> dict:
     """Convert PPM and write sidecar PNG + KML. Returns paths/bbox."""
     png_path = ppm_to_png(ppm_path)
     bbox = parse_bbox(stdout_text)
     if bbox is not None and tx_coords is not None:
-        fill_center_hole(png_path, bbox, tx_coords[0], tx_coords[1])
+        fill_center_hole(png_path, bbox, tx_coords[0], tx_coords[1],
+                         color_file=color_file)
     kml_path = os.path.splitext(ppm_path)[0] + ".kml"
     if bbox is not None:
         png_name = os.path.basename(png_path)
