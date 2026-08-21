@@ -285,6 +285,9 @@ class RunWorker(QThread):
                 ppm, "\n".join(stdout_text), title="Signal-Server Coverage",
                 tx_coords=tx_coords, color_file=p.get("color_file")
             )
+            raster_txt = ppm[:-4] + "_raster.txt"
+            if os.path.exists(raster_txt):
+                result["raster_txt"] = raster_txt
             self.finished.emit(True, "\n".join(stdout_text), result)
         except DemResolveError:
             # forwarded via need_tile_code already; nothing else to do

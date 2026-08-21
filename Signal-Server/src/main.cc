@@ -293,6 +293,54 @@ unsigned char GetSignal(double lat, double lon)
         return 0;
 }
 
+static int WriteRasterTxt(const char *basename, unsigned char dbmmode)
+{
+    /* Dump the per-pixel signal raster to <basename>_raster.txt as
+       "lat<TAB>lon<TAB>value" rows (Radio Mobile-style comparison data).
+       Values are offset-corrected: dBm = raw-200 in -dbm mode, otherwise
+       dBuV/m or path-loss dB = raw-100, matching the PPM colouring code.
+       Only pixels actually computed by PlotPropagation (raw != 0) are
+       written. Longitude is converted back to east-negative degrees. */
+
+    char filename[280];
+    FILE *fd;
+    int indx, x, y;
+    long written = 0;
+    double lat, delta, lon_int, lon_out;
+
+    snprintf(filename, sizeof(filename), "%s_raster.txt", basename);
+    fd = fopen(filename, "wb");
+    if (!fd) {
+        spdlog::error("Cannot open raster text file {}", filename);
+        return -1;
+    }
+
+    for (indx = 0; indx < MAXPAGES; indx++) {
+        /* Skip unused pages (sentinel bounds set at init). */
+        if (dem[indx].min_north >= dem[indx].max_north ||
+            dem[indx].max_west < 0)
+            continue;
+        for (x = 0; x <= mpi; x++) {
+            lat = dem[indx].min_north + (double)x / ppd;
+            for (y = 0; y <= mpi; y++) {
+                if (dem[indx].signal[x][y] == 0)
+                    continue;
+                delta = ((double)mpi - (double)y) / yppd;
+                lon_int = dem[indx].max_west - delta;
+                lon_out = (lon_int > 180.0) ? (360.0 - lon_int) : -lon_int;
+                fprintf(fd, "%.6f\t%.6f\t%d\n", lat, lon_out,
+                        dbmmode ? ((int)dem[indx].signal[x][y] - 200)
+                                : ((int)dem[indx].signal[x][y] - 100));
+                written++;
+            }
+        }
+    }
+
+    fclose(fd);
+    spdlog::info("Raster text dump: {} points -> {}", written, filename);
+    return 0;
+}
+
 double GetElevation(struct site location)
 {
     /* This function returns the elevation (in feet) of any location
@@ -1016,7 +1064,7 @@ void alloc_dem(void)
         for (j = 0; j < IPPD; j++) {
             dem[i].data[j] = new short[IPPD];
             dem[i].mask[j] = new unsigned char[IPPD];
-            dem[i].signal[j] = new unsigned char[IPPD];
+            dem[i].signal[j] = new unsigned char[IPPD]();
         }
     }
 }
@@ -1050,7 +1098,7 @@ void do_allocs(void)
 int main(int argc, char *argv[])
 {
     int x, y, z = 0, knifeedge = 0, ppa = 0, normalise = 0,
-      haf = 0, pmenv = 1, lidar=0, result, segments = 4;
+      haf = 0, pmenv = 1, lidar=0, result, segments = 4, rastertxt = 0;
 
     PropModel prop_model;
 
@@ -1134,6 +1182,7 @@ int main(int argc, char *argv[])
         fprintf(stdout, "Output:\n");
         fprintf(stdout, "     -o basename (Output file basename - required, min 5 chars)\n");
         fprintf(stdout,	"     -dbm Plot Rxd signal power instead of field strength in dBuV/m\n");
+        fprintf(stdout,	"     -rastertxt Dump per-pixel signal levels to <output>_raster.txt\n");
         fprintf(stdout, "     -rt Rx Threshold (dB / dBm / dBuV/m)\n");
         fprintf(stdout, "     -R Radius (miles/kilometers)\n");
         fprintf(stdout,	"     -res Pixels per tile. 300/600/1200/3600 (Optional. LIDAR res is within the tile)\n");
@@ -1393,6 +1442,9 @@ int main(int argc, char *argv[])
 
         if (strcmp(argv[x], "-dbm") == 0)
             dbm = 1;
+
+        if (strcmp(argv[x], "-rastertxt") == 0)
+            rastertxt = 1;
 
         if (strcmp(argv[x], "-sdf") == 0) {
             z = x + 1;
@@ -2083,6 +2135,9 @@ int main(int argc, char *argv[])
             else
                     if ((result = DoSigStr(mapfile, geo, kml, ngs, tx_site, txsites)) != 0)
                     return result;
+
+            if (rastertxt)
+                WriteRasterTxt(mapfile, dbm);
         }
         /*if(lidar){
             east=eastoffset;

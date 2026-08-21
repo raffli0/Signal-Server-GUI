@@ -576,6 +576,13 @@ class ParameterForm(QWidget):
         self.dbm_color.setChecked(True)
         self.dbm_color.setStyleSheet("color: #CBD5E0; font-size: 11px;")
         fl.addRow(self.dbm_color)
+        self.raster_txt = QCheckBox("Save raster data (TXT)")
+        self.raster_txt.setChecked(False)
+        self.raster_txt.setToolTip(
+            "Engine menulis <output>_raster.txt berisi lat/lon/Rx(dBm) per "
+            "pixel — bisa dibandingkan dengan Radio Mobile.")
+        self.raster_txt.setStyleSheet("color: #CBD5E0; font-size: 11px;")
+        fl.addRow(self.raster_txt)
 
         self._update_erp()
 
@@ -645,7 +652,7 @@ class ParameterForm(QWidget):
         row_exp = QHBoxLayout()
         row_exp.setSpacing(6)
         self.export_fmt = QComboBox()
-        self.export_fmt.addItems(["KMZ", "KML", "PNG", "GeoTIFF", "KMZ (3D)", "SHP"])
+        self.export_fmt.addItems(["KMZ", "KML", "PNG", "TXT (Raster)", "GeoTIFF", "KMZ (3D)", "SHP"])
         self.export_fmt.setStyleSheet("""
             QComboBox {
                 background: #121417;
@@ -804,6 +811,7 @@ class ParameterForm(QWidget):
             "radius": self.radius.value(),
             "color_file": self.color_path.text() or None,
             "dbm_color": self.dbm_color.isChecked(),
+            "raster_txt": self.raster_txt.isChecked(),
             "units": units,
             "dem_resolution": dem_res_map[self.dem_res.currentIndex()],
         }
@@ -870,5 +878,6 @@ class ParameterForm(QWidget):
         self.radius.setValue(float(d.get("radius", 30)))
         self.color_path.setText(d.get("color_file") or "")
         self.dbm_color.setChecked(bool(d.get("dbm_color", True)))
+        self.raster_txt.setChecked(bool(d.get("raster_txt", False)))
 
 

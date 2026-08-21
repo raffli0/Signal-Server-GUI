@@ -207,6 +207,8 @@ def build_argv(
     _opt(args, "-color", params.get("color_file"))
     if params.get("dbm_color"):
         args.append("-dbm")
+    if params.get("raster_txt"):
+        args.append("-rastertxt")
     if params.get("units") == "metric":
         args.append("-m")
     args += ["-o", output_basename]

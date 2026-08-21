@@ -767,6 +767,20 @@ class MainWindow(QMainWindow):
             with open(path, "w", encoding="utf-8") as fh:
                 fh.write(kml_text)
             self.status.setText(f"Exported KML: {path}")
+        elif fmt == "TXT (Raster)":
+            raster = result.get("raster_txt")
+            if not raster or not os.path.exists(raster):
+                QMessageBox.warning(
+                    self, "Export",
+                    "Raster TXT tidak tersedia. Aktifkan 'Save raster data "
+                    "(TXT)' di bagian Output lalu jalankan ulang propagasi.")
+                return
+            path, _ = QFileDialog.getSaveFileName(
+                self, "Export Raster TXT", base + "_raster.txt", "TXT (*.txt)")
+            if not path:
+                return
+            self._export_raster_txt(result, path)
+            self.status.setText(f"Exported TXT: {path}")
         elif fmt == "PNG":
             path, _ = QFileDialog.getSaveFileName(
                 self, "Export PNG", base + ".png", "PNG (*.png)")
@@ -782,6 +796,43 @@ class MainWindow(QMainWindow):
             return
         if fmt in ("KMZ", "KMZ (3D)"):
             self.status.setText(f"Exported {fmt}: {path}")
+
+    def _export_raster_txt(self, result: dict, path: str) -> None:
+        """Wrap the engine's raw raster dump in a Radio-Mobile-style header."""
+        p = (self._pending[0] if self._pending else {}) or {}
+
+        def _f(v, default=0.0):
+            try:
+                return float(v)
+            except (TypeError, ValueError):
+                return default
+
+        tx_name = p.get("tx_name") or "Tx"
+        rx_name = p.get("rx_name") or "Rx"
+        rx_lat = p.get("rx_lat")
+        rx_lon = p.get("rx_lon")
+
+        with open(result["raster_txt"], "r", encoding="utf-8") as src, \
+                open(path, "w", encoding="utf-8") as out:
+            out.write(f"Range\t{_f(p.get('radius')):.1f}km\t"
+                      f"{_f(p.get('rx_threshold_dbm'), -100):.1f}dBm\n")
+            out.write(f"Fixed unit\t1\t{tx_name}\t{_f(p.get('tx_lat')):.5f}"
+                      f"\t{_f(p.get('tx_lon')):+.5f}\t{_f(p.get('tx_height')):.1f}\n")
+            out.write(f"Mobile unit\t2\t{rx_name}\t"
+                      + (f"{_f(rx_lat):.5f}\t{_f(rx_lon):+.5f}"
+                         if rx_lat is not None and rx_lon is not None
+                         else f"{_f(p.get('tx_lat')):.5f}\t{_f(p.get('tx_lon')):+.5f}")
+                      + f"\t{_f(p.get('rx_height'), 1.5):.1f}\n")
+            out.write("Latitude\tLongitude\tRx(dBm)\tBest unit\n")
+            for line in src:
+                parts = line.split()
+                if len(parts) != 3:
+                    continue
+                try:
+                    lat, lon, dbm = float(parts[0]), float(parts[1]), int(parts[2])
+                except ValueError:
+                    continue
+                out.write(f"{lat:.5f}\t{lon:+.5f}\t{dbm}.0\t1\n")
 
     def _export_kmz(self, result: dict, png: str, bbox, path: str, base: str) -> None:
         """Build a KMZ (zipped KML GroundOverlay + PNG image)."""
