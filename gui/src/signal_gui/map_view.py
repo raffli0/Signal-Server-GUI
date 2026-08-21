@@ -320,9 +320,25 @@ class MapView(QWebEngineView):
         self._render()
 
     def clear_coverage(self) -> None:
-        """Remove the coverage overlay (Tx/Rx markers are kept)."""
+        """Remove the coverage overlay + link line from the live map (Tx/Rx
+        markers are kept).
+
+        Removes the layers via JavaScript instead of re-rendering the page, so
+        the map stays exactly where the user panned/zoomed it. A full
+        ``_render()`` would reinitialize Leaflet at the default center — the
+        unwanted "snap to initial coordinates" on Clear.
+        """
         self._coverage = None
-        self._render()
+        self._focus = None
+        if self._ready:
+            js = (
+                "if (typeof overlay !== 'undefined' && overlay) {"
+                "  map.removeLayer(overlay); overlay = null; }"
+                "if (typeof clearLink === 'function') { clearLink(); }"
+            )
+            self.page().runJavaScript(js)
+        else:
+            self._render()
 
     def set_opacity(self, value: int) -> None:
         """Set the coverage overlay opacity (0-100) via JavaScript.
