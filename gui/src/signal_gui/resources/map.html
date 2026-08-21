@@ -48,14 +48,17 @@
       height: 100%;
       border-radius: 3px;
       background: linear-gradient(to bottom, 
-        #E53E3E 0%, 
-        #DD6B20 10%, 
-        #D69E2E 22%, 
-        #38A169 35%, 
-        #319795 50%, 
-        #3182CE 70%, 
-        #2B6CB0 85%, 
-        #1A365D 100%
+        rgb(247, 49, 87) 0%,
+        rgb(242, 95, 95) 10%,
+        rgb(247, 213, 97) 20%,
+        rgb(242, 242, 95) 30%,
+        rgb(186, 246, 97) 40%,
+        rgb(95, 242, 95) 50%,
+        rgb(97, 246, 97) 60%,
+        rgb(95, 242, 182) 70%,
+        rgb(96, 246, 246) 80%,
+        rgb(95, 208, 241) 90%,
+        rgb(96, 96, 246) 100%
       );
       border: 1px solid rgba(0,0,0,0.3);
     }
@@ -367,17 +370,17 @@
     <div class="legend-container">
       <div class="gradient-bar"></div>
       <div class="ticks">
-        <span>-20</span>
-        <span>-28</span>
-        <span>-35</span>
-        <span>-44</span>
-        <span>-52</span>
         <span>-60</span>
+        <span>-64</span>
+        <span>-68</span>
         <span>-72</span>
-        <span>-83</span>
+        <span>-76</span>
+        <span>-80</span>
+        <span>-84</span>
+        <span>-88</span>
         <span>-92</span>
-        <span>-104</span>
-        <span>-112</span>
+        <span>-96</span>
+        <span>-100</span>
       </div>
     </div>
   </div>
@@ -472,25 +475,23 @@
     // ---- Per-colour (per dBm band) layer toggling ----
     // 9 legend colours (strong -> weak), matching radiomobile.dcf exactly.
     var PALETTE = [
-      [255,0,0], [255,128,0], [255,255,0], [128,255,0],
-      [0,255,0], [0,255,128], [0,255,255], [0,128,255],
-      [0,0,255]
+      [247, 49, 87],   // >= -60
+      [242, 95, 95],   // -60...-64
+      [247, 213, 97],  // -64...-68
+      [242, 242, 95],  // -68...-72
+      [186, 246, 97],  // -72...-76
+      [95, 242, 95],   // -76...-80
+      [97, 246, 97],   // -80...-84
+      [95, 242, 182],  // -84...-88
+      [96, 246, 246],  // -88...-92
+      [95, 208, 241],  // -92...-96
+      [96, 96, 246]    // -96...-120
     ];
-    // Gradient stop fractions (0=top/strong .. 1=bottom/weak) for each colour.
-    var PALETTE_FRAC = [0, 0.125, 0.25, 0.375, 0.50, 0.625, 0.75, 0.875, 1.0];
-    // dBm scale endpoints interpolated by dbmAtFraction (-40 top .. -120 bottom).
-    var TICKS = [-40, -120];
-    function dbmAtFraction(f) {
-      var x = f * (TICKS.length - 1);
-      var i = Math.floor(x);
-      if (i >= TICKS.length - 1) return TICKS[TICKS.length - 1];
-      var t = x - i;
-      return TICKS[i] + (TICKS[i+1] - TICKS[i]) * t;
-    }
+    var LEVEL_THRESHOLDS = [-60, -64, -68, -72, -76, -80, -84, -88, -92, -96, -100];
     function bandLabel(i) {
-      if (i === 0) return '≥ ' + Math.round(dbmAtFraction(PALETTE_FRAC[0])) + ' dBm';
-      if (i === PALETTE.length - 1) return '≤ ' + Math.round(dbmAtFraction(PALETTE_FRAC[i])) + ' dBm';
-      return Math.round(dbmAtFraction(PALETTE_FRAC[i])) + '…' + Math.round(dbmAtFraction(PALETTE_FRAC[i+1])) + ' dBm';
+      if (i === 0) return '≥ ' + LEVEL_THRESHOLDS[0] + ' dBm';
+      if (i === LEVEL_THRESHOLDS.length - 1) return '≤ ' + LEVEL_THRESHOLDS[LEVEL_THRESHOLDS.length - 1] + ' dBm';
+      return LEVEL_THRESHOLDS[i] + '…' + LEVEL_THRESHOLDS[i-1] + ' dBm';
     }
     var covCanvas = document.createElement('canvas');
     var covCtx = covCanvas.getContext('2d');

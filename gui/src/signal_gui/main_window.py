@@ -7,6 +7,7 @@ import math
 import os
 import shutil
 import tempfile
+import time
 from datetime import datetime
 
 from PySide6.QtWidgets import (
@@ -108,6 +109,118 @@ class MainWindow(QMainWindow):
         self.status.setText(text)
         self.status.setToolTip(text)
 
+    # ------------------------------------------------------------------ loading overlay
+    _SPINNER_FRAMES = "⣾⣽⣻⢿⡿⣟⣯⣷"
+
+    def _build_loading_overlay(self) -> None:
+        """Semi-transparent loading card centred over the map pane."""
+        self._load_overlay = QWidget(self._right_pane)
+        self._load_overlay.setStyleSheet(
+            "QWidget { background: rgba(8, 10, 14, 150); }")
+        ov = QVBoxLayout(self._load_overlay)
+        ov.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        card = QFrame()
+        card.setFixedWidth(360)
+        card.setStyleSheet("""
+            QFrame { background: #14171B; border: 1px solid #2D3339;
+                     border-radius: 8px; }
+        """)
+        cv = QVBoxLayout(card)
+        cv.setContentsMargins(20, 18, 20, 16)
+        cv.setSpacing(8)
+
+        self._spinner_lbl = QLabel(self._SPINNER_FRAMES[0])
+        self._spinner_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._spinner_lbl.setStyleSheet(
+            "color:#3182CE; font-size:28px; border:none; background:transparent;")
+        cv.addWidget(self._spinner_lbl)
+
+        self._stage_lbl = QLabel("Menyiapkan...")
+        self._stage_lbl.setWordWrap(True)
+        self._stage_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._stage_lbl.setStyleSheet(
+            "color:#E2E8F0; font-size:12px; font-weight:600; "
+            "border:none; background:transparent;")
+        cv.addWidget(self._stage_lbl)
+
+        self._pct_lbl = QLabel("")
+        self._pct_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._pct_lbl.setStyleSheet(
+            "color:#3182CE; font-size:11px; font-weight:600; "
+            "border:none; background:transparent;")
+        cv.addWidget(self._pct_lbl)
+
+        self._elapsed_lbl = QLabel("Elapsed: 00:00")
+        self._elapsed_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._elapsed_lbl.setStyleSheet(
+            "color:#718096; font-size:10px; border:none; background:transparent;")
+        cv.addWidget(self._elapsed_lbl)
+
+        self._cancel_btn = QPushButton("Batalkan")
+        self._cancel_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._cancel_btn.setStyleSheet("""
+            QPushButton { background:#2D3748; color:#FC8181;
+                          border:1px solid #4A5568; border-radius:4px;
+                          padding:5px 12px; font-size:11px; font-weight:600; }
+            QPushButton:hover { background:#4A5568; }
+        """)
+        self._cancel_btn.clicked.connect(self.stop)
+        cv.addWidget(self._cancel_btn, 0, Qt.AlignmentFlag.AlignCenter)
+
+        ov.addWidget(card)
+        self._load_overlay.hide()
+
+        # Spinner animation.
+        self._spinner_timer = QTimer(self)
+        self._spinner_timer.setInterval(120)
+        self._spin_frame = 0
+        self._spinner_timer.timeout.connect(self._tick_spinner)
+
+        # Elapsed-time ticker.
+        self._elapsed_timer = QTimer(self)
+        self._elapsed_timer.setInterval(1000)
+        self._elapsed_timer.timeout.connect(self._tick_elapsed)
+        self._run_start = None
+
+    def _tick_spinner(self) -> None:
+        self._spin_frame = (self._spin_frame + 1) % len(self._SPINNER_FRAMES)
+        self._spinner_lbl.setText(self._SPINNER_FRAMES[self._spin_frame])
+
+    def _tick_elapsed(self) -> None:
+        if self._run_start is not None:
+            secs = int(time.monotonic() - self._run_start)
+            self._elapsed_lbl.setText(f"Elapsed: {secs // 60:02d}:{secs % 60:02d}")
+
+    def _show_loading(self, stage: str = "") -> None:
+        self._stage_lbl.setText(stage or "Menyiapkan...")
+        self._pct_lbl.setText("")
+        self._run_start = time.monotonic()
+        self._elapsed_lbl.setText("Elapsed: 00:00")
+        self._load_overlay.setGeometry(self._right_pane.rect())
+        self._load_overlay.raise_()
+        self._load_overlay.show()
+        self._spinner_timer.start()
+        self._elapsed_timer.start()
+
+    def _hide_loading(self) -> None:
+        self._spinner_timer.stop()
+        self._elapsed_timer.stop()
+        self._run_start = None
+        self._load_overlay.hide()
+
+    def _set_stage(self, text: str) -> None:
+        """Stage line on the overlay; long lines (full argv) are trimmed."""
+        text = text.strip()
+        if len(text) > 90:
+            text = text[:87] + "..."
+        self._stage_lbl.setText(text or "Memproses...")
+
+    def _on_engine_percent(self, pct: int) -> None:
+        self.progress.setRange(0, 100)
+        self.progress.setValue(pct)
+        self._pct_lbl.setText(f"Processing coverage — {pct}%")
+
     def _apply_global_theme(self):
         """Apply sleek dark theme matching CloudRF."""
         self.setStyleSheet("""
@@ -204,6 +317,10 @@ class MainWindow(QMainWindow):
         rl.setContentsMargins(0, 0, 0, 0)
         rl.setSpacing(0)
         rl.addWidget(self.map, 1)
+        self._right_pane = right
+
+        # Loading overlay (shown over the map during propagation runs).
+        self._build_loading_overlay()
 
         # Radio Link result panel (hidden until a link is computed)
         self.link_panel = QWidget()
@@ -238,6 +355,7 @@ class MainWindow(QMainWindow):
         rl.addWidget(self.link_panel)
 
         rl.addWidget(self.status)
+        rl.addWidget(self.progress)
 
         # Horizontal Splitter between Left Sidebar & Right Map
         self._sidebar = sidebar_container
@@ -370,6 +488,9 @@ class MainWindow(QMainWindow):
         super().resizeEvent(event)
         self._apply_responsive_width()
         self._resize_timer.start()
+        if getattr(self, "_load_overlay", None) is not None and \
+                self._load_overlay.isVisible():
+            self._load_overlay.setGeometry(self._right_pane.rect())
 
 
     def _link_bounds(self, p: dict):
@@ -508,16 +629,21 @@ class MainWindow(QMainWindow):
         )
         self._worker.output_line.connect(self.terminal.appendPlainText)
         self._worker.progress.connect(self._set_status)
+        self._worker.progress.connect(self._set_stage)
+        self._worker.percent.connect(self._on_engine_percent)
         self._worker.finished.connect(self._on_finished)
         self._worker.error_occurred.connect(self._on_error)
         self._worker.need_tile_code.connect(self._on_need_tile)
         self._worker.start()
+        self.progress.setRange(0, 0)  # indeterminate until engine reports %
         self.progress.setVisible(True)
         self.form.btn_run.setEnabled(False)
         self._set_status("Running calculation engine...")
+        self._show_loading("Menyiapkan data & menjalankan engine...")
 
     def _on_finished(self, ok: bool, stdout: str, result: dict) -> None:
         self.progress.setVisible(False)
+        self._hide_loading()
         self.form.btn_run.setEnabled(True)
         if ok and result.get("link"):
             p = self._pending[0] if self._pending else {}
@@ -583,6 +709,7 @@ class MainWindow(QMainWindow):
 
     def _on_error(self, msg: str) -> None:
         self.progress.setVisible(False)
+        self._hide_loading()
         self.form.btn_run.setEnabled(True)
         self.terminal.appendPlainText(f"ERROR: {msg}")
         self._set_status("Error")
@@ -683,6 +810,7 @@ class MainWindow(QMainWindow):
             self._worker.terminate()
             self._worker.wait()
         self.progress.setVisible(False)
+        self._hide_loading()
         self.form.btn_run.setEnabled(True)
         self._set_status("Stopped")
 
@@ -694,6 +822,7 @@ class MainWindow(QMainWindow):
         self.map.clear_coverage()
         self.terminal.clear()
         self.progress.setVisible(False)
+        self._hide_loading()
         self.form.btn_run.setEnabled(True)
         self._set_status("Ready")
 

@@ -8,6 +8,7 @@ conversion) happens inside the same worker before launching the engine.
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 from typing import Optional
 
@@ -69,6 +70,7 @@ def find_engines(root: Optional[str] = None) -> dict:
 class RunWorker(QThread):
     output_line = Signal(str)
     progress = Signal(str)
+    percent = Signal(int)
     finished = Signal(bool, str, dict)
     error_occurred = Signal(str)
     need_tile_code = Signal(float, float, int)
@@ -235,10 +237,14 @@ class RunWorker(QThread):
             )
             stdout_text = []
             assert proc.stdout is not None
+            pct_re = re.compile(r"\[\s*(\d{1,3})%\]")
             for line in proc.stdout:
                 line = line.rstrip("\n")
                 stdout_text.append(line)
                 self.output_line.emit(line)
+                m = pct_re.search(line)
+                if m:
+                    self.percent.emit(min(100, int(m.group(1))))
             proc.wait()
             # --- Radio Link (point-to-point) mode ---
             if p.get("path_profile"):
