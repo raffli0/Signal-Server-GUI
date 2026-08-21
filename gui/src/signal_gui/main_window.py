@@ -12,7 +12,7 @@ from datetime import datetime
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QSplitter, QVBoxLayout, QHBoxLayout, QPlainTextEdit,
     QPushButton, QProgressBar, QLabel, QFileDialog, QInputDialog, QMessageBox,
-    QScrollArea, QApplication, QFrame
+    QScrollArea, QApplication, QFrame, QSizePolicy
 )
 from PySide6.QtCore import Qt, QTimer, QObject, QEvent
 
@@ -102,6 +102,12 @@ class MainWindow(QMainWindow):
         from ._bundle import app_root
         return app_root()
 
+    def _set_status(self, text: str) -> None:
+        """Set the status label; full text kept as tooltip since long messages
+        are visually clipped (the label ignores its text-width hint)."""
+        self.status.setText(text)
+        self.status.setToolTip(text)
+
     def _apply_global_theme(self):
         """Apply sleek dark theme matching CloudRF."""
         self.setStyleSheet("""
@@ -189,6 +195,9 @@ class MainWindow(QMainWindow):
         self.progress.setVisible(False)
         self.status = QLabel("Ready")
         self.status.setStyleSheet("color: #A0AEC0; font-size: 10px; padding: 2px 8px; background: #121417;")
+        # Ignore the text's width hint: long messages (e.g. the full engine
+        # argv) must never force the right pane wider and squeeze the sidebar.
+        self.status.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
 
         right = QWidget()
         rl = QVBoxLayout(right)
@@ -470,7 +479,7 @@ class MainWindow(QMainWindow):
                 p["radius"] = need
         pm = int(p.get("model_pm", 3))
         if p.get("engine") == "HD" and int(p.get("dem_resolution", 3)) != 1:
-            self.status.setText("HD engine requires 30 m DEM; using 30 m.")
+            self._set_status("HD engine requires 30 m DEM; using 30 m.")
         self._run_with(p, self._dem_spec(p))
 
     def _run_with(self, p: dict, dem_spec: dict | None) -> None:
@@ -498,14 +507,14 @@ class MainWindow(QMainWindow):
             engine_exe, out_base, p, dem_spec=dem_spec, srtm2sdf_exe=sdf_exe
         )
         self._worker.output_line.connect(self.terminal.appendPlainText)
-        self._worker.progress.connect(self.status.setText)
+        self._worker.progress.connect(self._set_status)
         self._worker.finished.connect(self._on_finished)
         self._worker.error_occurred.connect(self._on_error)
         self._worker.need_tile_code.connect(self._on_need_tile)
         self._worker.start()
         self.progress.setVisible(True)
         self.form.btn_run.setEnabled(False)
-        self.status.setText("Running calculation engine...")
+        self._set_status("Running calculation engine...")
 
     def _on_finished(self, ok: bool, stdout: str, result: dict) -> None:
         self.progress.setVisible(False)
@@ -526,18 +535,18 @@ class MainWindow(QMainWindow):
             if p.get("tx_lat") is not None and p.get("tx_lon") is not None:
                 self.map.mark_tx_saved(float(p["tx_lat"]), float(p["tx_lon"]))
             self._last_result = result
-            self.status.setText("Done. Coverage shown on map.")
+            self._set_status("Done. Coverage shown on map.")
             if result.get("kml"):
-                self.status.setText(f"Done. KML: {result['kml']}")
+                self._set_status(f"Done. KML: {result['kml']}")
         else:
             self._last_result = None
-            self.status.setText("Finished with no coverage.")
+            self._set_status("Finished with no coverage.")
 
     def _show_link_panel(self, link: dict, tx: tuple, rx: tuple) -> None:
         self.link_panel.setVisible(True)
         self.map.draw_link(tx[0], tx[1], rx[0], rx[1])
         self._last_result = {"link": link}
-        self.status.setText("Done. Radio link computed.")
+        self._set_status("Done. Radio link computed.")
 
         def _fmt(v, unit="", nd=2):
             if v is None:
@@ -576,7 +585,7 @@ class MainWindow(QMainWindow):
         self.progress.setVisible(False)
         self.form.btn_run.setEnabled(True)
         self.terminal.appendPlainText(f"ERROR: {msg}")
-        self.status.setText("Error")
+        self._set_status("Error")
 
     def _on_need_tile(self, lat: float, lon: float, res: int) -> None:
         code, ok = QInputDialog.getText(
@@ -608,7 +617,7 @@ class MainWindow(QMainWindow):
                 return
         finally:
             self._pick_no_fly = False
-        self.status.setText(f"{role.upper()} set: {lat:.5f}, {lon:.5f}")
+        self._set_status(f"{role.upper()} set: {lat:.5f}, {lon:.5f}")
 
     def _on_tx_coord_changed(self) -> None:
         try:
@@ -616,7 +625,7 @@ class MainWindow(QMainWindow):
         except (ValueError, TypeError):
             return
         self.map.set_tx(lat, lon, fly=not self._pick_no_fly)
-        self.status.setText(f"Tx set: {lat:.5f}, {lon:.5f}")
+        self._set_status(f"Tx set: {lat:.5f}, {lon:.5f}")
         self._update_demnas_live()
 
     def _on_rx_coord_changed(self) -> None:
@@ -643,7 +652,7 @@ class MainWindow(QMainWindow):
             except OSError as exc:
                 QMessageBox.warning(self, "Save Profile", f"Could not write file:\n{exc}")
                 return
-            self.status.setText(f"Profile saved: {os.path.basename(path)}")
+            self._set_status(f"Profile saved: {os.path.basename(path)}")
 
         self.map.get_state(_write)
 
@@ -667,7 +676,7 @@ class MainWindow(QMainWindow):
             self._on_tx_coord_changed()
             self._on_rx_coord_changed()
         self.map.apply_state(profile.get("map") or {})
-        self.status.setText(f"Profile loaded: {os.path.basename(path)}")
+        self._set_status(f"Profile loaded: {os.path.basename(path)}")
 
     def stop(self) -> None:
         if self._worker:
@@ -675,7 +684,7 @@ class MainWindow(QMainWindow):
             self._worker.wait()
         self.progress.setVisible(False)
         self.form.btn_run.setEnabled(True)
-        self.status.setText("Stopped")
+        self._set_status("Stopped")
 
     def clear_propagation(self) -> None:
         """Clear computed propagation data: coverage overlay, log, and status."""
@@ -686,7 +695,7 @@ class MainWindow(QMainWindow):
         self.terminal.clear()
         self.progress.setVisible(False)
         self.form.btn_run.setEnabled(True)
-        self.status.setText("Ready")
+        self._set_status("Ready")
 
     def clear_cache(self) -> None:
         """Delete all on-disk cache (downloaded DEM/SDF tiles, DEMNAS data, and
@@ -732,7 +741,7 @@ class MainWindow(QMainWindow):
 
         size_str = _human_size(freed)
         msg = f"Cache dibersihkan: {removed} item ({size_str}) dihapus dari {self.cache_dir}"
-        self.status.setText("Cache cleared")
+        self._set_status("Cache cleared")
         self.terminal.append("[cache] " + msg)
 
     # ------------------------------------------------------------------ export
@@ -771,7 +780,7 @@ class MainWindow(QMainWindow):
                 return
             with open(path, "w", encoding="utf-8") as fh:
                 fh.write(kml_text)
-            self.status.setText(f"Exported KML: {path}")
+            self._set_status(f"Exported KML: {path}")
         elif fmt == "TXT (Raster)":
             raster = result.get("raster_txt")
             if not raster or not os.path.exists(raster):
@@ -785,14 +794,14 @@ class MainWindow(QMainWindow):
             if not path:
                 return
             self._export_raster_txt(result, path)
-            self.status.setText(f"Exported TXT: {path}")
+            self._set_status(f"Exported TXT: {path}")
         elif fmt == "PNG":
             path, _ = QFileDialog.getSaveFileName(
                 self, "Export PNG", base + ".png", "PNG (*.png)")
             if not path:
                 return
             shutil.copyfile(png, path)
-            self.status.setText(f"Exported PNG: {path}")
+            self._set_status(f"Exported PNG: {path}")
         else:
             QMessageBox.information(
                 self, "Export",
@@ -800,7 +809,7 @@ class MainWindow(QMainWindow):
                 "Use KMZ or PNG.")
             return
         if fmt in ("KMZ", "KMZ (3D)"):
-            self.status.setText(f"Exported {fmt}: {path}")
+            self._set_status(f"Exported {fmt}: {path}")
 
     def _export_raster_txt(self, result: dict, path: str) -> None:
         """Wrap the engine's raw raster dump in a Radio-Mobile-style header."""
