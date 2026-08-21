@@ -1,4 +1,3 @@
-# Copyright (c) 2026-2029, RF Propagation Flintflow. All rights reserved.
 """Main application window: sidebar form + map + terminal + controls matching CloudRF UI."""
 
 from __future__ import annotations
@@ -33,6 +32,7 @@ def _dir_size(path: str) -> int:
     return total
 
 
+
 def _human_size(num: int) -> str:
     """Format a byte count into a human-readable string."""
     for unit in ("B", "KB", "MB", "GB", "TB"):
@@ -40,6 +40,22 @@ def _human_size(num: int) -> str:
             return f"{num:.0f} {unit}" if unit == "B" else f"{num:.1f} {unit}"
         num /= 1024.0
     return f"{num:.0f} B"
+
+
+def _cache_size(cache_dir: str) -> int:
+    """Return total size in bytes of all entries under ``cache_dir``."""
+    if not os.path.isdir(cache_dir):
+        return 0
+    total = 0
+    for entry in os.scandir(cache_dir):
+        try:
+            if entry.is_dir(follow_symlinks=False):
+                total += _dir_size(entry.path)
+            elif entry.is_file(follow_symlinks=False):
+                total += entry.stat(follow_symlinks=False).st_size
+        except OSError:
+            continue
+    return total
 
 
 class _MouseWheelGuard(QObject):
@@ -680,10 +696,12 @@ class MainWindow(QMainWindow):
                 "menghapus cache.")
             return
 
+        size_str = _human_size(_cache_size(self.cache_dir))
         reply = QMessageBox.question(
             self, "Hapus semua cache?",
             "Ini akan menghapus semua data cache (tile DEM/SDF, DEMNAS, "
             "direktori sementara) di:\n\n" + self.cache_dir +
+            "\n\nTotal ukuran cache: " + size_str +
             "\n\nTindakan ini tidak dapat dibatalkan. Lanjutkan?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
