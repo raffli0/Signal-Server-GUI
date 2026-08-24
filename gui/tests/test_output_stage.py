@@ -1,6 +1,7 @@
 import os
-import struct
-import zipfile
+
+import numpy as np
+from PIL import Image
 
 from signal_gui import output_stage
 
@@ -24,25 +25,85 @@ def test_build_kml():
     assert "<href>cov.png</href>" in kml
 
 
-def _make_ppm(path, w=4, h=3):
-    with open(path, "wb") as fh:
-        fh.write(b"P6\n%d %d\n255\n" % (w, h))
-        fh.write(b"\xff\xff\xff" * (w * h))  # white => transparent after convert
+def _write_ppm(path, arr):
+    arr = np.asarray(arr, dtype=np.uint8)
+    Image.fromarray(arr, "RGB").save(path, format="PPM")
 
 
-def test_ppm_to_png_and_stage(tmp_path):
+def test_ppm_all_white_becomes_transparent(tmp_path):
     ppm = tmp_path / "t1.ppm"
-    _make_ppm(str(ppm))
+    _write_ppm(str(ppm), np.full((3, 4, 3), 255, dtype=np.uint8))
     out = output_stage.stage_output(str(ppm), SAMPLE_STDOUT, title="Test")
     assert os.path.exists(out["png"])
     assert os.path.exists(out["kml"])
     assert out["bbox"] == (52.118628, -1.793233, 51.579372, -2.666567)
-    # png should be smaller than the white ppm after transparency
-    assert os.path.getsize(out["png"]) > 0
+    img = np.asarray(Image.open(out["png"]).convert("RGBA"))
+    assert img.shape[:2] == (3, 4)
+    assert (img[..., 3] == 0).all()
+
+
+def test_tx_center_hole_is_filled(tmp_path):
+    w, h = 21, 21
+    grey_val = 137
+    red = (255, 0, 0)
+    green = (0, 255, 0)
+    arr = np.full((h, w, 3), grey_val, dtype=np.uint8)
+    cx, cy = 10, 10
+    yy, xx = np.mgrid[0:h, 0:w]
+    dist = np.sqrt((xx - cx) ** 2 + (yy - cy) ** 2)
+    arr[dist <= 8] = green
+    hole = dist <= 2
+    arr[hole] = 255
+    ppm = tmp_path / "hole.ppm"
+    _write_ppm(str(ppm), arr)
+
+    png_path = output_stage.ppm_to_png(str(ppm))
+    img = np.asarray(Image.open(png_path).convert("RGBA"))
+
+    assert (img[0, :, 3] == 0).all()
+    assert (img[-1, :, 3] == 0).all()
+    assert (img[:, 0, 3] == 0).all()
+    assert (img[:, -1, 3] == 0).all()
+
+    ring = (dist > 2) & (dist <= 8)
+    assert (img[ring][..., :3] == green).all()
+    assert (img[ring][..., 3] == 255).all()
+
+    assert not (img[hole][..., 3] == 0).any(), "Tx center must not stay transparent"
+
+
+def test_enclosed_hole_uses_color_file(tmp_path):
+    w, h = 15, 15
+    blue = (0, 148, 255)
+    white = (30, 30, 30)
+    magenta = (142, 63, 255)
+    arr = np.full((h, w, 3), 200, dtype=np.uint8)
+    yy, xx = np.mgrid[0:h, 0:w]
+    dist = np.sqrt((xx - 7) ** 2 + (yy - 7) ** 2)
+    arr[dist <= 6] = blue
+    arr[dist <= 1] = white
+    ppm = tmp_path / "pal.ppm"
+    _write_ppm(str(ppm), arr)
+    scf = tmp_path / "custom.scf"
+    scf.write_text("128: 142, 63, 255\n59: 0, 208, 0\n")
+
+    png_path = output_stage.ppm_to_png(str(ppm), color_file=str(scf))
+    img = np.asarray(Image.open(png_path).convert("RGBA"))
+
+    assert (img[7, 7][..., :3] == magenta).all()
+    assert img[7, 7][..., 3] == 255
+    assert (img[0, 0][..., 3] == 0).all()
+
+
+def test_parse_strongest_color_fallback():
+    fallback = output_stage.parse_strongest_color(None)
+    assert len(fallback) == 3 and all(0 <= c <= 255 for c in fallback)
+    assert output_stage.parse_strongest_color("/nonexistent/file.scf") == fallback
 
 
 def test_extract_hgt(tmp_path):
     from signal_gui import dem_convert
+    import zipfile
     zpath = tmp_path / "B48.zip"
     with zipfile.ZipFile(zpath, "w") as zf:
         zf.writestr("B48/S05E102.hgt", b"\x00\x01\x02\x03")

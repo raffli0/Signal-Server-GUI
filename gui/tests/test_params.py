@@ -36,12 +36,86 @@ def test_build_argv_flags():
     assert "-erp" in argv and argv[argv.index("-erp") + 1] == "100.0"
     assert "-hp" in argv
     assert "-pm" in argv and argv[argv.index("-pm") + 1] == "7"
-    assert "-pe" in argv and argv[argv.index("-pe") + 1] == "3"
-    assert "-ked" in argv
+    # FSPL (pm 7) consumes none of the model-specific flags; they are dropped.
+    assert "-pe" not in argv
+    assert "-ked" not in argv
+    assert "-rel" not in argv
+    assert "-cl" not in argv
     assert "-sdf" in argv and argv[argv.index("-sdf") + 1] == "/data"
     assert "-m" in argv
     assert "-dbm" in argv
     assert argv[-2:] == ["-o", "/tmp/o"]
+
+
+def test_build_argv_itm_drops_context_keeps_climate_reliability():
+    p = {
+        "tx_lat": 1, "tx_lon": 1, "tx_height": 30, "frequency_mhz": 900,
+        "erp_w": 10.0, "model_pm": 1, "context_pe": 3, "knife_edge": True,
+        "reliability": 80, "climate_zone": 5,
+        "terrain_source": "sdf", "sdf_dir": "/data", "radius": 30,
+        "engine": "Standard", "units": "metric",
+    }
+    argv = params.build_argv(p, engine_exe="signalserver", output_basename="/tmp/o")
+    # ITM uses climate + reliability, but ignores context; -ked is a no-op.
+    assert "-cl" in argv and "-rel" in argv
+    assert "-pe" not in argv
+    assert "-ked" not in argv
+
+
+def test_build_argv_empirical_keeps_context_drops_climate():
+    p = {
+        "tx_lat": 1, "tx_lon": 1, "tx_height": 30, "frequency_mhz": 900,
+        "erp_w": 10.0, "model_pm": 3, "context_pe": 2, "knife_edge": True,
+        "terrain_source": "sdf", "sdf_dir": "/data", "radius": 30,
+        "engine": "Standard", "units": "metric",
+    }
+    argv = params.build_argv(p, engine_exe="signalserver", output_basename="/tmp/o")
+    assert "-pe" in argv and argv[argv.index("-pe") + 1] == "2"
+    assert "-cl" not in argv
+    assert "-ked" in argv  # empirical models consume -ked
+
+
+def test_build_argv_segments_passthrough():
+    p = {
+        "tx_lat": 1, "tx_lon": 1, "tx_height": 30, "frequency_mhz": 900,
+        "erp_w": 10.0, "model_pm": 1, "terrain_source": "sdf",
+        "sdf_dir": "/data", "radius": 30, "engine": "Standard",
+        "units": "metric", "plot_segments": 16,
+    }
+    argv = params.build_argv(p, engine_exe="signalserver", output_basename="/tmp/o")
+    assert "-segments" in argv and argv[argv.index("-segments") + 1] == "16"
+
+
+def test_option_states_for_model():
+    itm = params.option_states_for_model(1)
+    assert itm["climate"] == params.OPTION_ACTIVE
+    assert itm["reliability"] == params.OPTION_ACTIVE
+    assert itm["context"] == params.OPTION_NA
+    assert itm["diffraction"] == params.OPTION_BUILTIN
+    fspl = params.option_states_for_model(7)
+    assert all(v == params.OPTION_NA for v in fspl.values())
+    emp = params.option_states_for_model(3)
+    assert emp["context"] == params.OPTION_ACTIVE
+    assert emp["diffraction"] == params.OPTION_ACTIVE
+
+
+def test_auto_segments_bounds():
+    seg = params.auto_segments()
+    assert seg >= 4 and seg % 2 == 0 and seg <= 254
+
+
+def test_build_argv_draft_halves_resolution_and_segments():
+    p = {
+        "tx_lat": 1, "tx_lon": 1, "tx_height": 30, "frequency_mhz": 900,
+        "erp_w": 10.0, "model_pm": 1, "terrain_source": "sdf",
+        "sdf_dir": "/data", "radius": 30, "engine": "Standard",
+        "units": "metric", "resolution": 1200, "plot_quality": "draft",
+    }
+    argv = params.build_argv(p, engine_exe="signalserver", output_basename="/tmp/o")
+    assert "-res" in argv
+    assert argv[argv.index("-res") + 1] == "2400"   # 1200 * 2 for draft
+    assert "-segments" in argv                        # always set now
+    assert int(argv[argv.index("-segments") + 1]) >= 4
 
 
 def test_build_argv_lidar():

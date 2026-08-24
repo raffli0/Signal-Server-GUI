@@ -13,11 +13,11 @@ from datetime import datetime
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QSplitter, QVBoxLayout, QHBoxLayout, QPlainTextEdit,
     QPushButton, QProgressBar, QLabel, QFileDialog, QInputDialog, QMessageBox,
-    QScrollArea, QApplication, QFrame, QSizePolicy
+    QScrollArea, QApplication, QFrame, QSizePolicy, QDialog
 )
-from PySide6.QtCore import Qt, QTimer, QObject, QEvent
+from PySide6.QtCore import Qt, QTimer, QObject, QEvent, Signal
 
-from . import backend, params as params_mod
+from . import backend, params as params_mod, output_stage
 from .widgets import ParameterForm
 
 
@@ -78,6 +78,9 @@ from .header import CloudRFHeader
 
 
 class MainWindow(QMainWindow):
+    #: Ground-elevation lookup finished: ("tx"|"rx", elev_m_or_None).
+    amsl_ready = Signal(str, object)
+
     def __init__(self, root: str = ""):
         super().__init__()
         self.setWindowTitle("RF Propagation / Signal-Server GUI")
@@ -96,7 +99,12 @@ class MainWindow(QMainWindow):
         self._worker = None
         self._last_result = None
         self._pick_no_fly = False
+        self._amsl_timer = QTimer(self)
+        self._amsl_timer.setSingleShot(True)
+        self._amsl_timer.setInterval(600)
+        self._amsl_timer.timeout.connect(self._fetch_ground_elevations)
         self._build_ui()
+        self.amsl_ready.connect(self.form.set_ground_elevation)
         self._apply_global_theme()
 
     def _detect_root(self) -> str:
@@ -398,6 +406,9 @@ class MainWindow(QMainWindow):
             lambda: self.map.set_site_labels(rx=self.form.rx_name.text().strip() or None))
         self.form.demnas_dir_picked.connect(self._update_demnas_live)
         self.form.demnas_live.toggled.connect(self._update_demnas_live)
+        # DEM source changes affect where elevations are sampled from.
+        self.form.demnas_dir_picked.connect(self._schedule_amsl)
+        self.form.dem_source.currentIndexChanged.connect(lambda _: self._schedule_amsl())
         # Default DEMNAS folder (always wins on startup): first subdir of
         # <root>/gui/data named "demnas" in any letter case, else create one.
         self.demnas_default_dir = self._find_demnas_default()
@@ -409,6 +420,48 @@ class MainWindow(QMainWindow):
         self._on_rx_coord_changed()
         # Open the map centered on the transmitter by default (not Rx).
         self.map._focus = self.map.tx_pos
+
+    # ------------------------------------------------------------------ AMSL lookup
+    def _demnas_folder_for_lookup(self) -> str | None:
+        # Elevation hints are display-only, so any usable local DEMNAS mosaic
+        # is preferred over the network regardless of the terrain-source mode
+        # (fast, offline, and avoids DNS stalls blocking app shutdown).
+        folder = self.form.demnas_dir.text().strip()
+        if folder and os.path.isdir(folder):
+            return folder
+        return None
+
+    def _schedule_amsl(self) -> None:
+        """Debounce a background ground-elevation lookup for Tx/Rx labels."""
+        self._amsl_timer.start()
+
+    def _fetch_ground_elevations(self) -> None:
+        import threading
+
+        from . import dem_convert as dc
+
+        demnas_folder = self._demnas_folder_for_lookup()
+        for role, coord in (("tx", self.form.tx_coord.get()),
+                            ("rx", self.form.rx_coord.get())):
+            try:
+                lat, lon = float(coord[0]), float(coord[1])
+            except (TypeError, ValueError):
+                continue
+
+            def work(role=role, lat=lat, lon=lon):
+                try:
+                    elev = dc.ground_elevation(
+                        lat, lon,
+                        demnas_folder=demnas_folder, cache_dir=self.cache_dir,
+                    )
+                except Exception:  # noqa: BLE001 - hint only
+                    elev = None
+                self.amsl_ready.emit(role, elev)
+
+            # Daemon thread: an unreachable elevation API must never keep the
+            # application alive at shutdown.
+            threading.Thread(target=work, daemon=True,
+                             name=f"elev-{role}").start()
 
     def _find_demnas_default(self) -> str:
         """Return the default DEMNAS folder: ``<root>/gui/data/<name>`` where
@@ -664,6 +717,8 @@ class MainWindow(QMainWindow):
             self._set_status("Done. Coverage shown on map.")
             if result.get("kml"):
                 self._set_status(f"Done. KML: {result['kml']}")
+            if result.get("rm_png"):
+                self._show_rm_preview(result["rm_png"])
         else:
             self._last_result = None
             self._set_status("Finished with no coverage.")
@@ -706,6 +761,32 @@ class MainWindow(QMainWindow):
             "&nbsp;&nbsp;".join(f"<b>{k}:</b> {v}" for k, v in rows))
         self.profile_view.set_profile(link.get("profile"), obs)
         self.link_report.setPlainText(link.get("report_text", ""))
+
+    def _show_rm_preview(self, rm_png: str) -> None:
+        """Non-modal preview of the Radio Mobile-style picture."""
+        from PySide6.QtGui import QPixmap
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Gambar gaya Radio Mobile")
+        v = QVBoxLayout(dlg)
+        img = QLabel()
+        pix = QPixmap(rm_png)
+        if not pix.isNull():
+            avail = int(QApplication.primaryScreen().availableGeometry()
+                        .height() * 0.7) if QApplication.primaryScreen() else 700
+            img.setPixmap(pix.scaledToHeight(avail, Qt.TransformationMode.SmoothTransformation))
+        img.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        v.addWidget(img)
+        row = QHBoxLayout()
+        hint = QLabel(os.path.basename(rm_png))
+        hint.setStyleSheet("color:#718096; font-size:10px;")
+        row.addWidget(hint, 1)
+        btn_close = QPushButton("Tutup")
+        btn_close.clicked.connect(dlg.accept)
+        row.addWidget(btn_close)
+        v.addLayout(row)
+        self._set_status(f"PNG RM-style siap: {rm_png}")
+        dlg.show()
 
     def _on_error(self, msg: str) -> None:
         self.progress.setVisible(False)
@@ -754,6 +835,7 @@ class MainWindow(QMainWindow):
         self.map.set_tx(lat, lon, fly=not self._pick_no_fly)
         self._set_status(f"Tx set: {lat:.5f}, {lon:.5f}")
         self._update_demnas_live()
+        self._schedule_amsl()
 
     def _on_rx_coord_changed(self) -> None:
         try:
@@ -761,6 +843,7 @@ class MainWindow(QMainWindow):
         except (ValueError, TypeError):
             return
         self.map.set_rx(lat, lon, fly=not self._pick_no_fly)
+        self._schedule_amsl()
 
     # ------------------------------------------------------------------ profile
     def save_profile(self) -> None:
@@ -931,6 +1014,8 @@ class MainWindow(QMainWindow):
                 return
             shutil.copyfile(png, path)
             self._set_status(f"Exported PNG: {path}")
+        elif fmt == "PNG (RM-style)":
+            self._export_rm_png(result, base)
         else:
             QMessageBox.information(
                 self, "Export",
@@ -940,8 +1025,43 @@ class MainWindow(QMainWindow):
         if fmt in ("KMZ", "KMZ (3D)"):
             self._set_status(f"Exported {fmt}: {path}")
 
+    def _export_rm_png(self, result: dict, base: str) -> None:
+        """Export a full Radio Mobile-style picture + automatic KML sidecar."""
+        bbox = result.get("bbox")
+        if bbox is None:
+            QMessageBox.warning(self, "Export", "No bounding box available for RM-style PNG.")
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export PNG (RM-style)", base + "_rm.png", "PNG (*.png)")
+        if not path:
+            return
+        from . import rm_style
+
+        p = (self._pending[0] if self._pending else {}) or {}
+        try:
+            rm_style.render_for_run(
+                path, bbox, p, coverage_png=result["png"])
+        except Exception as exc:  # noqa: BLE001 - surface to the user
+            QMessageBox.warning(self, "Export", f"Render RM-style gagal:\n{exc}")
+            return
+        sidecar = os.path.splitext(path)[0] + ".kml"
+        with open(sidecar, "w", encoding="utf-8") as fh:
+            fh.write(output_stage.build_kml(
+                os.path.basename(path), bbox, base))
+        self._set_status(f"Exported PNG (RM-style): {path} (+ {os.path.basename(sidecar)})")
+
     def _export_raster_txt(self, result: dict, path: str) -> None:
-        """Wrap the engine's raw raster dump in a Radio-Mobile-style header."""
+        """Wrap the engine's raw raster dump in a Radio-Mobile-compatible file.
+
+        Layout mirrors Radio Mobile's own TXT export:
+          Range   <dynamic-range>dB <threshold>dBm     (dynamic range fixed 40 dB)
+          Fixed unit  <idx> <name> <lat> <lon> <antenna AMSL>
+          Mobile unit <idx> <name> <lat> <lon> <antenna AMSL>
+        Antenna heights are AMSL (ground elevation + AGL input), matching how
+        Radio Mobile reports site heights.
+        """
+        from . import dem_convert as dc
+
         p = (self._pending[0] if self._pending else {}) or {}
 
         def _f(v, default=0.0):
@@ -955,18 +1075,42 @@ class MainWindow(QMainWindow):
         rx_lat = p.get("rx_lat")
         rx_lon = p.get("rx_lon")
 
+        # Ground elevation (AMSL) lookup: local DEMNAS folder when offline mode
+        # is active, otherwise the web fallback inside ground_elevation().
+        demnas_folder = None
+        if p.get("dem_source") == "offline":
+            folder = p.get("demnas_dir")
+            if folder and os.path.isdir(folder):
+                demnas_folder = folder
+
+        def amsl(lat, lon, agl):
+            elev = dc.ground_elevation(
+                _f(lat), _f(lon),
+                demnas_folder=demnas_folder, cache_dir=self.cache_dir,
+            )
+            return _f(agl) + (elev if elev is not None else 0.0)
+
+        def fmt_lat(v):
+            return f"{_f(v):09.5f}"
+
+        def fmt_lon(v):
+            return f"{_f(v):10.5f}"
+
+        thr = _f(p.get("rx_threshold_dbm"), -100)
         with open(result["raster_txt"], "r", encoding="utf-8") as src, \
                 open(path, "w", encoding="utf-8") as out:
-            out.write(f"Range\t{_f(p.get('radius')):.1f}km\t"
-                      f"{_f(p.get('rx_threshold_dbm'), -100):.1f}dBm\n")
-            out.write(f"Fixed unit\t1\t{tx_name}\t{_f(p.get('tx_lat')):.5f}"
-                      f"\t{_f(p.get('tx_lon')):+.5f}\t{_f(p.get('tx_height')):.1f}\n")
-            out.write(f"Mobile unit\t2\t{rx_name}\t"
-                      + (f"{_f(rx_lat):.5f}\t{_f(rx_lon):+.5f}"
-                         if rx_lat is not None and rx_lon is not None
-                         else f"{_f(p.get('tx_lat')):.5f}\t{_f(p.get('tx_lon')):+.5f}")
-                      + f"\t{_f(p.get('rx_height'), 1.5):.1f}\n")
-            out.write("Latitude\tLongitude\tRx(dBm)\tBest unit\n")
+            out.write(f"Range\t40.0dB\t{thr:.1f}dBm\n")
+            out.write(f"Fixed unit\t1\t{tx_name}\t{fmt_lat(p.get('tx_lat'))}"
+                      f"\t{fmt_lon(p.get('tx_lon'))}"
+                      f"\t{amsl(p.get('tx_lat'), p.get('tx_lon'), p.get('tx_height')):.1f}\n")
+            if rx_lat is not None and rx_lon is not None:
+                mob_pos = f"{fmt_lat(rx_lat)}\t{fmt_lon(rx_lon)}"
+                mob_amsl = amsl(rx_lat, rx_lon, p.get('rx_height'))
+            else:
+                mob_pos = f"{fmt_lat(p.get('tx_lat'))}\t{fmt_lon(p.get('tx_lon'))}"
+                mob_amsl = amsl(p.get('tx_lat'), p.get('tx_lon'), p.get('rx_height'))
+            out.write(f"Mobile unit\t2\t{rx_name}\t{mob_pos}\t{mob_amsl:.1f}\n")
+            out.write("Latitude\tLongitude\tRx(dB)\tBest unit\n")
             for line in src:
                 parts = line.split()
                 if len(parts) != 3:
@@ -975,7 +1119,7 @@ class MainWindow(QMainWindow):
                     lat, lon, dbm = float(parts[0]), float(parts[1]), int(parts[2])
                 except ValueError:
                     continue
-                out.write(f"{lat:.5f}\t{lon:+.5f}\t{dbm}.0\t1\n")
+                out.write(f"{lat:09.5f}\t{lon:10.5f}\t{dbm:07.1f}\t1\n")
 
     def _export_kmz(self, result: dict, png: str, bbox, path: str, base: str) -> None:
         """Build a KMZ (zipped KML GroundOverlay + PNG image)."""

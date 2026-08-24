@@ -106,6 +106,12 @@ class RunWorker(QThread):
             self.progress.emit("Menyiapkan DEMNAS (folder) -> SDF (offline) ...")
             vrt = dem_convert._demnas_vrt(spec["folder"], spec["cache_dir"])
             dem_convert._assert_covers(vrt, clat, clon)
+            # The mosaic must also span the full run area, not just the Tx
+            # point: a partial DEM makes the engine compute the coverage over
+            # whatever terrain happens to be loaded instead.
+            dem_convert._assert_covers_bbox(
+                vrt, spec["lat_lo"], spec["lat_hi"], spec["lon_lo"], spec["lon_hi"]
+            )
             self._log_demnas_elevation(vrt, clat, clon)
             sdf_dir = dem_convert.demnas_folder_to_sdf(
                 spec["folder"], spec["cache_dir"], sdf_exe, engine,
@@ -119,14 +125,17 @@ class RunWorker(QThread):
             # required SDF terrain is missing. Refuse to launch if the matching
             # SDF variant is absent (HD needs "-hd" tiles, others need plain ones),
             # or if the terrain does not actually cover the transmitter.
-            self._require_sdf_variant(p, sdf_dir)
+            self._require_sdf_variant(p, sdf_dir, spec)
             return
         if mode == "demnas_lidar":
             self.progress.emit("Menyiapkan DEMNAS (folder) -> LIDAR .asc (offline) ...")
             vrt = dem_convert._demnas_vrt(spec["folder"], spec["cache_dir"])
             dem_convert._assert_covers(vrt, clat, clon)
+            dem_convert._assert_covers_bbox(
+                vrt, spec["lat_lo"], spec["lat_hi"], spec["lon_lo"], spec["lon_hi"]
+            )
             self._log_demnas_elevation(vrt, clat, clon)
-            asc = dem_convert.demnas_folder_to_asc(
+            asc, astats = dem_convert.demnas_folder_to_asc(
                 spec["folder"], spec["cache_dir"],
                 spec["lat_lo"], spec["lat_hi"], spec["lon_lo"], spec["lon_hi"],
                 ppd=spec.get("ppd", 1200),
@@ -136,6 +145,24 @@ class RunWorker(QThread):
             p["terrain_source"] = "lidar"
             p["_demnas"] = True
             p["_demnas_mode"] = "demnas_lidar"
+            p["_dem_stats"] = astats
+            # The LIDAR engine derives the plot resolution from the .asc
+            # (ppd = rows/lat-span). When the 6M-cell clamp coarsened the
+            # grid, the whole plot loses detail — tell the user.
+            if astats["ppd"] < 1200:
+                self.progress.emit(
+                    f"PERINGATAN: resolusi terrain {astats['cellsize_m']:.0f} m "
+                    f"(ppd {astats['ppd']} < 1200) karena area run besar "
+                    f"(batas {astats['nrows']}x{astats['ncols']} sel). "
+                    f"Perkecil radius untuk detail penuh."
+                )
+            if astats.get("nodata_warning"):
+                self.progress.emit(
+                    f"PERINGATAN: {astats['nodata_pct']}% terrain NODATA "
+                    f"(folder DEMNAS tidak menutupi seluruh area). Coverage "
+                    f"di zona itu dihitung di atas terrain palsu (halus/"
+                    f"bulat). Tambahkan tile DEMNAS atau perkecil radius."
+                )
             return
         if "tile_code" in spec:
             self.progress.emit(f"Preparing DEM tile {spec['tile_code']} ...")
@@ -159,7 +186,7 @@ class RunWorker(QThread):
         # required SDF terrain is missing. Refuse to launch if the matching
         # SDF variant is absent (HD needs "-hd" tiles, others need plain ones),
         # or if the terrain does not actually cover the transmitter.
-        self._require_sdf_variant(p, sdf_dir)
+        self._require_sdf_variant(p, sdf_dir, spec)
 
     def _log_demnas_elevation(self, vrt: str, lat: float, lon: float) -> None:
         """Log the DEMNAS elevation at the transmitter so the run is auditable."""
@@ -174,7 +201,9 @@ class RunWorker(QThread):
                 f"Elevasi Tx (DEMNAS): {elev:.1f} m  |  lokasi ({lat:.4f}, {lon:.4f})"
             )
 
-    def _require_sdf_variant(self, p: dict, sdf_dir: str) -> None:
+    def _require_sdf_variant(
+        self, p: dict, sdf_dir: str, spec: Optional[dict] = None
+    ) -> None:
         if not os.path.isdir(sdf_dir):
             raise RuntimeError(f"DEM directory missing: {sdf_dir}")
         hd = p.get("engine") == "HD"
@@ -194,30 +223,113 @@ class RunWorker(QThread):
                 f"Use a DEM resolution that matches the engine "
                 f"(HD engine requires 30 m; Standard/LIDAR use 90 m)."
             )
-        # Make sure the terrain we have actually covers the transmitter, not just
-        # any tile in the (per-tile) cache dir. Launching on terrain that omits
-        # the Tx cell yields a degenerate, line-shaped coverage. The SDF filenames
-        # use an opaque encoding, so we verify against the source .hgt files.
-        # (Offline DEMNAS terrain is clipped from the source by construction, so
-        # this per-tile check is skipped for that mode.)
-        if p.get("_demnas"):
-            return
+        # Verify against the .sdf text headers themselves (max_west/min_north/
+        # min_west/max_north), which works for every terrain source including
+        # offline DEMNAS whose filenames are opaque. Launching on terrain that
+        # omits the Tx cell makes the engine compute coverage over whatever
+        # region *is* loaded -- producing a coverage plot far away from the Tx.
+        boxes = dem_convert.sdf_dir_boxes(sdf_dir, hd=hd)
         tx_lat = p.get("tx_lat")
         tx_lon = p.get("tx_lon")
-        if tx_lat is not None and tx_lon is not None:
-            raw_dir = os.path.join(
-                os.path.dirname(os.path.dirname(sdf_dir)), "raw", os.path.basename(sdf_dir)
+        if tx_lat is not None and tx_lon is not None and boxes \
+                and not dem_convert.sdf_point_covered(boxes, float(tx_lat), float(tx_lon)):
+            raise RuntimeError(
+                f"Terrain SDF di {sdf_dir} tidak mencakup titik Tx "
+                f"({tx_lat}, {tx_lon}). Hasil propagasi pasti salah -- "
+                f"perbaiki sumber DEM agar mencakup lokasi ini."
             )
-            if not dem_convert.hgt_covers_center(raw_dir, float(tx_lat), float(tx_lon)):
-                raise RuntimeError(
-                    f"Prepared DEM in {sdf_dir} does not cover the transmitter "
-                    f"({tx_lat}, {tx_lon}). Pick the correct DEM tile for this location."
+        # Warn when the loaded terrain omits parts of the requested run area.
+        if spec is not None and boxes and all(
+            k in spec for k in ("lat_lo", "lat_hi", "lon_lo", "lon_hi")
+        ):
+            missing = dem_convert.sdf_missing_corners(
+                boxes, spec["lat_lo"], spec["lat_hi"],
+                spec["lon_lo"], spec["lon_hi"],
+            )
+            if missing:
+                self.progress.emit(
+                    f"PERINGATAN: terrain SDF tidak mencakup sebagian area "
+                    f"run ({', '.join(missing)}); hasil di bagian tersebut "
+                    f"tidak valid. Perluas cakupan DEM atau kecilkan radius."
                 )
+
+    def _enrich_ground_elevations(self, p: dict) -> None:
+        """Look up ground elevation (m AMSL) at Tx/Rx for RM-style reporting.
+
+        Best effort: local DEMNAS mosaic first, then the Open-Meteo API. A
+        failure only means the AMSL columns are omitted from reports.
+        """
+        # Display-only hint: prefer any usable local DEMNAS mosaic over the
+        # network so run start is never delayed by an unreachable API.
+        demnas_folder = None
+        folder = p.get("demnas_dir")
+        if folder and os.path.isdir(folder):
+            demnas_folder = folder
+        cache_dir = (self.dem_spec or {}).get("cache_dir")
+        for role, key in (("tx", "tx_lat"), ("rx", "rx_lat")):
+            lat, lon = p.get(key), p.get(f"{role}_lon")
+            if lat is None or lon is None:
+                continue
+            elev = dem_convert.ground_elevation(
+                float(lat), float(lon),
+                demnas_folder=demnas_folder,
+                cache_dir=cache_dir,
+            )
+            p[f"_{role}_ground_elev"] = elev
+
+    def _write_manifest(self, p: dict) -> None:
+        """Persist effective run parameters + DEM stats next to the outputs.
+
+        The siggui_* run directories previously held only the ppm/kml, so two
+        runs with different results could not be told apart afterwards. The
+        manifest makes every run auditable (parameters, terrain resolution,
+        relief, NODATA fraction).
+        """
+        import json
+
+        run_dir = os.path.dirname(self.output_basename)
+        try:
+            # Record the processing strategy actually used (auditable + lets a
+            # later run reproduce the same thread/quality settings).
+            from . import params as _params
+            p = dict(p)
+            p["plot_segments"] = p.get("plot_segments") or _params.auto_segments()
+            with open(os.path.join(run_dir, "params.json"), "w",
+                      encoding="utf-8") as fh:
+                json.dump(p, fh, indent=2, default=str)
+            dem = p.get("_dem_stats")
+            if dem:
+                with open(os.path.join(run_dir, "dem_stats.json"), "w",
+                          encoding="utf-8") as fh:
+                    json.dump(dem, fh, indent=2)
+                self.progress.emit(
+                    f"[dem] asc {dem['cellsize_m']:.0f} m (ppd {dem['ppd']}) "
+                    f"relief {dem['min_m']}..{dem['max_m']} m · "
+                    f"nodata {dem['nodata_pct']}%"
+                )
+        except (OSError, TypeError, ValueError):
+            pass  # manifest is best-effort diagnostics
 
     def run(self) -> None:  # noqa: D401
         p = dict(self.parameters)
         try:
+            self._enrich_ground_elevations(p)
             self._prepare_dem(p)
+            self._write_manifest(p)
+            # Radio Mobile style: auto-generate the colour table from the
+            # rmwcore colors*.dat palette unless the user picked a custom one.
+            if p.get("rm_style") and not p.get("color_file_user"):
+                try:
+                    from . import rm_style
+                    dcf = os.path.join(os.path.dirname(self.output_basename),
+                                       "rm_palette.dcf")
+                    rm_style.ensure_palette_dcf(dcf, root=None)
+                    p["color_file"] = dcf
+                    p["_rm_color_file"] = dcf
+                    self.progress.emit(f"Palet otomatis Radio Mobile: {dcf}")
+                except Exception as exc:  # noqa: BLE001 - fall back to default
+                    self.progress.emit(
+                        f"PERINGATAN: palet RM gagal ({exc}); pakai palet bawaan.")
             argv = params_mod.build_argv(
                 p, engine_exe=self.engine_exe, output_basename=self.output_basename
             )
@@ -294,10 +406,41 @@ class RunWorker(QThread):
             )
             raster_txt = ppm[:-4] + "_raster.txt"
             if os.path.exists(raster_txt):
+                # Sanity check: the dumped raster must actually enclose the Tx.
+                # A raster that sits far away from the Tx means the engine
+                # computed coverage over the wrong terrain (DEM mismatch).
+                tx_lat = p.get("tx_lat")
+                tx_lon = p.get("tx_lon")
+                if tx_lat is not None and tx_lon is not None and \
+                        not output_stage.raster_txt_contains(
+                            raster_txt, float(tx_lat), float(tx_lon)):
+                    self.error_occurred.emit(
+                        "Hasil coverage TIDAK melingkupi titik Tx "
+                        f"({tx_lat}, {tx_lon}). Kemungkinan terrain DEM tidak "
+                        f"sesuai lokasi -- periksa sumber DEM dan "
+                        f"jalankan ulang. (Lihat log 'Area boundaries'.)"
+                    )
+                    return
                 result["raster_txt"] = raster_txt
+            if p.get("rm_style"):
+                try:
+                    from . import rm_style
+                    rm_png = self.output_basename + "_rm.png"
+                    rm_style.render_for_run(
+                        rm_png, result["bbox"], p,
+                        coverage_png=result["png"])
+                    result["rm_png"] = rm_png
+                    self.progress.emit(f"Gambar RM-style: {rm_png}")
+                except Exception as exc:  # noqa: BLE001 - cosmetic layer
+                    self.progress.emit(
+                        f"PERINGATAN: render RM-style gagal: {exc}")
             self.finished.emit(True, "\n".join(stdout_text), result)
-        except DemResolveError:
-            # forwarded via need_tile_code already; nothing else to do
+        except DemResolveError as exc:
+            # Surface the reason (missing DEM tiles, folder does not cover the
+            # run bbox, or invalid LIDAR terrain). For the SDF/online path the
+            # UI may also offer a tile download via need_tile_code, but the
+            # user still needs to see why the run stopped.
+            self.error_occurred.emit(str(exc))
             return
         except Exception as exc:  # pragma: no cover - surface all failures
             self.error_occurred.emit(str(exc))

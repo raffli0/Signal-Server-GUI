@@ -53,6 +53,92 @@ CONTEXTS: list[tuple[str, int]] = [
     ("Rural", 3),
 ]
 
+# Per-option relevance for each propagation model. Verified against
+# Signal-Server src/models/los.cc (ITM/ITWOM take radio_climate + conf + rel;
+# Hata/ECC33/SUI/COST231/Ericsson take pmenv) and main.cc (``-ked`` help:
+# "Already on for ITM"; los.cc:728 applies ked() only when prop_model > 1).
+# States:
+#   active   -- the model consumes the flag (send it).
+#   na       -- the model ignores the flag (do not send; would be a no-op).
+#   builtin  -- the feature is already part of the model; the flag is redundant.
+OPTION_ACTIVE = "active"
+OPTION_NA = "na"
+OPTION_BUILTIN = "builtin"
+
+MODEL_OPTION_STATES: dict[int, dict[str, str]] = {
+    1:  {"reliability": OPTION_ACTIVE, "climate": OPTION_ACTIVE,
+         "context": OPTION_NA, "diffraction": OPTION_BUILTIN},
+    2:  {"reliability": OPTION_NA, "climate": OPTION_NA,
+         "context": OPTION_NA, "diffraction": OPTION_ACTIVE},
+    3:  {"reliability": OPTION_NA, "climate": OPTION_NA,
+         "context": OPTION_ACTIVE, "diffraction": OPTION_ACTIVE},
+    4:  {"reliability": OPTION_NA, "climate": OPTION_NA,
+         "context": OPTION_ACTIVE, "diffraction": OPTION_ACTIVE},
+    5:  {"reliability": OPTION_NA, "climate": OPTION_NA,
+         "context": OPTION_ACTIVE, "diffraction": OPTION_ACTIVE},
+    6:  {"reliability": OPTION_NA, "climate": OPTION_NA,
+         "context": OPTION_ACTIVE, "diffraction": OPTION_ACTIVE},
+    7:  {"reliability": OPTION_NA, "climate": OPTION_NA,
+         "context": OPTION_NA, "diffraction": OPTION_NA},
+    8:  {"reliability": OPTION_ACTIVE, "climate": OPTION_ACTIVE,
+         "context": OPTION_NA, "diffraction": OPTION_BUILTIN},
+    9:  {"reliability": OPTION_NA, "climate": OPTION_NA,
+         "context": OPTION_ACTIVE, "diffraction": OPTION_ACTIVE},
+    10: {"reliability": OPTION_NA, "climate": OPTION_NA,
+         "context": OPTION_ACTIVE, "diffraction": OPTION_ACTIVE},
+    11: {"reliability": OPTION_NA, "climate": OPTION_NA,
+         "context": OPTION_ACTIVE, "diffraction": OPTION_ACTIVE},
+    12: {"reliability": OPTION_NA, "climate": OPTION_NA,
+         "context": OPTION_ACTIVE, "diffraction": OPTION_ACTIVE},
+}
+
+
+def model_name(pm) -> str:
+    """Human label for a propagation model id (falls back to ``pm N``)."""
+    try:
+        pm = int(pm)
+    except (TypeError, ValueError):
+        return str(pm)
+    for label, val in MODELS:
+        if val == pm:
+            return label
+    return f"pm {pm}"
+
+
+def option_states_for_model(model_pm) -> dict[str, str]:
+    """Relevance (active/na/builtin) of the model-dependent GUI options.
+
+    Returns a dict with keys ``reliability``, ``climate``, ``context`` and
+    ``diffraction``. Used both by ``build_argv`` (to drop no-op flags) and by
+    the GUI (to grey-out irrelevant controls with an explanatory badge).
+    """
+    try:
+        model_pm = int(model_pm)
+    except (TypeError, ValueError):
+        model_pm = 0
+    return dict(MODEL_OPTION_STATES.get(
+        model_pm,
+        {"reliability": OPTION_NA, "climate": OPTION_NA,
+         "context": OPTION_NA, "diffraction": OPTION_NA},
+    ))
+
+
+def auto_segments(max_segments: int = 64) -> int:
+    """Engine plot-segment count for parallel processing.
+
+    Signal-Server defaults to 4 segments (main.cc:1101), which underuses
+    modern multi-core CPUs. Use ~2x logical cores, clamped to an even value
+    ``>= 4`` (engine requires even and > 4) and ``<= 254`` (``uint8_t``).
+    """
+    try:
+        cores = os.cpu_count() or 4
+    except Exception:  # pragma: no cover - pathological platforms
+        cores = 4
+    seg = min(max(4, 2 * cores), max_segments, 254)
+    if seg % 2 != 0:
+        seg += 1
+    return seg
+
 # Engine selection -> binary basename (chosen by argv[0] inside Signal-Server)
 ENGINES: dict[str, str] = {
     "Standard": "signalserver",
@@ -175,17 +261,27 @@ def build_argv(
 
     # --- Model ---
     _opt(args, "-pm", params.get("model_pm"))
-    # Ericsson (-pm 9) maps its environment variant differently from the other
-    # empirical models (ericsson.cc: 1=Rural, 2=Suburban, anything else=Urban),
-    # so translate the GUI's Urban/Suburban/Rural (1/2/3) accordingly.
+    # Drop flags the selected model does not consume (see MODEL_OPTION_STATES).
+    # Sending them anyway is a silent no-op that pollutes the argv/log and
+    # makes the run harder to reproduce; the GUI greys these out with a badge.
+    states = option_states_for_model(params.get("model_pm"))
     pe = params.get("context_pe")
-    if params.get("model_pm") == 9 and pe:
-        pe = {3: 1, 2: 2}.get(pe, 0)  # Rural->1, Suburban->2, Urban->0
-    _opt(args, "-pe", pe)
-    if params.get("knife_edge"):
+    if states["context"] == OPTION_ACTIVE:
+        # Ericsson (-pm 9) maps its environment variant differently from the
+        # other empirical models (ericsson.cc: 1=Rural, 2=Suburban, else=Urban).
+        if params.get("model_pm") == 9 and pe:
+            pe = {3: 1, 2: 2}.get(pe, 0)  # Rural->1, Suburban->2, Urban->0
+        _opt(args, "-pe", pe)
+    if states["diffraction"] == OPTION_ACTIVE and params.get("knife_edge"):
         args.append("-ked")
-    _opt(args, "-rel", params.get("reliability"))
-    _opt(args, "-cl", params.get("climate_zone"))
+    if states["reliability"] == OPTION_ACTIVE:
+        _opt(args, "-rel", params.get("reliability"))
+    if states["climate"] == OPTION_ACTIVE:
+        _opt(args, "-cl", params.get("climate_zone"))
+    # Processing parallelism (optimisation; engine defaults to 4 segments).
+    # Always pass an explicit segment count so wide runs use all cores instead
+    # of the engine's fixed 4-thread default.
+    _opt(args, "-segments", params.get("plot_segments") or auto_segments())
 
     # --- Environment ---
     _opt(args, "-clt", params.get("clutter_file"))
@@ -202,10 +298,18 @@ def build_argv(
         _opt(args, "-sdf", params.get("sdf_dir"))
 
     # --- Output ---
-    _opt(args, "-res", params.get("resolution"))
+    # "Draft" quality halves the pixel resolution (4x fewer cells) for a fast
+    # preview; "Final" keeps the user-selected resolution.
+    res = int(params.get("resolution", 1200))
+    if params.get("plot_quality") == "draft":
+        res *= 2
+    _opt(args, "-res", res)
     _opt(args, "-R", params.get("radius"))
     _opt(args, "-color", params.get("color_file"))
-    if params.get("dbm_color"):
+    # Radio Mobile parity: the raster TXT dump must be in dBm (like RM's own
+    # export), which the engine only guarantees in -dbm mode. -dbm also switches
+    # the PPM colour scale to dBm, keeping map and raster consistent.
+    if params.get("dbm_color") or params.get("raster_txt"):
         args.append("-dbm")
     if params.get("raster_txt"):
         args.append("-rastertxt")
@@ -260,6 +364,17 @@ def format_run_summary(params: dict, argv: list[str], engine_exe: str) -> list[s
     else:
         dem = "auto (Viewfinder SRTM download)"
 
+    def amsl_txt(role: str) -> str:
+        """'tinggi AGL x m (AMSL y m)' when ground elevation is known."""
+        agl = params.get(f"{role}_height")
+        elev = params.get(f"_{role}_ground_elev")
+        if elev is None:
+            return f"{agl} m AGL"
+        try:
+            return f"{agl} m AGL ({float(elev) + float(agl):.0f} m AMSL)"
+        except (TypeError, ValueError):
+            return f"{agl} m AGL"
+
     lines = [
         "[run] ============ Parameter efektif ============",
         f"[run] Engine    : {engine_name} ({engine_exe})",
@@ -267,8 +382,8 @@ def format_run_summary(params: dict, argv: list[str], engine_exe: str) -> list[s
         + (f" | context {ctx_label} (-pe {ctx})" if ctx_label else "")
         + f" | reliability {params.get('reliability', 50)}%",
         f"[run] Tx        : ({params.get('tx_lat')}, {params.get('tx_lon')})"
-        f" tinggi {params.get('tx_height')} m AGL",
-        f"[run] Rx        : tinggi {params.get('rx_height')} m"
+        f" tinggi {amsl_txt('tx')}",
+        f"[run] Rx        : tinggi {amsl_txt('rx')}"
         f" | gain {params.get('rx_gain_dbd')} dBd"
         f" | threshold {params.get('rx_threshold_dbm')} dBm",
         f"[run] ERP       : {erp:.2f} W"
@@ -282,6 +397,8 @@ def format_run_summary(params: dict, argv: list[str], engine_exe: str) -> list[s
         f" | units {params.get('units', 'metric')}"
         f" | color {params.get('color_file') or '(engine default)'}"
         + (" | -dbm" if params.get("dbm_color") else ""),
+        f"[run] Proses    : quality={params.get('plot_quality', 'final')}"
+        f" | segments={params.get('plot_segments') or auto_segments()}",
     ]
     if params.get("antenna_basename"):
         lines.append(
@@ -290,6 +407,24 @@ def format_run_summary(params: dict, argv: list[str], engine_exe: str) -> list[s
             f" | azimuth {params.get('azimuth_deg')}"
             f" | downtilt {params.get('downtilt_deg')}")
     lines.append("[run] Argv      : " + " ".join(argv))
+    # --- Smart gating notes: flag was dropped because the model ignores it ---
+    states = option_states_for_model(params.get("model_pm"))
+    mname = model_name(params.get("model_pm"))
+    if states["diffraction"] != OPTION_ACTIVE:
+        if states["diffraction"] == OPTION_BUILTIN:
+            lines.append(f"[run] catatan: -ked dilewati (difraksi sudah "
+                         f"built-in pada {mname})")
+        else:
+            lines.append(f"[run] catatan: -ked tidak berlaku untuk {mname}")
+    for opt, flag, key in (("context", "-pe", "context_pe"),
+                            ("reliability", "-rel", "reliability"),
+                            ("climate", "-cl", "climate_zone")):
+        if states[opt] == OPTION_NA and params.get(key) is not None:
+            lines.append(f"[run] catatan: {flag} dilewati (tidak dipakai "
+                         f"oleh {mname})")
+    if params.get("plot_segments"):
+        lines.append(f"[run] catatan: -segments {params['plot_segments']} "
+                     "(paralelisme processing)")
     lines.append("[run] ===========================================")
     return lines
 

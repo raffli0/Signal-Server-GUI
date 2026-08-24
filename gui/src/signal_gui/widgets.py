@@ -270,6 +270,7 @@ class ParameterForm(QWidget):
         self.ss_root = signal_server_root
         self.sections: dict[str, CollapsibleSection] = {}
         self.is_locked = False
+        self._ground_elev: dict[str, Optional[float]] = {"tx": None, "rx": None}
         self._build()
 
     def _icon(self, name: str, size: int = 16, color: str = "#CBD5E0"):
@@ -299,6 +300,62 @@ class ParameterForm(QWidget):
             "letter-spacing: 0.5px; padding-top: 6px; padding-bottom: 2px;"
         )
         return lbl
+
+    def _add_gated_row(self, form_layout: QFormLayout, label_text: str,
+                       widget: QWidget, tooltip: str = "", gate_key: str = None
+                       ) -> QLabel:
+        """Like ``_add_row_with_info`` but registers the row for model-gating.
+
+        A small badge (hidden by default) is appended to the row; it shows why
+        the control is irrelevant for the currently selected propagation model.
+        """
+        row_w = QWidget()
+        row_l = QHBoxLayout(row_w)
+        row_l.setContentsMargins(0, 0, 0, 0)
+        row_l.setSpacing(6)
+        row_l.addWidget(widget, 1)
+        badge = QLabel("")
+        badge.setStyleSheet("color:#718096; font-size:10px; font-style:italic;")
+        badge.setVisible(False)
+        row_l.addWidget(badge)
+        if tooltip:
+            row_l.addWidget(_make_info_btn(tooltip))
+        lbl = QLabel(label_text)
+        lbl.setStyleSheet("color:#CBD5E0; font-size:11px; font-weight:500;")
+        form_layout.addRow(lbl, row_w)
+        if gate_key:
+            self._gated_rows.append((lbl, widget, badge, gate_key))
+        return badge
+
+    def _apply_model_gating(self) -> None:
+        """Grey-out + badge the model-dependent controls per selected model.
+
+        Uses :func:`params_mod.option_states_for_model` so the UI matches the
+        engine's actual behaviour (a flag the model ignores is a silent no-op).
+        """
+        if not getattr(self, "_gated_rows", None):
+            return
+        model_val = self.model.currentData()
+        states = params_mod.option_states_for_model(model_val)
+        mname = params_mod.model_name(model_val)
+        for lbl, widget, badge, key in self._gated_rows:
+            state = states.get(key, params_mod.OPTION_NA)
+            if state == params_mod.OPTION_ACTIVE:
+                widget.setEnabled(True)
+                lbl.setStyleSheet("color:#CBD5E0; font-size:11px; font-weight:500;")
+                badge.setVisible(False)
+                continue
+            widget.setEnabled(False)
+            lbl.setStyleSheet("color:#5A6573; font-size:11px; font-weight:500;")
+            if state == params_mod.OPTION_BUILTIN:
+                badge.setStyleSheet(
+                    "color:#D69E2E; font-size:10px; font-style:italic;")
+                badge.setText(f"sudah built-in di {mname}")
+            else:
+                badge.setStyleSheet(
+                    "color:#718096; font-size:10px; font-style:italic;")
+                badge.setText(f"tidak dipakai oleh {mname}")
+            badge.setVisible(True)
 
     def _section(self, key: str, icon: str, title: str, expanded: bool = False) -> QFormLayout:
         sec = CollapsibleSection(key, icon, title, expanded=expanded, parent=self)
@@ -365,6 +422,10 @@ class ParameterForm(QWidget):
         fl.addRow(self.btn_pick_tx)
         self.tx_height = FocusWheelSpinBox(); self.tx_height.setRange(0, 10000); self.tx_height.setValue(1)
         self._add_row_with_info(fl, "Height AGL (m)", self.tx_height, "Transmitter antenna height above ground")
+        self.tx_amsl = QLabel("Elevasi tanah: \u2014")
+        self._style_amsl_label(self.tx_amsl)
+        fl.addRow(self.tx_amsl)
+        self.tx_height.valueChanged.connect(lambda _: self._refresh_amsl_labels())
         self.frequency = FocusWheelSpinBox(); self.frequency.setRange(0.1, 100000); self.frequency.setValue(900)
         self._add_row_with_info(fl, "Frequency (MHz)", self.frequency, "Operating frequency in MHz")
         self.dem_res = QComboBox(); self.dem_res.addItems(["90 m (dem3)", "30 m (dem1)", "15 m TIF"])
@@ -428,6 +489,10 @@ class ParameterForm(QWidget):
         fl.addRow(self.btn_pick_rx)
         self.rx_height = FocusWheelSpinBox(); self.rx_height.setRange(0, 10000); self.rx_height.setValue(1)
         self._add_row_with_info(fl, "Height AGL (m)", self.rx_height, "Receiver height above ground")
+        self.rx_amsl = QLabel("Elevasi tanah: \u2014")
+        self._style_amsl_label(self.rx_amsl)
+        fl.addRow(self.rx_amsl)
+        self.rx_height.valueChanged.connect(lambda _: self._refresh_amsl_labels())
         self.rx_gain = FocusWheelSpinBox(); self.rx_gain.setRange(-50, 50); self.rx_gain.setValue(0)
         self._add_row_with_info(fl, "Rx gain (dBd)", self.rx_gain, "Receiver antenna gain in dBd")
         self.rx_thr = FocusWheelSpinBox(); self.rx_thr.setRange(-200, 100); self.rx_thr.setValue(-100)
@@ -435,6 +500,7 @@ class ParameterForm(QWidget):
 
         # -- 3. Model (EXPANDED BY DEFAULT, EXACTLY MATCHING CLOUDRF SCREENSHOT!)
         fl = self._section("model", _SECTION_ICON["model"], "Model", expanded=True)
+        self._gated_rows = []
         self.model = QComboBox()
         for label, val in params_mod.MODELS:
             display_label = "Okumura-Hata (0.15-1.5GHz)" if val == 3 else label
@@ -444,26 +510,31 @@ class ParameterForm(QWidget):
         if idx >= 0:
             self.model.setCurrentIndex(idx)
         self._add_row_with_info(fl, "Model", self.model, "Radio propagation model choice")
+        self.model.currentIndexChanged.connect(lambda *a: self._apply_model_gating())
 
         self.reliability = QComboBox()
         self.reliability.addItems(["50%", "80%", "90%", "95%", "99%"])
-        self._add_row_with_info(fl, "Reliability", self.reliability, "ITM statistical time/location reliability")
+        self._add_gated_row(
+            fl, "Reliability", self.reliability, "ITM statistical time/location "
+            "reliability", gate_key="reliability")
 
         self.context = QComboBox()
         self.context.addItems(["Urban", "Suburban", "Rural"])
         self.context.setCurrentText("Rural")
-        self._add_row_with_info(
+        self._add_gated_row(
             fl, "Context", self.context,
             "Propagation environment classification. Only used by empirical "
             "models (Hata, ECC33, SUI, COST231-Hata, Ericsson); ignored by "
-            "ITM, LOS, FSPL, ITWOM, Plane Earth, Egli and Soil.")
+            "ITM, LOS, FSPL, ITWOM, Plane Earth, Egli and Soil.",
+            gate_key="context")
 
         self.diffraction = QComboBox()
         self.diffraction.addItems(["Off (LOS)", "Knife-edge (KED)"])
-        self._add_row_with_info(
+        self._add_gated_row(
             fl, "Diffraction", self.diffraction,
             "Knife-edge diffraction (-ked) adds terrain diffraction loss for "
-            "empirical models. ITM/ITWOM already include diffraction built-in.")
+            "empirical models. ITM/ITWOM already include diffraction built-in.",
+            gate_key="diffraction")
 
         # Hidden fields for backward compatibility
         self.knife = QCheckBox("Knife-edge diffraction (-ked)")
@@ -475,7 +546,9 @@ class ParameterForm(QWidget):
         self.climate.addItem("(default)", 0)
         for v, label in params_mod.CLIMATE_ZONES:
             self.climate.addItem(f"{v}: {label}", v)
-        self._add_row_with_info(fl, "Radio climate", self.climate, "Radio climate zone")
+        self._add_gated_row(
+            fl, "Radio climate", self.climate,
+            "Radio climate zone (ITM/ITWOM only)", gate_key="climate")
         self.clutter_btn = QPushButton("Select clutter (.clt)...")
         self.clutter_btn.setStyleSheet(btn_ss)
         self.clutter_path = QLineEdit()
@@ -557,6 +630,13 @@ class ParameterForm(QWidget):
         self._add_row_with_info(fl, "Resolution", self.resolution, "Tile pixel resolution")
         self.radius = FocusWheelSpinBox(); self.radius.setRange(0.1, 10000); self.radius.setValue(2)
         self._add_row_with_info(fl, "Radius (km)", self.radius, "Plot coverage radius in km")
+        self.plot_quality = QComboBox()
+        self.plot_quality.addItem("Final (resolusi penuh)", "final")
+        self.plot_quality.addItem("Draft (2× cepat)", "draft")
+        self.plot_quality.setCurrentIndex(0)
+        self.plot_quality.setStyleSheet(self.resolution.styleSheet())
+        self._add_row_with_info(fl, "Kualitas plot", self.plot_quality,
+                                "Draft membagi 2 resolusi piksel (≈4× lebih cepat) untuk pratinjau")
         self.color_btn = QPushButton("Color table...")
         self.color_btn.setStyleSheet(btn_ss)
         self.color_path = QLineEdit()
@@ -573,10 +653,8 @@ class ParameterForm(QWidget):
                 os.path.dirname(__file__), "resources", "radiomobile.dcf")
         if os.path.exists(default_color):
             self.color_path.setText(default_color)
-        self.color_btn.clicked.connect(
-            lambda: self._pick(
-                self.color_path, "Color (*.dcf *.scf)",
-                os.path.join(self.ss_root, "color") if self.ss_root else None))
+        self._color_user_chosen = False
+        self.color_btn.clicked.connect(self._pick_color)
         fl.addRow(self.color_btn, self.color_path)
         self.dbm_color = QCheckBox("dBm colour scale")
         self.dbm_color.setChecked(True)
@@ -589,6 +667,15 @@ class ParameterForm(QWidget):
             "pixel — bisa dibandingkan dengan Radio Mobile.")
         self.raster_txt.setStyleSheet("color: #CBD5E0; font-size: 11px;")
         fl.addRow(self.raster_txt)
+        self.rm_style = QCheckBox("Palet & render gaya Radio Mobile")
+        self.rm_style.setChecked(False)
+        self.rm_style.setToolTip(
+            "Pakai palet otomatis dari rmwcore/colors*.dat (Radio Mobile) "
+            "untuk engine, lalu hasilkan gambar gaya Radio Mobile "
+            "(terrain hypsometrik + hillshade + coverage + simbol site + "
+            "range circle). Palet kustom yang dipilih manual tetap diutamakan.")
+        self.rm_style.setStyleSheet("color: #CBD5E0; font-size: 11px;")
+        fl.addRow(self.rm_style)
 
         self._update_erp()
 
@@ -658,7 +745,7 @@ class ParameterForm(QWidget):
         row_exp = QHBoxLayout()
         row_exp.setSpacing(6)
         self.export_fmt = QComboBox()
-        self.export_fmt.addItems(["KMZ", "KML", "PNG", "TXT (Raster)", "GeoTIFF", "KMZ (3D)", "SHP"])
+        self.export_fmt.addItems(["KMZ", "KML", "PNG", "PNG (RM-style)", "TXT (Raster)", "GeoTIFF", "KMZ (3D)", "SHP"])
         self.export_fmt.setStyleSheet("""
             QComboBox {
                 background: #121417;
@@ -693,6 +780,9 @@ class ParameterForm(QWidget):
 
         self.layout.addWidget(export_box)
 
+        # Apply model-dependent disabling/badges now that all rows exist.
+        self._apply_model_gating()
+
     def _toggle_lock(self):
         self.is_locked = not self.is_locked
         self.btn_lock.setStyleSheet("""
@@ -712,6 +802,15 @@ class ParameterForm(QWidget):
         p = _browse(self, "Select file", filter_, start_dir)
         if p:
             label.setText(p)
+
+    def _pick_color(self) -> None:
+        p = _browse(
+            self, "Select color table", "Color (*.dcf *.scf *.dat)",
+            os.path.join(self.ss_root, "color") if self.ss_root else None)
+        if p:
+            self.color_path.setText(p)
+            if not p.lower().endswith(".dat"):
+                self._color_user_chosen = True
 
     def _pick_dir(self) -> None:
         d = QFileDialog.getExistingDirectory(self, "Select SDF directory")
@@ -747,6 +846,36 @@ class ParameterForm(QWidget):
             f"color: {colors.get(state, '#718096')}; font-size: 10px; padding: 2px 0;"
         )
         self.demnas_status.setText(text)
+
+    # ------------------------------------------------------------------ AMSL info
+    def _style_amsl_label(self, lbl: QLabel) -> None:
+        lbl.setStyleSheet(
+            "color: #718096; font-size: 10px; padding: 0 0 2px 2px;"
+        )
+
+    def _refresh_amsl_labels(self) -> None:
+        """Re-render the AMSL hint labels from the cached ground elevations."""
+        for role, lbl in (("tx", self.tx_amsl), ("rx", self.rx_amsl)):
+            elev = self._ground_elev.get(role)
+            height = getattr(self, f"{role}_height").value()
+            if elev is None:
+                lbl.setText("Elevasi tanah: \u2014")
+            else:
+                lbl.setText(
+                    f"Elevasi tanah {elev:.0f} m \u00b7 antena AMSL "
+                    f"{elev + height:.0f} m"
+                )
+
+    def set_ground_elevation(self, role: str, elev) -> None:
+        """Store a looked-up ground elevation (m AMSL or None) and refresh."""
+        if role not in ("tx", "rx"):
+            return
+        self._ground_elev[role] = float(elev) if elev is not None else None
+        self._refresh_amsl_labels()
+
+    def ground_elevations(self) -> dict:
+        """Cached {'tx': elev|None, 'rx': elev|None} from the last lookup."""
+        return dict(self._ground_elev)
 
     def _update_erp(self) -> None:
         erp = params_mod.compute_erp(
@@ -815,9 +944,12 @@ class ParameterForm(QWidget):
             "lidar_file": self.lidar_path.text() or None,
             "resolution": self.resolution.currentData(),
             "radius": self.radius.value(),
+            "plot_quality": self.plot_quality.currentData(),
             "color_file": self.color_path.text() or None,
+            "color_file_user": getattr(self, "_color_user_chosen", False),
             "dbm_color": self.dbm_color.isChecked(),
             "raster_txt": self.raster_txt.isChecked(),
+            "rm_style": self.rm_style.isChecked(),
             "units": units,
             "dem_resolution": dem_res_map[self.dem_res.currentIndex()],
         }
@@ -882,8 +1014,15 @@ class ParameterForm(QWidget):
         if res_idx >= 0:
             self.resolution.setCurrentIndex(res_idx)
         self.radius.setValue(float(d.get("radius", 30)))
+        q = d.get("plot_quality", "final")
+        qi = self.plot_quality.findData(q)
+        if qi >= 0:
+            self.plot_quality.setCurrentIndex(qi)
         self.color_path.setText(d.get("color_file") or "")
         self.dbm_color.setChecked(bool(d.get("dbm_color", True)))
         self.raster_txt.setChecked(bool(d.get("raster_txt", False)))
+        self.rm_style.setChecked(bool(d.get("rm_style", False)))
+        # Re-apply model-dependent disabling/badges for the loaded model.
+        self._apply_model_gating()
 
 

@@ -11,6 +11,9 @@ dependencies = [
     "PySide6",
     "pyproj",
     "mgrs",
+    "Pillow",
+    "numpy",
+    "scipy",
 ]
 
 [project.scripts]
@@ -23,7 +26,7 @@ package-dir = { "" = "src" }
 where = ["src"]
 
 [tool.setuptools.package-data]
-signal_gui = ["resources/*.html"]
+signal_gui = ["resources/*.html", "resources/*.dcf", "resources/rm/*.png", "resources/rm/*.dat"]
 
 [tool.pytest.ini_options]
 markers = [

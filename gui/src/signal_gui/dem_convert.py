@@ -25,6 +25,8 @@ import urllib.error
 import zipfile
 from typing import Optional
 
+import numpy as np
+
 
 VIEWFINDER_BASE = {
     3: "https://viewfinderpanoramas.org/dem3",
@@ -484,6 +486,174 @@ def _assert_covers(vrt: str, lat: float, lon: float) -> None:
         )
 
 
+def _assert_covers_bbox(
+    vrt: str,
+    lat_lo: float, lat_hi: float, lon_lo: float, lon_hi: float,
+) -> None:
+    """Raise if the DEMNAS mosaic omits any corner or the centre of a run bbox.
+
+    A mosaic that only spans the Tx point is not enough: Signal-Server computes
+    the whole coverage circle over loaded terrain, so a partial DEM silently
+    shifts/limits the computed area (the "coverage 150 km away" bug).
+    """
+    minx, miny, maxx, maxy = _gdal_extent(vrt)
+    eps = 1e-3
+    clat = (lat_lo + lat_hi) / 2.0
+    clon = (lon_lo + lon_hi) / 2.0
+    probes = [
+        ("Sudut barat-daya", lat_lo, lon_lo),
+        ("Sudut barat-laut", lat_hi, lon_lo),
+        ("Sudut timur-daya", lat_lo, lon_hi),
+        ("Sudut timur-laut", lat_hi, lon_hi),
+        ("Pusat area", clat, clon),
+    ]
+    missing = [
+        f"{label} ({la:.4f}, {lo:.4f})"
+        for label, la, lo in probes
+        if not (minx - eps <= lo <= maxx + eps
+                and miny - eps <= la <= maxy + eps)
+    ]
+    if missing:
+        raise DemResolveError(
+            "DEMNAS tidak mencakup seluruh area yang diminta "
+            f"({lat_lo:.4f}..{lat_hi:.4f}, {lon_lo:.4f}..{lon_hi:.4f}). "
+            f"Tidak tercakup: {', '.join(missing)}. Tambahkan tile DEMNAS "
+            f"untuk area tersebut ke folder."
+        )
+
+
+# ---------------------------------------------------------------------------
+# SPLAT .sdf header parsing (terrain coverage verification)
+# ---------------------------------------------------------------------------
+
+def sdf_bounds(path: str) -> Optional[tuple[float, float, float, float]]:
+    """Parse an SPLAT ``.sdf`` header into (lat_lo, lat_hi, lon_lo, lon_hi).
+
+    The SDF text header holds four numbers, one per line: ``max_west``,
+    ``min_north``, ``min_west``, ``max_north`` -- all in SPLAT's
+    west-positive longitude convention (0..360). East-longitude range is
+    therefore ``[360 - max_west, 360 - min_west]``.
+    """
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as fh:
+            vals = [fh.readline().split() for _ in range(4)]
+        floats = []
+        for parts in vals:
+            if not parts:
+                return None
+            floats.append(float(parts[0]))
+        max_west, min_north, min_west, max_north = floats
+    except (OSError, ValueError):
+        return None
+
+    def w2e(w: float) -> float:
+        w %= 360.0
+        e = 360.0 - w
+        if e >= 180.0:
+            e -= 360.0
+        return e
+
+    lon_lo = w2e(max_west)
+    lon_hi = w2e(min_west)
+    if lon_lo > lon_hi:  # antimeridian wrap
+        lon_lo, lon_hi = lon_hi, lon_lo
+    return min(min_north, max_north), max(min_north, max_north), lon_lo, lon_hi
+
+
+def sdf_dir_boxes(sdf_dir: str, hd: bool = False):
+    """Return [(lat_lo, lat_hi, lon_lo, lon_hi), ...] for every matching .sdf."""
+    boxes = []
+    try:
+        names = os.listdir(sdf_dir)
+    except OSError:
+        return boxes
+    for f in sorted(names):
+        if not f.endswith(".sdf"):
+            continue
+        is_hd = f.endswith("-hd.sdf")
+        if hd != is_hd:
+            continue
+        b = sdf_bounds(os.path.join(sdf_dir, f))
+        if b:
+            boxes.append(b)
+    return boxes
+
+
+def sdf_point_covered(boxes, lat: float, lon: float, tol: float = 1e-6) -> bool:
+    """True if (lat, lon) falls inside any of ``sdf_bounds``-style boxes."""
+    for s, n, w, e in boxes:
+        # Compare longitudes modulo 360 so antimeridian tiles behave.
+        dlon = (lon - w) % 360.0
+        span = (e - w) % 360.0 or 360.0
+        if s - tol <= lat <= n + tol and dlon <= span + tol:
+            return True
+    return False
+
+
+def sdf_missing_corners(boxes, lat_lo, lat_hi, lon_lo, lon_hi):
+    """Return labels of bbox probe points not covered by any SDF box."""
+    probes = [
+        ("SW", lat_lo, lon_lo), ("NW", lat_hi, lon_lo),
+        ("SE", lat_lo, lon_hi), ("NE", lat_hi, lon_hi),
+        ("C", (lat_lo + lat_hi) / 2.0, (lon_lo + lon_hi) / 2.0),
+    ]
+    missing = [name for name, la, lo in probes if not sdf_point_covered(boxes, la, lo)]
+    return missing
+
+
+# ---------------------------------------------------------------------------
+# Ground elevation lookup (AMSL) for Radio-Mobile-compatible reporting
+# ---------------------------------------------------------------------------
+
+_DEFAULT_ELEV_CACHE_DIR = os.path.join(
+    os.environ.get("TMPDIR", "/tmp"), "siggui_elev_cache"
+)
+
+
+def _openmeteo_elevation(lat: float, lon: float, timeout: float = 5.0) -> Optional[float]:
+    """Sample ground elevation via the Open-Meteo elevation API; None on failure.
+
+    Used when no local DEMNAS folder is available (online mode / best effort).
+    Never raises.
+    """
+    url = (
+        "https://api.open-meteo.com/v1/elevation"
+        f"?latitude={lat:.6f}&longitude={lon:.6f}"
+    )
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        elev = (data or {}).get("elevation") or []
+        if elev:
+            return float(elev[0])
+    except (OSError, ValueError, KeyError):
+        pass
+    return None
+
+
+def ground_elevation(
+    lat: float,
+    lon: float,
+    demnas_folder: Optional[str] = None,
+    cache_dir: Optional[str] = None,
+    timeout: float = 5.0,
+) -> Optional[float]:
+    """Ground elevation (m AMSL) at (lat, lon): local DEMNAS first, then web.
+
+    Returns None when both sources fail (callers must degrade gracefully).
+    """
+    if demnas_folder and os.path.isdir(demnas_folder):
+        try:
+            if _collect_demnas_tifs(demnas_folder):
+                vrt = _demnas_vrt(demnas_folder, cache_dir or _DEFAULT_ELEV_CACHE_DIR)
+                val = _sample_elevation(vrt, lat, lon)
+                if val is not None:
+                    return val
+        except Exception:  # noqa: BLE001 - elevation lookup must never break a run
+            pass
+    return _openmeteo_elevation(lat, lon, timeout=timeout)
+
+
 def demnas_folder_to_sdf(
     folder: str,
     cache_dir: str,
@@ -594,6 +764,42 @@ def _asc_cellsize(
     return cellsize
 
 
+# Terrain sanity limits for the generated LIDAR grid. A grid that is mostly
+# NODATA or has (almost) no relief makes Signal-Server compute over fake
+# flat/painted terrain — the classic "coverage bulet halus" result.
+# Above MAX_ASC_NODATA_PCT the run is rejected (terrain is more fake than real,
+# e.g. a 150 km radius at a DEMNAS folder that stops ~1 deg short). Between
+# WARN_ASC_NODATA_PCT and MAX it runs with a warning (partial-edge terrain).
+MAX_ASC_NODATA_PCT = 20.0
+WARN_ASC_NODATA_PCT = 5.0
+MIN_ASC_RELIEF_M = 20.0
+
+
+def _asc_stats(int_arr: "np.ndarray", nodata_value: int, cellsize: float
+               ) -> dict:
+    """Summary statistics of the generated LIDAR grid (before writing)."""
+    nod = int_arr == nodata_value
+    valid = int_arr[~nod]
+    if valid.size:
+        p5, p95 = np.percentile(valid, 5), np.percentile(valid, 95)
+        vmin, vmax = int(valid.min()), int(valid.max())
+        relief = float(p95 - p5)
+    else:
+        vmin = vmax = None
+        relief = 0.0
+    return {
+        "cellsize_deg": round(float(cellsize), 9),
+        "cellsize_m": round(float(cellsize) * 111320.0, 1),
+        "nrows": int(int_arr.shape[0]),
+        "ncols": int(int_arr.shape[1]),
+        "nodata_pct": round(100.0 * float(nod.mean()), 2),
+        "min_m": vmin,
+        "max_m": vmax,
+        "relief_p5p95_m": round(relief, 1),
+        "ppd": round(1.0 / cellsize) if cellsize > 0 else 0,
+    }
+
+
 def demnas_folder_to_asc(
     folder: str,
     cache_dir: str,
@@ -601,7 +807,7 @@ def demnas_folder_to_asc(
     ppd: int = 1200,
     target_cellsize: Optional[float] = None,
     max_cells: int = 6_000_000,
-) -> str:
+) -> tuple[str, dict]:
     """Convert a local DEMNAS folder (``.tif`` tiles) to a LIDAR ``.asc``.
 
     The tiles are merged into a VRT, reprojected to EPSG:4326 and clipped to
@@ -612,6 +818,12 @@ def demnas_folder_to_asc(
     is written manually (not via ``gdal_translate -of AAIGrid``) because
     Signal-Server's LIDAR loader parses the header with a strict ``fscanf``
     that expects an *integer* ``NODATA_value``; GDAL emits it as a float.
+
+    Returns ``(asc_path, stats)``. Raises :class:`DemResolveError` when the
+    produced grid is unusable terrain: mostly NODATA (DEMNAS folder does not
+    cover the requested bbox) or practically flat (relief below
+    ``MIN_ASC_RELIEF_M``) — both make the engine compute a fake, perfectly
+    round coverage.
     """
     from osgeo import gdal  # local import; only needed here
     import numpy as np
@@ -656,6 +868,23 @@ def demnas_folder_to_asc(
     int_arr = np.full(arr.shape, NODATA, dtype=np.int32)
     int_arr[valid] = np.round(arr[valid]).astype(np.int32)
 
+    stats = _asc_stats(int_arr, NODATA, cellsize)
+
+    if stats["nodata_pct"] > MAX_ASC_NODATA_PCT:
+        raise DemResolveError(
+            f"Terrain LIDAR tidak valid: {stats['nodata_pct']}% piksel "
+            f"NODATA (maksimum {MAX_ASC_NODATA_PCT}%). Folder DEMNAS tidak "
+            f"mencakup seluruh area run — coverage akan dihitung di atas "
+            f"terrain palsu. Perkecil radius atau tambahkan tile DEMNAS."
+        )
+    if stats["relief_p5p95_m"] < MIN_ASC_RELIEF_M:
+        raise DemResolveError(
+            f"Terrain LIDAR hampir datar (relief {stats['relief_p5p95_m']} m "
+            f"< {MIN_ASC_RELIEF_M} m, elevasi {stats['min_m']}..{stats['max_m']} "
+            f"m). Coverage di area ini tidak akan menunjukkan kontur/ "
+            f"bayangan gunung. Periksa sumber DEMNAS."
+        )
+
     asc = os.path.join(out_dir, "demnas.asc")
     with open(asc, "w") as fh:
         fh.write(f"ncols        {width}\n")
@@ -665,7 +894,18 @@ def demnas_folder_to_asc(
         fh.write(f"cellsize     {cellsize:.10f}\n")
         fh.write(f"NODATA_value {NODATA}\n")
         np.savetxt(fh, int_arr, fmt="%d")
-    return asc
+
+    import hashlib
+    h = hashlib.sha256()
+    with open(asc, "rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b""):
+            h.update(chunk)
+    stats["sha256"] = h.hexdigest()[:16]
+    stats["path"] = asc
+    stats["nodata_warning"] = (
+        WARN_ASC_NODATA_PCT <= stats["nodata_pct"] <= MAX_ASC_NODATA_PCT
+    )
+    return asc, stats
 
 
 def which_srtm2sdf(variant: str = "Standard") -> Optional[str]:
