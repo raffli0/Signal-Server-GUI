@@ -95,3 +95,50 @@ def test_area_retry_reinvokes_with_halved_segments(tmp_path):
     assert len(argv_log) == 2
     assert "-segments 16" in argv_log[0]
     assert "-segments 8" in argv_log[1]        # ladder halved on retry
+
+
+def test_retry_pins_auto_segments_and_reports_numbers(tmp_path):
+    """Without an explicit plot_segments the pinned auto value (not None)
+    must show up in the retry message and in the halved second argv."""
+    template = tmp_path / "template.ppm"
+    template.write_bytes(PPM)
+    engine = _fake_engine(tmp_path, str(template))
+    out_base = str(tmp_path / "run" / "cov")
+    os.makedirs(os.path.dirname(out_base), exist_ok=True)
+
+    from signal_gui import params as params_mod
+
+    params = {
+        "engine": "LIDAR",
+        "tx_lat": -6.916667, "tx_lon": 107.6083, "tx_height": 1.0,
+        "radius": 100, "resolution": 1200,
+        "frequency_mhz": 900, "rf_power_w": 1.0, "tx_gain_dbi": 10.0,
+        "rx_threshold_dbm": -100.0,
+        # no plot_segments -> auto fallback (2x cores on this machine)
+        "units": "metric", "model_pm": 1,
+    }
+    worker = RunWorker(engine, out_base, params, dem_spec=None)
+    state: dict = {}
+    warnings: list[str] = []
+    worker.finished.connect(lambda ok, s, r: state.update(ok=ok, r=r))
+    worker.error_occurred.connect(lambda m: state.update(error=m))
+    worker.output_line.connect(
+        lambda line: warnings.append(line) if "PERINGATAN" in line else None)
+
+    # Direct in-thread invocation: signals fire synchronously.
+    worker.run()
+
+    assert "error" not in state, state.get("error")
+    assert state["ok"]
+
+    auto = params_mod.auto_segments()
+    assert warnings, "retry warning must reach the terminal stream"
+    assert f"Turunkan Map segments {auto} -> {auto // 2}" in warnings[0]
+
+    argv_log = (tmp_path / "run" / "argv.log").read_text().splitlines()
+    assert f"-segments {auto}" in argv_log[0]
+    assert f"-segments {auto // 2}" in argv_log[1]
+    # The manifest records the configuration that actually produced output.
+    import json
+    manifest = json.load(open(tmp_path / "run" / "params.json"))
+    assert manifest["plot_segments"] == auto // 2

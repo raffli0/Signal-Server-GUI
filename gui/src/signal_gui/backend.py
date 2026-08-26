@@ -293,9 +293,6 @@ class RunWorker(QThread):
         try:
             # Record the processing strategy actually used (auditable + lets a
             # later run reproduce the same thread/quality settings).
-            from . import params as _params
-            p = dict(p)
-            p["plot_segments"] = p.get("plot_segments") or _params.auto_segments()
             with open(os.path.join(run_dir, "params.json"), "w",
                       encoding="utf-8") as fh:
                 json.dump(p, fh, indent=2, default=str)
@@ -381,6 +378,11 @@ class RunWorker(QThread):
 
     def run(self) -> None:  # noqa: D401
         p = dict(self.parameters)
+        # Pin the effective segment count up-front so build_argv, the retry
+        # ladder and the run manifest all agree on one number (otherwise the
+        # auto fallback resolves lazily and retries report "None -> 8").
+        if not p.get("plot_segments"):
+            p["plot_segments"] = params_mod.auto_segments()
         try:
             self._enrich_ground_elevations(p)
             self._prepare_dem(p)
@@ -484,6 +486,9 @@ class RunWorker(QThread):
                 judge = raw_bbox if raw_bbox is not None \
                     else result.get("bbox")
                 if self._bbox_plausible(judge, p):
+                    # Manifest should reflect the configuration that actually
+                    # produced this output (may differ after a segments retry).
+                    self._write_manifest(p)
                     break
                 if attempt < attempts:
                     old_seg = p.get("plot_segments")
