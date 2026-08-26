@@ -44,3 +44,12 @@ def test_accepts_reasonable_crop_growth():
     # Cropping may widen the box slightly beyond the nominal radius.
     assert backend.RunWorker._bbox_plausible(
         (-6.4, 108.2, -7.4, 107.0), PARAMS)
+
+
+def test_segments_ladder_halves_to_floor_4():
+    f = backend.RunWorker._next_segments
+    assert f(16) == 8
+    assert f(8) == 4
+    assert f(4) == 4          # floor: engine needs even >2
+    assert f(None) == 8       # sane default when unset
+    assert f("12") == 6       # tolerant of strings

@@ -180,6 +180,23 @@ def mask_png_sector(png_path: str, bbox, tx_lat: float, tx_lon: float,
 
 
 
+def parse_engine_bbox_raw(stdout_text: str):
+    """Return the engine's ``Area boundaries`` tuple verbatim, or ``None``.
+
+    Unlike :func:`parse_bbox` this performs **no** sanity checks and **no**
+    params-based fallback -- callers use it to judge whether the engine itself
+    produced trustworthy geometry (the threaded-LIDAR pizza race prints
+    world-scale-longitude garbage here).
+    """
+    m = _BBOX_RE.search(stdout_text or "")
+    if not m:
+        return None
+    try:
+        return tuple(float(x) for x in m.groups())
+    except ValueError:
+        return None
+
+
 def parse_bbox(stdout_text: str, params: Optional[dict] = None):
     """Extract (N, E, S, W) decimal degrees from Signal-Server stdout.
 

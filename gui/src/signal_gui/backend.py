@@ -364,6 +364,21 @@ class RunWorker(QThread):
         # but never by an order of magnitude.
         return ((n - s) <= 4.0 * dlat + 1.0) and ((e - w) <= 4.0 * dlon + 1.0)
 
+    @staticmethod
+    def _next_segments(cur) -> int:
+        """Halve the plot-segment count, floor 4 (engine needs even >2).
+
+        The threaded-LIDAR longitude race only shows up at high segment
+        counts (observed broken at 16, clean at 8/4), so stepping the ladder
+        down between retries converges on a healthy configuration instead of
+        repeating an identical failing run.
+        """
+        try:
+            cur = int(cur)
+        except (TypeError, ValueError):
+            cur = 16
+        return max(4, cur // 2)
+
     def run(self) -> None:  # noqa: D401
         p = dict(self.parameters)
         try:
@@ -429,13 +444,15 @@ class RunWorker(QThread):
 
             # --- Area coverage: the threaded LIDAR plotter occasionally
             # emits garbage boundaries and drops radials ("pizza slices").
-            # Identical argv reproduces it intermittently, so validate every
-            # run and retry a couple of times before giving up.
+            # Identical argv reproduces it intermittently, and the race only
+            # triggers at high -segments counts (broken at 16, clean at 8/4),
+            # so each retry halves the segment count as well.
             attempts = 3
             result = None
             stdout_text: list[str] = []
+            cur_argv = argv
             for attempt in range(1, attempts + 1):
-                proc_returncode, stdout_text = self._run_engine(argv, run_env)
+                proc_returncode, stdout_text = self._run_engine(cur_argv, run_env)
                 ppm = self.output_basename + ".ppm"
                 output_exists = os.path.exists(ppm)
                 if proc_returncode != 0 and not output_exists:
@@ -458,21 +475,43 @@ class RunWorker(QThread):
                     ppm, "\n".join(stdout_text), title="Signal-Server Coverage",
                     tx_coords=tx_coords, color_file=p.get("color_file"), params=p
                 )
-                if self._bbox_plausible(result.get("bbox"), p):
+                # Judge the ENGINE's raw boundaries, not the sanitised bbox:
+                # parse_bbox silently substitutes a params-based extent when
+                # the printed one is insane, which would otherwise make every
+                # broken run look perfectly healthy here.
+                raw_bbox = output_stage.parse_engine_bbox_raw(
+                    "\n".join(stdout_text))
+                judge = raw_bbox if raw_bbox is not None \
+                    else result.get("bbox")
+                if self._bbox_plausible(judge, p):
                     break
                 if attempt < attempts:
+                    old_seg = p.get("plot_segments")
+                    new_seg = self._next_segments(old_seg)
                     self.percent.emit(0)
-                    self.progress.emit(
+                    warn = (
                         "PERINGATAN: hasil engine tidak konsisten terdeteksi "
                         "(boundaries invalid / radial terpotong -- bug thread "
-                        f"plot LIDAR). Mencoba ulang {attempt}/{attempts - 1} ..."
+                        f"plot LIDAR). Turunkan Map segments "
+                        f"{old_seg} -> {new_seg}, mencoba ulang "
+                        f"{attempt}/{attempts - 1} ..."
                     )
+                    # progress only feeds the status bar; mirror to the
+                    # terminal so retries are auditable in saved logs.
+                    self.progress.emit(warn)
+                    self.output_line.emit(warn)
+                    if new_seg != old_seg:
+                        p["plot_segments"] = new_seg
+                        cur_argv = params_mod.build_argv(
+                            p, engine_exe=self.engine_exe,
+                            output_basename=self.output_basename,
+                        )
                     continue
                 self.error_occurred.emit(
                     "Engine menghasilkan coverage rusak setelah "
                     f"{attempts} percobaan (race normalisasi longitude pada "
                     "plot thread LIDAR). Jalankan ulang, atau turunkan "
-                    "'Map segments' ke 8/1 sebagai workaround.")
+                    "'Map segments' secara manual.")
                 return
             raster_txt = ppm[:-4] + "_raster.txt"
             if os.path.exists(raster_txt):
