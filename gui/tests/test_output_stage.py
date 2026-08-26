@@ -95,11 +95,12 @@ def test_tx_center_hole_is_filled(tmp_path):
 
     ring = (dist > 2) & (dist <= 8)
     ring_px = img[ring]
-    # Shade-modulated green: hue preserved (r=b=0), brightness varies with the
-    # surrounding hillshade instead of one flat fill.
+    # DEM-shaded green: hue preserved (r=b=0), brightness follows
+    # (255 * dem_grey) / 255 -- i.e. the local DEM greyscale itself
+    # (137 backdrop .. 255 hole), not one flat fill.
     assert (ring_px[..., 0] == 0).all()
     assert (ring_px[..., 2] == 0).all()
-    assert (ring_px[..., 1] > 150).all()
+    assert (ring_px[..., 1] >= 130).all()
     assert int(ring_px[..., 1].max()) - int(ring_px[..., 1].min()) >= 10
     assert (img[ring][..., 3] == 255).all()
 
@@ -125,13 +126,14 @@ def test_enclosed_hole_uses_color_file(tmp_path):
     img = np.asarray(Image.open(png_path).convert("RGBA"))
 
     assert (img[7, 7][..., :3] == magenta).all()   # pure-white shade -> exact band
-    assert img[7, 7][..., 3] == 165   # semi-transparent RM-style core
+    assert img[7, 7][..., 3] == 255   # core stays fully opaque (no alpha hacks)
     assert (img[0, 0][..., 3] == 0).all()
 
 
 def test_core_recolour_keeps_relief_texture(tmp_path):
     """Two grey shades inside the saturated core must map to two DIFFERENT
-    modulated colours (Radio-Mobile-style rough dots), not one flat fill."""
+    modulated colours via Warna_Final = (solid * dem_grey) / 255, not one
+    flat fill."""
     w, h = 21, 21
     green = (0, 255, 0)
     arr = np.full((h, w, 3), 200, dtype=np.uint8)          # mid relief
@@ -151,13 +153,13 @@ def test_core_recolour_keeps_relief_texture(tmp_path):
     green_band = tuple(int(v) for v in img[10, 3][:3])  # dist=7 -> still green
 
     assert c150 != c_tip                       # relief texture preserved
-    k150 = 0.35 + 0.65 * (150 / 255)
-    assert abs(c150[0] - 255 * k150) <= 1      # modulated red channel
+    assert abs(c150[0] - 255 * (150 / 255)) <= 1   # (255 * 150) / 255 = 150
     assert c150[1] == 0 and c150[2] == 0       # stays in the red band family
     assert c_tip == (255, 0, 0)                # saturated shade -> exact band
-    # Green band is shade-modulated (nearest grey 200 -> ~213), not flat.
+    # Green band is DEM-shaded with the same formula; its nearest grey sample
+    # is the inner relief ring (150), so G = (255 * 150) / 255.
     assert green_band[0] == 0 and green_band[2] == 0
-    assert 180 <= green_band[1] <= 230
+    assert 140 <= green_band[1] <= 160
 
 
 def test_parse_strongest_color_fallback():

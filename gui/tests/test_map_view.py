@@ -71,6 +71,9 @@ def test_parse_pick_url():
 
 def test_draw_link_js_accepts_color():
     html = _tpl()
-    # drawLink must accept a colour argument and use it on the polyline.
+    # The Tx->Rx link/LOS polyline overlay is intentionally disabled so the
+    # coverage map stays free of the link line. drawLink must still be defined
+    # (no-op) but must not create a polyline layer.
     assert "function drawLink(txLat, txLon, rxLat, rxLon, color)" in html
-    assert "color: color" in html
+    body = html.split("function drawLink", 1)[1]
+    assert "L.polyline" not in body.split("function clearLink", 1)[0]
