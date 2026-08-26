@@ -34,8 +34,43 @@ def test_render_html_coverage_bounds():
     assert "[[51.5, -2.3], [52.1, -1.7]]" in html
 
 
+def test_render_html_cov_palette_injection():
+    pal = {"colors": [[255, 0, 0], [0, 100, 255]], "levels": [-60.0, -120.0]}
+    html = map_view.render_html(_tpl(), None, [], "tx", cov_palette=pal)
+    assert "window.__covPalette=" in html
+    assert "[255, 0, 0]" in html and "-120.0" in html
+
+
+def test_render_html_no_palette_by_default():
+    html = map_view.render_html(_tpl(), None, [], "tx")
+    assert "window.__covPalette=" not in html
+
+
+def test_palette_from_color_file_bundled_dcf():
+    pal = map_view.palette_from_color_file(None)  # falls back to bundled .dcf
+    assert pal is not None
+    assert pal["colors"][0] == [255, 0, 0]        # strongest band is red
+    assert pal["levels"][0] == -60.0
+    assert pal["levels"][-1] == -120.0
+    assert len(pal["colors"]) == len(pal["levels"]) == 6
+
+
+def test_palette_from_missing_color_file_falls_back(tmp_path):
+    missing = str(tmp_path / "nope.dcf")
+    pal = map_view.palette_from_color_file(missing)
+    assert pal is not None                        # still serves the bundled table
+    assert pal["levels"][0] == -60.0
+
+
 def test_parse_pick_url():
     assert map_view.parse_pick_url("app://pick?role=tx&lat=51.5&lon=-2.2") == ("tx", 51.5, -2.2)
     assert map_view.parse_pick_url("app://pick?role=rx&lat=-33.0&lon=151.0") == ("rx", -33.0, 151.0)
     assert map_view.parse_pick_url("https://example.com") is None
     assert map_view.parse_pick_url("app://pick?role=tx&lat=bad&lon=1") is None
+
+
+def test_draw_link_js_accepts_color():
+    html = _tpl()
+    # drawLink must accept a colour argument and use it on the polyline.
+    assert "function drawLink(txLat, txLon, rxLat, rxLon, color)" in html
+    assert "color: color" in html

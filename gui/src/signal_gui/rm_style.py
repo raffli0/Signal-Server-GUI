@@ -33,6 +33,19 @@ _DCF_LINE_RE = re.compile(r"^\s*([-+]?\d+)\s*:\s*([-+]?\d+)\s*,\s*([-+]?\d+)\s*,
 DEFAULT_TOP_DBM = -60
 DEFAULT_BOTTOM_DBM = -120
 
+# Canonical coverage colour ramp (strongest -> weakest), used for the engine
+# colour table so the displayed coverage follows a clear red -> yellow -> green
+# -> greenish-blue -> cyan -> blue scale instead of Radio Mobile's white->blue
+# (a white centre reads as a hole over a light OSM basemap).
+COVERAGE_RAMP = (
+    (255, 0, 0),      # red            (strongest signal)
+    (255, 255, 0),    # yellow
+    (0, 200, 0),      # green
+    (0, 200, 200),    # greenish-blue (teal)
+    (0, 255, 255),    # cyan
+    (0, 100, 255),    # blue           (weakest signal)
+)
+
 # Visual-compositing tunables for the RM-style coverage overlay.
 # SHADE_MIN: minimum brightness multiplier where the hillshade is darkest, so
 # signal colours on lee slopes fall to that fraction instead of pure black.
@@ -76,8 +89,8 @@ class RmPalette:
                          ) -> list[tuple[float, tuple[int, int, int]]]:
         """Palette as (level, rgb) bands, strongest signal first.
 
-        In RM's colors*.dat the first colour is the strongest band (white,
-        the saturated Tx centre) and the last the weakest (magenta edge).
+        The first colour is the strongest band (red, the saturated Tx centre)
+        and the last the weakest (blue).
         """
         n = len(self.colors)
         span = top_dbm - bottom_dbm
@@ -117,18 +130,20 @@ def parse_colors_dat(path: str) -> RmPalette:
     return RmPalette(os.path.basename(path), thresholds, colors)
 
 
-def palette_to_dcf_text(palette: RmPalette,
+def palette_to_dcf_text(palette: Optional[RmPalette] = None,
                         top_dbm: float = DEFAULT_TOP_DBM,
                         bottom_dbm: float = DEFAULT_BOTTOM_DBM) -> str:
     """Render palette bands as Signal-Server .scf/.dcf lines (strongest first).
 
     Format must satisfy ``sscanf("%d: %d, %d, %d")`` in ``LoadSignalColors``.
-    The first palette colour (white in RM's colors.dat) is the strongest
-    band and gets ``top_dbm``; the last gets ``bottom_dbm``.
+    Uses the canonical :data:`COVERAGE_RAMP` (red -> yellow -> green ->
+    greenish-blue -> cyan -> blue) so the strongest signal is red, not white.
+    ``palette`` is accepted for API compatibility but ignored.
     """
+    colors = [tuple(c) for c in COVERAGE_RAMP]
     out = []
-    n = len(palette.colors)
-    for i, (r, g, b) in enumerate(palette.colors):
+    n = len(colors)
+    for i, (r, g, b) in enumerate(colors):
         level = top_dbm - (top_dbm - bottom_dbm) * i / max(1, n - 1)
         out.append(f"{int(round(level)):4d}: {int(r):3d}, {int(g):3d}, {int(b):3d}")
     return "\n".join(out) + "\n"

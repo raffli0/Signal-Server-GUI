@@ -23,6 +23,7 @@ class CloudRFHeader(QFrame):
     section_clicked = Signal(str)  # Emits key of section to expand/scroll to
     save_profile_requested = Signal()
     load_profile_requested = Signal()
+    import_rm_requested = Signal()
     radio_link_requested = Signal()
     clear_cache_requested = Signal()
 
@@ -203,6 +204,27 @@ class CloudRFHeader(QFrame):
         """)
         self.btn_load_profile.clicked.connect(lambda: self.load_profile_requested.emit())
         layout.addWidget(self.btn_load_profile)
+
+        # Import a Radio Mobile coverage-data TXT export onto the map.
+        self.btn_import_rm = QPushButton()
+        self.btn_import_rm.setIcon(svg_icon("map", 14, "#68D391"))
+        self.btn_import_rm.setText(" RM Data")
+        self.btn_import_rm.setToolTip("Load a Radio Mobile TXT export onto the map")
+        self.btn_import_rm.setFixedHeight(26)
+        self.btn_import_rm.setStyleSheet("""
+            QPushButton {
+                background: #2D3748;
+                color: #E2E8F0;
+                border: 1px solid #4A5568;
+                border-radius: 4px;
+                font-size: 12px;
+                font-weight: 600;
+                padding: 0 8px;
+            }
+            QPushButton:hover { background: #38A169; color: #FFFFFF; }
+        """)
+        self.btn_import_rm.clicked.connect(lambda: self.import_rm_requested.emit())
+        layout.addWidget(self.btn_import_rm)
 
         # Radio Link (point-to-point) — runs a Tx->Rx link analysis directly
         sep_rl = QFrame()

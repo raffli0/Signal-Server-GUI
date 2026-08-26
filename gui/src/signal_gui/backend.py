@@ -117,6 +117,7 @@ class RunWorker(QThread):
                 spec["folder"], spec["cache_dir"], sdf_exe, engine,
                 spec["lat_lo"], spec["lat_hi"], spec["lon_lo"], spec["lon_hi"],
                 center_lat=clat, center_lon=clon,
+                warn_cb=self.progress.emit,
             )
             p["sdf_dir"] = sdf_dir
             p["_demnas"] = True
@@ -373,7 +374,12 @@ class RunWorker(QThread):
                     return
                 try:
                     link = link_parse.parse_link_output(
-                        self.output_basename, p.get("rx_threshold_dbm")
+                        self.output_basename, p.get("rx_threshold_dbm"),
+                        sdf_dir=p.get("sdf_dir"),
+                        hd=(p.get("engine") == "HD"),
+                        asc_file=p.get("lidar_file"),
+                        tx_latlon=(p.get("tx_lat"), p.get("tx_lon")),
+                        rx_latlon=(p.get("rx_lat"), p.get("rx_lon")),
                     )
                 except Exception as exc:  # pragma: no cover
                     self.error_occurred.emit(f"Failed to parse link output: {exc}")
@@ -402,7 +408,7 @@ class RunWorker(QThread):
                     pass
             result = output_stage.stage_output(
                 ppm, "\n".join(stdout_text), title="Signal-Server Coverage",
-                tx_coords=tx_coords, color_file=p.get("color_file")
+                tx_coords=tx_coords, color_file=p.get("color_file"), params=p
             )
             raster_txt = ppm[:-4] + "_raster.txt"
             if os.path.exists(raster_txt):

@@ -359,10 +359,30 @@
       flex: 0 0 auto;
     }
     .layer-item input { margin: 0; cursor: pointer; }
+
+    /* Floating dBm readout following the cursor over the coverage overlay. */
+    #cov-tip {
+      display: none;
+      position: absolute;
+      z-index: 1000;
+      pointer-events: none;
+      background: rgba(11, 13, 16, 0.92);
+      color: #E2E8F0;
+      border: 1px solid #3F474F;
+      border-radius: 4px;
+      padding: 4px 8px;
+      font-family: Consolas, Monaco, monospace;
+      font-size: 11px;
+      line-height: 1.45;
+      white-space: nowrap;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+    }
+    #cov-tip b { color: #FBD38D; }
   </style>
 </head>
 <body>
   <div id="map"></div>
+  <div id="cov-tip"></div>
 
   <!-- Vertical dBm Scale Legend -->
   <div id="dbm-legend">
@@ -472,22 +492,30 @@
     var overlay = null;
     var markersLayer = L.layerGroup().addTo(map);
 
-    // ---- Per-colour (per dBm band) layer toggling ----
-    // 9 legend colours (strong -> weak), matching radiomobile.dcf exactly.
+    // ---- Per-colour (per dBm band) layer toggling + hover dBm readout ----
+    // Palette + dBm levels are injected from Python (window.__covPalette,
+    // parsed from the engine's .dcf colour table) so they always match the
+    // rendered coverage; the constants below are only a fallback.
     var PALETTE = [
-      [247, 49, 87],   // >= -60
-      [242, 95, 95],   // -60...-64
-      [247, 213, 97],  // -64...-68
-      [242, 242, 95],  // -68...-72
-      [186, 246, 97],  // -72...-76
-      [95, 242, 95],   // -76...-80
-      [97, 246, 97],   // -80...-84
-      [95, 242, 182],  // -84...-88
-      [96, 246, 246],  // -88...-92
-      [95, 208, 241],  // -92...-96
-      [96, 96, 246]    // -96...-120
+      [247, 49, 87],
+      [242, 95, 95],
+      [247, 213, 97],
+      [242, 242, 95],
+      [186, 246, 97],
+      [95, 242, 95],
+      [97, 246, 97],
+      [95, 242, 182],
+      [96, 246, 246],
+      [95, 208, 241],
+      [96, 96, 246]
     ];
     var LEVEL_THRESHOLDS = [-60, -64, -68, -72, -76, -80, -84, -88, -92, -96, -100];
+    if (window.__covPalette && Array.isArray(window.__covPalette.colors)
+        && Array.isArray(window.__covPalette.levels)
+        && window.__covPalette.colors.length === window.__covPalette.levels.length) {
+      PALETTE = window.__covPalette.colors;
+      LEVEL_THRESHOLDS = window.__covPalette.levels;
+    }
     function bandLabel(i) {
       if (i === 0) return '≥ ' + LEVEL_THRESHOLDS[0] + ' dBm';
       if (i === LEVEL_THRESHOLDS.length - 1) return '≤ ' + LEVEL_THRESHOLDS[LEVEL_THRESHOLDS.length - 1] + ' dBm';
@@ -576,6 +604,7 @@
 
     function loadCoverage(dataUri, bounds) {
       if (overlay) { map.removeLayer(overlay); overlay = null; }
+      hideCovTip();
       if (!dataUri) return;
       covBounds = bounds;
       map.fitBounds(bounds);
@@ -723,14 +752,15 @@
 
     // === Radio Link (Tx -> Rx) polyline ===
     var linkLine = null;
-    function drawLink(txLat, txLon, rxLat, rxLon) {
+    function drawLink(txLat, txLon, rxLat, rxLon, color) {
       if (linkLine) { map.removeLayer(linkLine); linkLine = null; }
+      if (!color) color = '#ffec3d';
       var pts = [], n = 64;
       for (var i = 0; i <= n; i++) {
         var f = i / n;
         pts.push([txLat + (rxLat - txLat) * f, txLon + (rxLon - txLon) * f]);
       }
-      linkLine = L.polyline(pts, { color: '#ffec3d', weight: 3, opacity: 0.9, dashArray: '6,6' }).addTo(map);
+      linkLine = L.polyline(pts, { color: color, weight: 3, opacity: 0.9, dashArray: '6,6' }).addTo(map);
       map.fitBounds(L.latLngBounds([[txLat, txLon], [rxLat, rxLon]]), { padding: [40, 40] });
     }
     function clearLink() {
@@ -821,6 +851,32 @@
       _elevTimer = setTimeout(function () { updateElevation(lat, lon); }, 250);
     }
 
+    // ---- Floating dBm readout over the coverage overlay ----
+    var covTip = document.getElementById('cov-tip');
+    function hideCovTip() { if (covTip) covTip.style.display = 'none'; }
+    function updateCovTip(e) {
+      if (!covTip || !overlay || !srcPixels || !bandMap || !covBounds) { hideCovTip(); return; }
+      var lat = e.latlng.lat, lng = e.latlng.lng;
+      var sw = covBounds[0], ne = covBounds[1];
+      var fx = (lng - sw[1]) / (ne[1] - sw[1]);
+      var fy = (lat - sw[0]) / (ne[0] - sw[0]);
+      if (!(fx >= 0 && fx <= 1 && fy >= 0 && fy <= 1)) { hideCovTip(); return; }
+      var w = covCanvas.width, h = covCanvas.height;
+      var px = Math.min(w - 1, Math.floor(fx * w));
+      var py = Math.min(h - 1, Math.floor((1 - fy) * h));
+      var band = bandMap[py * w + px];
+      if (band === undefined || band === null || band === 255) { hideCovTip(); return; }
+      var latStr = Math.abs(lat).toFixed(5) + (lat >= 0 ? 'N' : 'S');
+      var lonStr = Math.abs(lng).toFixed(5) + (lng >= 0 ? 'E' : 'W');
+      covTip.innerHTML = '<b>' + bandLabel(band) + '</b><br>' + latStr + ' ' + lonStr;
+      var size = map.getSize();
+      var x = Math.min(e.containerPoint.x + 14, size.x - 170);
+      var y = Math.min(e.containerPoint.y + 16, size.y - 52);
+      covTip.style.left = x + 'px';
+      covTip.style.top = y + 'px';
+      covTip.style.display = 'block';
+    }
+
     map.on('mousemove', function (e) {
       var lat = e.latlng.lat;
       var lon = e.latlng.lng;
@@ -828,7 +884,9 @@
       var lonStr = Math.abs(lon).toFixed(6) + (lon >= 0 ? 'E' : 'W');
       document.getElementById('coord-display').innerText = latStr + ' ' + lonStr;
       scheduleElevation(lat, lon);
+      updateCovTip(e);
     });
+    map.on('mouseout', hideCovTip);
 
     // Initial elevation for the map centre.
     (function () {

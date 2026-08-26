@@ -6,6 +6,7 @@ Collects all simulation inputs and exposes ``collect()`` -> canonical dict and
 
 from __future__ import annotations
 
+import math
 import os
 from typing import Optional
 
@@ -270,6 +271,8 @@ class ParameterForm(QWidget):
         self.ss_root = signal_server_root
         self.sections: dict[str, CollapsibleSection] = {}
         self.is_locked = False
+        # Guard for bidirectional dBm<->dBµV threshold synchronisation.
+        self._thr_syncing = False
         self._ground_elev: dict[str, Optional[float]] = {"tx": None, "rx": None}
         self._build()
 
@@ -291,6 +294,54 @@ class ParameterForm(QWidget):
         lbl = QLabel(label_text)
         lbl.setStyleSheet("color: #CBD5E0; font-size: 11px; font-weight: 500;")
         form_layout.addRow(lbl, row_w)
+
+    def _wire_threshold_pair(self, dbm_box: "FocusWheelSpinBox",
+                             uv_box: "FocusWheelSpinBox") -> None:
+        """Keep two RX-threshold spinboxes (dBm <-> dBµV) in sync, 50 Ω."""
+        def on_dbm(v: float) -> None:
+            if self._thr_syncing:
+                return
+            self._thr_syncing = True
+            uv_box.blockSignals(True)
+            uv_box.setValue(params_mod.dbm_to_dbuv(v))
+            uv_box.blockSignals(False)
+            self._thr_syncing = False
+
+        def on_uv(v: float) -> None:
+            if self._thr_syncing:
+                return
+            self._thr_syncing = True
+            dbm_box.blockSignals(True)
+            dbm_box.setValue(params_mod.dbuv_to_dbm(v))
+            dbm_box.blockSignals(False)
+            self._thr_syncing = False
+
+        dbm_box.valueChanged.connect(on_dbm)
+        uv_box.valueChanged.connect(on_uv)
+
+    def _make_threshold_pair(self, dbm_default: float, dbm_range: tuple,
+                             uv_range: tuple):
+        """Build a [dBm | dBµV] dual-unit widget pair + container.
+
+        Returns ``(dbm_box, uv_box, container)``; the container is what you pass
+        to ``_add_row_with_info``.
+        """
+        dbm = FocusWheelSpinBox()
+        dbm.setRange(*dbm_range)
+        dbm.setValue(dbm_default)
+        dbm.setSuffix(" dBm")
+        uv = FocusWheelSpinBox()
+        uv.setRange(*uv_range)
+        uv.setValue(round(params_mod.dbm_to_dbuv(dbm_default)))
+        uv.setSuffix(" dBµV")
+        container = QWidget()
+        hl = QHBoxLayout(container)
+        hl.setContentsMargins(0, 0, 0, 0)
+        hl.setSpacing(8)
+        hl.addWidget(dbm, 1)
+        hl.addWidget(uv, 1)
+        self._wire_threshold_pair(dbm, uv)
+        return dbm, uv, container
 
     def _sub_label(self, text: str) -> QLabel:
         """Small uppercase group divider used inside a merged section."""
@@ -421,7 +472,7 @@ class ParameterForm(QWidget):
         self.btn_pick_tx.clicked.connect(lambda: self.pick_requested.emit("tx"))
         fl.addRow(self.btn_pick_tx)
         self.tx_height = FocusWheelSpinBox(); self.tx_height.setRange(0, 10000); self.tx_height.setValue(1)
-        self._add_row_with_info(fl, "Height AGL (m)", self.tx_height, "Transmitter antenna height above ground")
+        self._add_row_with_info(fl, "Antena Height AGL (m)", self.tx_height, "Transmitter antenna height above ground")
         self.tx_amsl = QLabel("Elevasi tanah: \u2014")
         self._style_amsl_label(self.tx_amsl)
         fl.addRow(self.tx_amsl)
@@ -440,17 +491,33 @@ class ParameterForm(QWidget):
         # Signal
         fl.addRow(self._sub_label("Signal"))
         self.rf_power = FocusWheelSpinBox(); self.rf_power.setRange(0, 1e7); self.rf_power.setValue(1)
-        self._add_row_with_info(fl, "RF power (Watt)", self.rf_power, "Transmitter power output in Watts")
+        self.tx_dbm_label = QLabel("≈ 30.0 dBm")
+        self.tx_dbm_label.setStyleSheet("color: #319795; font-size: 11px; font-weight: bold;")
+        pw_row = QWidget()
+        pw_hl = QHBoxLayout(pw_row)
+        pw_hl.setContentsMargins(0, 0, 0, 0)
+        pw_hl.setSpacing(8)
+        pw_hl.addWidget(self.rf_power, 1)
+        pw_hl.addWidget(self.tx_dbm_label)
+        self._add_row_with_info(fl, "Transmit power (Watt)", pw_row, "Transmitter power output in Watts")
         self.tx_gain = FocusWheelSpinBox(); self.tx_gain.setRange(-50, 50); self.tx_gain.setValue(10)
-        self._add_row_with_info(fl, "Tx gain (dBi)", self.tx_gain, "Transmitter antenna gain in dBi")
+        self._add_row_with_info(fl, "Antenna gain (dBi)", self.tx_gain, "Transmitter antenna gain in dBi")
 
         # Feeder
         fl.addRow(self._sub_label("Feeder"))
         self.cable_loss = FocusWheelSpinBox(); self.cable_loss.setRange(0, 50); self.cable_loss.setValue(0)
-        self._add_row_with_info(fl, "Cable loss (dB)", self.cable_loss, "Transmission line / cable loss")
+        self._add_row_with_info(fl, "Line loss (dB)", self.cable_loss, "Transmission line / cable loss")
         self.erp_label = QLabel("ERP: - W"); self.erp_label.setStyleSheet("color: #319795; font-size: 11px; font-weight: bold;")
         self.eirp_label = QLabel("EIRP: - dBm"); self.eirp_label.setStyleSheet("color: #319795; font-size: 11px; font-weight: bold;")
         fl.addRow(self.erp_label); fl.addRow(self.eirp_label)
+        # RX threshold for THIS unit (parity with Radio Mobile's per-unit setting).
+        # Metadata only: the engine accepts a single -rt from the Rx side.
+        self.tx_thr, self.tx_thr_uv, tx_thr_w = self._make_threshold_pair(
+            -100, (-200, 100), (-100, 250))
+        self._add_row_with_info(
+            fl, "RX threshold (unit ini)", tx_thr_w,
+            "Ambang terima stasiun ini (dBm ⇄ dBµV). Disimpan di profil/manifest; "
+            "engine hanya menerima satu -rt dari sisi Rx.")
         for w in (self.rf_power, self.tx_gain, self.cable_loss):
             w.valueChanged.connect(self._update_erp)
 
@@ -472,6 +539,26 @@ class ParameterForm(QWidget):
         self._add_row_with_info(fl, "Downtilt (deg)", self.downtilt, "Electrical / mechanical downtilt angle")
         self.downtilt_dir = FocusWheelSpinBox(); self.downtilt_dir.setRange(0, 359); self.downtilt_dir.setValue(0)
         self._add_row_with_info(fl, "Downtilt dir (deg)", self.downtilt_dir, "Downtilt direction angle")
+        # Azimuth sector (Radio Mobile parity): limit the displayed coverage to
+        # a bearing wedge. The engine always computes the full circle; the
+        # result PNG is masked afterwards, so this is display-only.
+        self.az_mask = QCheckBox("Limit to azimuth sector")
+        self.az_mask.setChecked(False)
+        fl.addRow(self.az_mask)
+        self.az_start = FocusWheelSpinBox()
+        self.az_start.setRange(0.1, 360.0); self.az_start.setDecimals(1)
+        self.az_start.setSingleStep(0.5); self.az_start.setValue(0.1)
+        self.az_start.setEnabled(False)
+        self._add_row_with_info(fl, "Azimuth start (deg)", self.az_start,
+                                "Start bearing of the sector (0.1-360, North=0)")
+        self.az_end = FocusWheelSpinBox()
+        self.az_end.setRange(0.1, 360.0); self.az_end.setDecimals(1)
+        self.az_end.setSingleStep(0.5); self.az_end.setValue(360.0)
+        self.az_end.setEnabled(False)
+        self._add_row_with_info(fl, "Azimuth end (deg)", self.az_end,
+                                "End bearing of the sector (start>end wraps over North)")
+        self.az_mask.toggled.connect(self.az_start.setEnabled)
+        self.az_mask.toggled.connect(self.az_end.setEnabled)
 
         # -- 2. Mobile / Rx
         fl = self._section("rx", _SECTION_ICON["rx"], "Mobile / Rx", expanded=False)
@@ -488,15 +575,19 @@ class ParameterForm(QWidget):
         self.btn_pick_rx.clicked.connect(lambda: self.pick_requested.emit("rx"))
         fl.addRow(self.btn_pick_rx)
         self.rx_height = FocusWheelSpinBox(); self.rx_height.setRange(0, 10000); self.rx_height.setValue(1)
-        self._add_row_with_info(fl, "Height AGL (m)", self.rx_height, "Receiver height above ground")
+        self._add_row_with_info(fl, "Antena Height AGL (m)", self.rx_height, "Receiver height above ground")
         self.rx_amsl = QLabel("Elevasi tanah: \u2014")
         self._style_amsl_label(self.rx_amsl)
         fl.addRow(self.rx_amsl)
         self.rx_height.valueChanged.connect(lambda _: self._refresh_amsl_labels())
         self.rx_gain = FocusWheelSpinBox(); self.rx_gain.setRange(-50, 50); self.rx_gain.setValue(0)
         self._add_row_with_info(fl, "Rx gain (dBd)", self.rx_gain, "Receiver antenna gain in dBd")
-        self.rx_thr = FocusWheelSpinBox(); self.rx_thr.setRange(-200, 100); self.rx_thr.setValue(-100)
-        self._add_row_with_info(fl, "Rx threshold (dBm)", self.rx_thr, "Minimum required signal threshold")
+        self.rx_thr, self.rx_thr_uv, rx_thr_w = self._make_threshold_pair(
+            -100, (-200, 100), (-100, 250))
+        self._add_row_with_info(
+            fl, "Rx threshold", rx_thr_w,
+            "Minimum required signal threshold (dBm ⇄ dBµV). Ini yang dikirim "
+            "ke engine sebagai -rt (RX relative = margin pada link report).")
 
         # -- 3. Model (EXPANDED BY DEFAULT, EXACTLY MATCHING CLOUDRF SCREENSHOT!)
         fl = self._section("model", _SECTION_ICON["model"], "Model", expanded=True)
@@ -884,6 +975,12 @@ class ParameterForm(QWidget):
         eirp = params_mod.eirp_dbm(erp)
         self.erp_label.setText(f"ERP: {erp:.3f} W")
         self.eirp_label.setText(f"EIRP: {eirp:.2f} dBm")
+        p_w = self.rf_power.value()
+        if p_w > 0:
+            self.tx_dbm_label.setText(
+                f"≈ {10 * math.log10(p_w * 1000):.1f} dBm")
+        else:
+            self.tx_dbm_label.setText("≈ — dBm")
         self.erp_changed.emit(erp)
 
     # ------------------------------------------------------------------ data
@@ -924,10 +1021,14 @@ class ParameterForm(QWidget):
             "azimuth_deg": self.azimuth.value(),
             "downtilt_deg": self.downtilt.value(),
             "downtilt_dir_deg": self.downtilt_dir.value(),
+            "az_mask_enabled": self.az_mask.isChecked(),
+            "az_mask_start_deg": self.az_start.value(),
+            "az_mask_end_deg": self.az_end.value(),
             "rx_lat": rx_lat, "rx_lon": rx_lon,
             "rx_height": self.rx_height.value(),
             "rx_gain_dbd": self.rx_gain.value(),
             "rx_threshold_dbm": self.rx_thr.value(),
+            "tx_threshold_dbm": self.tx_thr.value(),
             "model_pm": model_val,
             "reliability": rel_val,
             "context_pe": context_pe,
@@ -973,6 +1074,7 @@ class ParameterForm(QWidget):
         self.tx_gain.setValue(float(d.get("tx_gain_dbi", 10)))
         # Feeder
         self.cable_loss.setValue(float(d.get("cable_loss_db", 0)))
+        self.tx_thr.setValue(float(d.get("tx_threshold_dbm", -100)))
         self._update_erp()
         # Antenna
         self.ant_path.setText(d.get("antenna_basename") or "")
@@ -980,12 +1082,16 @@ class ParameterForm(QWidget):
         self.azimuth.setValue(float(d.get("azimuth_deg", 0)))
         self.downtilt.setValue(float(d.get("downtilt_deg", 0)))
         self.downtilt_dir.setValue(float(d.get("downtilt_dir_deg", 0)))
+        self.az_mask.setChecked(bool(d.get("az_mask_enabled", False)))
+        self.az_start.setValue(float(d.get("az_mask_start_deg", 0.1)))
+        self.az_end.setValue(float(d.get("az_mask_end_deg", 360.0)))
         # Mobile / Rx
         self.rx_name.setText(d.get("rx_name") or "")
         self.rx_coord.set(d.get("rx_lat"), d.get("rx_lon"))
         self.rx_height.setValue(float(d.get("rx_height", 1.5)))
         self.rx_gain.setValue(float(d.get("rx_gain_dbd", 0)))
         self.rx_thr.setValue(float(d.get("rx_threshold_dbm", -100)))
+        # rx_thr_uv (and tx_thr_uv) are kept in sync via valueChanged.
         # Model
         model_idx = self.model.findData(int(d.get("model_pm", 3)))
         if model_idx >= 0:
@@ -997,7 +1103,10 @@ class ParameterForm(QWidget):
         # Environment
         climate = d.get("climate_zone")
         if climate is not None:
-            self.climate.setCurrentData(climate)
+            idx = self.climate.findData(climate)
+            if idx < 0:                       # stale/unknown value -> default
+                idx = 0
+            self.climate.setCurrentIndex(idx)
         self.clutter_path.setText(d.get("clutter_file") or "")
         self.gc.setValue(float(d.get("ground_clutter", 0)))
         self.obstacles.setPlainText("\n".join(str(o) for o in d.get("obstacles", [])))

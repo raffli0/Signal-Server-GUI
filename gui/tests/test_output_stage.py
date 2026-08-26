@@ -18,6 +18,34 @@ def test_parse_bbox():
     assert bbox == (52.118628, -1.793233, 51.579372, -2.666567)
 
 
+def test_parse_bbox_falls_back_to_params_when_engine_line_missing():
+    # Engine errored but still wrote a PPM; no "Area boundaries" line printed.
+    stdout = "Loading topo data for boundaries: (51.5N, 1.7W) to (52.1N, 2.6W)\n"
+    params = {"tx_lat": -6.9, "tx_lon": 107.6, "radius": 50}
+    bbox = output_stage.parse_bbox(stdout, params=params)
+    # Params-based circle, NOT the (larger) DEM tile region.
+    assert bbox is not None
+    n, e, s, w = bbox
+    assert abs(((n + s) / 2) - (-6.9)) < 1e-6
+    assert abs(((e + w) / 2) - 107.6) < 1e-6
+    # 50 km radius -> ~0.45 deg half-span, nowhere near "entire map".
+    assert (n - s) < 2.0 and (e - w) < 2.0
+
+
+def test_parse_bbox_insane_engine_line_uses_params():
+    # A world-scale "Area boundaries" line must not be trusted.
+    stdout = "Area boundaries:90.0 | 180.0 | -90.0 | -180.0 \n"
+    params = {"tx_lat": -6.9, "tx_lon": 107.6, "radius": 30}
+    bbox = output_stage.parse_bbox(stdout, params=params)
+    assert bbox is not None
+    assert (bbox[0] - bbox[2]) < 2.0
+
+
+def test_parse_bbox_returns_none_when_no_source():
+    assert output_stage.parse_bbox("nothing useful", params=None) is None
+
+
+
 def test_build_kml():
     kml = output_stage.build_kml("cov.png", (52.1, -1.7, 51.5, -2.6), "Test")
     assert "<GroundOverlay>" in kml

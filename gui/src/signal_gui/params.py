@@ -88,9 +88,24 @@ MODEL_OPTION_STATES: dict[int, dict[str, str]] = {
          "context": OPTION_ACTIVE, "diffraction": OPTION_ACTIVE},
     11: {"reliability": OPTION_NA, "climate": OPTION_NA,
          "context": OPTION_ACTIVE, "diffraction": OPTION_ACTIVE},
-    12: {"reliability": OPTION_NA, "climate": OPTION_NA,
-         "context": OPTION_ACTIVE, "diffraction": OPTION_ACTIVE},
+     12: {"reliability": OPTION_NA, "climate": OPTION_NA,
+          "context": OPTION_ACTIVE, "diffraction": OPTION_ACTIVE},
 }
+
+
+# Radio Mobile expresses RX thresholds in dBm or dBµV (50 Ω system); the engine
+# only accepts dBm, so the GUI exposes both unit fields and converts here.
+DBM_DBUV_OFFSET_50OHM = 107.0
+
+
+def dbm_to_dbuv(dbm: float) -> float:
+    """Convert a dBm RX threshold to dBµV (50 Ω reference)."""
+    return float(dbm) + DBM_DBUV_OFFSET_50OHM
+
+
+def dbuv_to_dbm(dbuv: float) -> float:
+    """Convert a dBµV RX threshold to dBm (50 Ω reference)."""
+    return float(dbuv) - DBM_DBUV_OFFSET_50OHM
 
 
 def model_name(pm) -> str:
@@ -385,7 +400,13 @@ def format_run_summary(params: dict, argv: list[str], engine_exe: str) -> list[s
         f" tinggi {amsl_txt('tx')}",
         f"[run] Rx        : tinggi {amsl_txt('rx')}"
         f" | gain {params.get('rx_gain_dbd')} dBd"
-        f" | threshold {params.get('rx_threshold_dbm')} dBm",
+        f" | threshold {params.get('rx_threshold_dbm')} dBm"
+        + (f" ({dbm_to_dbuv(float(params.get('rx_threshold_dbm', 0)))}\u00b5V)"
+           if params.get('rx_threshold_dbm') is not None else ""),
+        f"[run] Tx Thr    : {params.get('tx_threshold_dbm')} dBm"
+        + (f" ({dbm_to_dbuv(float(params.get('tx_threshold_dbm', 0)))}\u00b5V)"
+           if params.get('tx_threshold_dbm') is not None else "")
+        + " (metadata; -rt engine tetap pakai sisi Rx)",
         f"[run] ERP       : {erp:.2f} W"
         f" (power {params.get('rf_power_w')} W,"
         f" gain {params.get('tx_gain_dbi')} dBi,"

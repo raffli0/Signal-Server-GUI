@@ -48,11 +48,15 @@ def parse_pick_url(url: str):
     return role, lat, lon
 
 
-def render_html(template: str, coverage, markers, armed: str) -> str:
+def render_html(template: str, coverage, markers, armed: str,
+                cov_palette=None) -> str:
     """Build the final HTML string by injecting coverage/markers/armed state.
 
     ``coverage`` is ``(data_uri, [south, west, north, east])`` or ``None``.
     ``markers`` is a list of dicts with role/lat/lon/color/label.
+    ``cov_palette`` is ``{"colors": [[r,g,b]...], "levels": [dBm...]}``
+    (strongest band first) powering the hover-dBm tooltip and the per-band
+    layer menu; injected as ``window.__covPalette``.
     """
     if coverage:
         data_uri, bounds = coverage
@@ -61,12 +65,49 @@ def render_html(template: str, coverage, markers, armed: str) -> str:
     else:
         cov_js = "null"
     markers_js = json.dumps(markers or [])
+    palette_js = ""
+    if cov_palette:
+        palette_js = "window.__covPalette=" + json.dumps(cov_palette) + ";"
     inject = (
         f"window.__coverage={cov_js};"
         f"window.__markers={markers_js};"
         f"window.__armedRole='{armed}';"
+        + palette_js
     )
     return template.replace("/*__DATA__*/", inject)
+
+
+def palette_from_color_file(color_file: Optional[str]):
+    """Parse the engine colour table into a hover-palette dict.
+
+    Returns ``{"colors": [[r,g,b], ...], "levels": [dBm, ...]}`` strongest band
+    first, or ``None`` when no colour table can be read (the JS side then falls
+    back to its built-in defaults).
+    """
+    from . import rm_style
+
+    candidates = [
+        color_file,
+        os.path.join(os.path.dirname(__file__), "resources", "radiomobile.dcf"),
+    ]
+    text = None
+    for cand in candidates:
+        if cand and os.path.exists(cand):
+            try:
+                with open(cand, "r", encoding="utf-8", errors="replace") as fh:
+                    text = fh.read()
+                break
+            except OSError:
+                continue
+    if not text:
+        return None
+    bands = rm_style.parse_dcf_levels(text)
+    if not bands:
+        return None
+    return {
+        "colors": [list(rgb) for _lvl, rgb in bands],
+        "levels": [float(lvl) for lvl, _rgb in bands],
+    }
 
 
 class PickerPage(QWebEnginePage):
@@ -93,6 +134,7 @@ class MapView(QWebEngineView):
         self.settings().setAttribute(QWebEngineSettings.WebAttribute.LocalStorageEnabled, True)
         self._template = _template_html()
         self._coverage = None            # (data_uri, [s,w,n,e]) or None
+        self._cov_palette = None         # hover-palette dict for the live page
         self.tx_pos = None               # (lat, lon) or None
         self.rx_pos = None
         self.tx_saved_pos = None         # Tx used by the last finished run
@@ -183,11 +225,13 @@ class MapView(QWebEngineView):
     # ------------------------------------------------------------------ render
     def _render(self) -> None:
         self._ready = False
-        html = render_html(self._template, self._coverage, self._markers_list(), self._armed)
+        html = render_html(self._template, self._coverage, self._markers_list(),
+                           self._armed, cov_palette=self._cov_palette)
         self.setHtml(html)
 
     def show_blank(self) -> None:
         self._coverage = None
+        self._cov_palette = None
         self._render()
 
     def show_coverage(self, png_path: str, bbox, color_file: Optional[str] = None) -> None:
@@ -195,133 +239,16 @@ class MapView(QWebEngineView):
 
         The PNG is shown as-is so every palette band keeps its exact colour
         (matching Radio Mobile). Transparency comes solely from the engine's
-        white background, already keyed during PPM->PNG conversion.
+        white background, already keyed during PPM->PNG conversion. The colour
+        table is also parsed so the hover tooltip can report the dBm band at
+        the cursor position.
         """
         n, e, s, w = bbox
         with open(png_path, "rb") as fh:
             raw = fh.read()
         b64 = base64.b64encode(raw).decode("ascii")
         self._coverage = (f"data:image/png;base64,{b64}", [s, w, n, e])
-        self._render()
-
-
-class MapView(QWebEngineView):
-    picked = Signal(str, float, float)
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.settings().setAttribute(QWebEngineSettings.WebAttribute.LocalStorageEnabled, True)
-        self._template = _template_html()
-        self._coverage = None            # (data_uri, [s,w,n,e]) or None
-        self.tx_pos = None               # (lat, lon) or None
-        self.rx_pos = None
-        self.tx_saved_pos = None         # Tx used by the last finished run
-        self._armed = "tx"
-        self._ready = False              # True once the web page has loaded
-        self._focus = None               # (lat, lon) to fly to after load
-        self._page = PickerPage(self)
-        self.setPage(self._page)
-        self.tx_label = "Tx"
-        self.rx_label = "Rx"
-        self.loadFinished.connect(self._on_loaded)
-        self.show_blank()
-
-    # ------------------------------------------------------------------ state
-    def _markers_list(self) -> list:
-        out = []
-        if self.tx_saved_pos and self.tx_saved_pos != self.tx_pos:
-            out.append({"role": "tx_saved", "lat": self.tx_saved_pos[0],
-                        "lon": self.tx_saved_pos[1], "label": self.tx_label})
-        if self.tx_pos:
-            out.append({"role": "tx", "lat": self.tx_pos[0], "lon": self.tx_pos[1],
-                        "color": TX_COLOR, "label": self.tx_label})
-        if self.rx_pos:
-            out.append({"role": "rx", "lat": self.rx_pos[0], "lon": self.rx_pos[1],
-                        "color": RX_COLOR, "label": self.rx_label})
-        return out
-
-    def set_site_labels(self, tx: str = None, rx: str = None) -> None:
-        if tx is not None:
-            self.tx_label = tx or "Tx"
-        if rx is not None:
-            self.rx_label = rx or "Rx"
-        self._update_markers()
-
-    def arm(self, role: str) -> None:
-        self._armed = role
-        self.page().runJavaScript(f"window.__armedRole='{role}';")
-
-    def set_tx(self, lat: float, lon: float, fly: bool = True) -> None:
-        self.tx_pos = (lat, lon)
-        self._focus = (lat, lon)
-        if self._ready:
-            self._update_markers()
-            if fly:
-                self.page().runJavaScript(f"flyToSite({lat},{lon});")
-
-    def set_rx(self, lat: float, lon: float, fly: bool = True) -> None:
-        self.rx_pos = (lat, lon)
-        self._focus = (lat, lon)
-        if self._ready:
-            self._update_markers()
-            if fly:
-                self.page().runJavaScript(f"flyToSite({lat},{lon});")
-
-    def mark_tx_saved(self, lat: float, lon: float) -> None:
-        """Flag the Tx position used by the last finished propagation run.
-
-        The saved Tx stays visible as a black pin while the active Tx moves on
-        (e.g. after an accidental map click), so the user can see where the
-        displayed coverage was computed.
-        """
-        self.tx_saved_pos = (lat, lon)
-        if self._ready:
-            self._update_markers()
-
-    def clear_tx_saved(self) -> None:
-        """Remove the black 'saved' Tx indicator."""
-        if self.tx_saved_pos is None:
-            return
-        self.tx_saved_pos = None
-        if self._ready:
-            self._update_markers()
-
-    def _update_markers(self) -> None:
-        js = "placeMarkers(" + json.dumps(self._markers_list()) + ");"
-        self.page().runJavaScript(js)
-
-    def _on_loaded(self, _ok: bool) -> None:
-        self._ready = True
-        self._update_markers()
-        # When a coverage overlay is shown, loadCoverage() already fitBounds() to
-        # it -- don't clobber that with a forced zoom-14 fly-to (which would hide
-        # a large (e.g. 100 km) result). Only auto-fly on the blank initial load.
-        if self._coverage is None and self._focus is not None:
-            lat, lon = self._focus
-            self.page().runJavaScript(f"flyToSite({lat},{lon});")
-
-    # ------------------------------------------------------------------ render
-    def _render(self) -> None:
-        self._ready = False
-        html = render_html(self._template, self._coverage, self._markers_list(), self._armed)
-        self.setHtml(html)
-
-    def show_blank(self) -> None:
-        self._coverage = None
-        self._render()
-
-    def show_coverage(self, png_path: str, bbox, color_file: Optional[str] = None) -> None:
-        """Display a coverage PNG over the map; ``bbox`` is (N, E, S, W).
-
-        The PNG is shown as-is so every palette band keeps its exact colour
-        (matching Radio Mobile). Transparency comes solely from the engine's
-        white background, already keyed during PPM->PNG conversion.
-        """
-        n, e, s, w = bbox
-        with open(png_path, "rb") as fh:
-            raw = fh.read()
-        b64 = base64.b64encode(raw).decode("ascii")
-        self._coverage = (f"data:image/png;base64,{b64}", [s, w, n, e])
+        self._cov_palette = palette_from_color_file(color_file)
         self._render()
 
     def clear_coverage(self) -> None:
@@ -334,6 +261,7 @@ class MapView(QWebEngineView):
         unwanted "snap to initial coordinates" on Clear.
         """
         self._coverage = None
+        self._cov_palette = None
         self._focus = None
         self.clear_tx_saved()
         if self._ready:
@@ -341,6 +269,7 @@ class MapView(QWebEngineView):
                 "if (typeof overlay !== 'undefined' && overlay) {"
                 "  map.removeLayer(overlay); overlay = null; }"
                 "if (typeof clearLink === 'function') { clearLink(); }"
+                "if (typeof hideCovTip === 'function') { hideCovTip(); }"
             )
             self.page().runJavaScript(js)
         else:
@@ -390,10 +319,11 @@ class MapView(QWebEngineView):
         self.page().runJavaScript(
             "if (typeof map !== 'undefined' && map) { map.invalidateSize(false); }")
 
-    def draw_link(self, tx_lat: float, tx_lon: float, rx_lat: float, rx_lon: float) -> None:
-        """Draw the Tx->Rx Radio Link polyline on the map."""
+    def draw_link(self, tx_lat: float, tx_lon: float, rx_lat: float, rx_lon: float,
+                  color: str = "#ffec3d") -> None:
+        """Draw the Tx->Rx Radio Link polyline on the map (color = link grade)."""
         self.page().runJavaScript(
-            f"drawLink({tx_lat},{tx_lon},{rx_lat},{rx_lon});")
+            f"drawLink({tx_lat},{tx_lon},{rx_lat},{rx_lon},'{color}');")
 
     def clear_link(self) -> None:
         """Remove the Radio Link polyline from the map."""

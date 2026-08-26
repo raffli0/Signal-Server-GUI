@@ -42,6 +42,37 @@ def test_parse_colors_dat(tmp_path):
     assert pal.colors[-1] == (64, 64, 255)
 
 
+RM_COLOR_DAT = "\r\n".join([
+    "Color File", "0", "0",
+    "0.5", "6", "11.5", "17", "22.5", "28", "33.5", "39", "44.5", "50", "55.5",
+    "FFFFFF", "FF6464", "FFDC64", "FFFF64", "C0FF64", "64FF64",
+    "64FFC0", "64FFFF", "64DCFF", "6464FF", "5A32FF", "2",
+]) + "\r\n"
+
+
+def test_parse_user_radiomobile_colors_dat(tmp_path):
+    pal = rm_style.parse_colors_dat(_write_rm_dat(tmp_path, RM_COLOR_DAT))
+    # Two leading settings skipped; 11 relative thresholds, 11 bands.
+    assert pal.thresholds == [0.5, 6, 11.5, 17, 22.5, 28, 33.5, 39, 44.5, 50, 55.5]
+    assert len(pal.colors) == 11
+    assert pal.colors[0] == (255, 255, 255)   # white = strongest
+    assert pal.colors[-1] == (90, 50, 255)    # 5A32FF = weakest
+    # Trailing flag ignored, not parsed as a colour.
+    dcf = rm_style.palette_to_dcf_text(pal, top_dbm=-60, bottom_dbm=-120)
+    lines = dcf.strip().splitlines()
+    assert len(lines) == 6
+    assert lines[0].lstrip().startswith("-60:") and lines[-1].lstrip().startswith("-120:")
+    # strongest band (red) at top, weakest (blue) at bottom.
+    assert lines[0].rstrip().endswith("255,   0,   0")
+    assert lines[-1].rstrip().endswith("0, 100, 255")
+
+
+def _write_rm_dat(tmp_path, text=RM_COLOR_DAT):
+    p = tmp_path / "colors.dat"
+    p.write_text(text, encoding="ascii")
+    return str(p)
+
+
 def test_parse_real_rmwcore_palette():
     dat = rm_style.default_dat_path()
     if not dat:
@@ -55,7 +86,7 @@ def test_palette_to_dcf_matches_engine_format(tmp_path):
     pal = rm_style.parse_colors_dat(_write_dat(tmp_path))
     text = rm_style.palette_to_dcf_text(pal, top_dbm=-60, bottom_dbm=-120)
     lines = text.strip().splitlines()
-    assert len(lines) == 4
+    assert len(lines) == 6
     # sscanf("%d: %d, %d, %d") compatibility + strongest first.
     levels = []
     for ln in lines:
@@ -64,9 +95,9 @@ def test_palette_to_dcf_matches_engine_format(tmp_path):
         levels.append(int(m.group(1)))
     assert levels[0] > levels[-1]
     bands = rm_style.parse_dcf_levels(text)
-    # RM convention: first colour (white) = strongest band.
-    assert bands[0][1] == (255, 255, 255)
-    assert bands[-1][1] == (64, 64, 255)
+    # Strongest band is red, weakest is blue (canonical COVERAGE_RAMP).
+    assert bands[0][1] == (255, 0, 0)
+    assert bands[-1][1] == (0, 100, 255)
 
 
 def test_ensure_palette_dcf_writes_file(tmp_path):
@@ -74,7 +105,7 @@ def test_ensure_palette_dcf_writes_file(tmp_path):
     got = rm_style.ensure_palette_dcf(str(dest), dat_path=_write_dat(tmp_path))
     assert os.path.exists(got)
     bands = rm_style.parse_dcf_levels(open(got).read())
-    assert len(bands) == 4
+    assert len(bands) == 6
 
 
 def test_ppm_white_band_kept_opaque(tmp_path):

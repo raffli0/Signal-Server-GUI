@@ -17,7 +17,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, QTimer, QObject, QEvent, Signal
 
-from . import backend, params as params_mod, output_stage
+from . import backend, params as params_mod, output_stage, rm_import
 from .widgets import ParameterForm
 
 
@@ -395,6 +395,7 @@ class MainWindow(QMainWindow):
         self.form.export_requested.connect(self.export_model)
         self.header.save_profile_requested.connect(self.save_profile)
         self.header.load_profile_requested.connect(self.load_profile)
+        self.header.import_rm_requested.connect(self._import_rm_data)
         self.header.radio_link_requested.connect(lambda: self.start(link=True))
         self.header.clear_cache_requested.connect(self.clear_cache)
         self.map.picked.connect(self._on_picked)
@@ -521,17 +522,41 @@ class MainWindow(QMainWindow):
 
     # ------------------------------------------------------------------ responsive
     def _apply_responsive_width(self) -> None:
-        """Clamp the sidebar width to a fraction of the window on any size.
+        """Keep the sidebar a sensible fraction of the window at every size.
 
-        The sidebar stays clearly narrower than the map but never so small that
-        the form inputs overflow. The user can still drag the splitter.
+        Both a minimum and maximum are enforced so the form stays usable and the
+        map never collapses. The splitter handle is moved explicitly (via
+        ``setSizes``) because ``setMaximumWidth`` alone does not reposition it,
+        so the change is visible without a window resize.
         """
-        w = self.width()
-        side_max = max(240, min(380, int(w * 0.32)))
-        self._sidebar.setMaximumWidth(side_max)
-        # Keep the map comfortably larger than the sidebar on small screens.
-        if w < 720:
-            self._sidebar.setMaximumWidth(max(200, int(w * 0.45)))
+        avail = self._splitter.width()
+        if avail <= 0:
+            return
+        # Map always keeps a usable minimum; sidebar is the remainder, clamped.
+        map_min = 360
+        # Sidebar minimum shrinks on very small windows so the map survives.
+        side_min = min(260, max(200, avail - 320))
+        # Smaller windows give the sidebar a larger share so inputs stay usable.
+        if avail < 900:
+            frac = 0.42
+        elif avail < 1400:
+            frac = 0.34
+        else:
+            frac = 0.28
+        side = int(avail * frac)
+        side = max(side_min, min(side, avail - map_min, 460))
+        self._sidebar.setMinimumWidth(side_min)
+        self._sidebar.setMaximumWidth(side)
+        cur = self._splitter.sizes()
+        if len(cur) == 2 and (cur[0] > side or cur[0] < side_min):
+            # Only move the handle when the sidebar leaves the allowed band, so a
+            # user's manual drag inside the band is preserved on resize.
+            self._splitter.setSizes([side, max(0, avail - side)])
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        # Layout is realised now; apply the responsive width for the first paint.
+        self._apply_responsive_width()
 
     def _on_splitter_moved(self, *_args) -> None:
         # Re-layout Leaflet after the container size changes (no window resize).
@@ -709,8 +734,19 @@ class MainWindow(QMainWindow):
         self.map.clear_link()
         self.link_panel.setVisible(False)
         if ok and result.get("bbox"):
-            self.map.show_coverage(result["png"], result["bbox"], self.form.color_path.text())
             p = self._pending[0] if self._pending else {}
+            bbox = result["bbox"]
+            if p.get("az_mask_enabled") and \
+                    p.get("tx_lat") is not None and p.get("tx_lon") is not None:
+                try:
+                    output_stage.mask_png_sector(
+                        result["png"], bbox,
+                        float(p["tx_lat"]), float(p["tx_lon"]),
+                        float(p.get("az_mask_start_deg", 0.1)),
+                        float(p.get("az_mask_end_deg", 360.0)))
+                except Exception as exc:  # noqa: BLE001 - cosmetic layer
+                    self._set_status(f"Peringatan: mask azimuth gagal ({exc})")
+            self.map.show_coverage(result["png"], bbox, self.form.color_path.text())
             if p.get("tx_lat") is not None and p.get("tx_lon") is not None:
                 self.map.mark_tx_saved(float(p["tx_lat"]), float(p["tx_lon"]))
             self._last_result = result
@@ -725,7 +761,16 @@ class MainWindow(QMainWindow):
 
     def _show_link_panel(self, link: dict, tx: tuple, rx: tuple) -> None:
         self.link_panel.setVisible(True)
-        self.map.draw_link(tx[0], tx[1], rx[0], rx[1])
+        # Radio Mobile link-grade colouring on the relative RX signal (fade
+        # margin): >= +3 dB green, >= -3 dB yellow, otherwise red.
+        fm = link.get("fade_margin_db")
+        if fm is not None and fm >= 3:
+            link_color = "#68d391"
+        elif fm is not None and fm >= -3:
+            link_color = "#ffec3d"
+        else:
+            link_color = "#fc8181"
+        self.map.draw_link(tx[0], tx[1], rx[0], rx[1], color=link_color)
         self._last_result = {"link": link}
         self._set_status("Done. Radio link computed.")
 
@@ -846,6 +891,42 @@ class MainWindow(QMainWindow):
         self._schedule_amsl()
 
     # ------------------------------------------------------------------ profile
+    def _import_rm_data(self) -> None:
+        """Load a Radio Mobile coverage-data TXT export onto the map.
+
+        The file's ``Rx(dB)`` column is a margin above its threshold, so the
+        colour span follows the header (threshold .. threshold + Range) and the
+        Tx pin is restored from the ``Fixed unit`` line.
+        """
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Import Radio Mobile data", "",
+            "Radio Mobile TXT (*.txt);;All files (*)")
+        if not path:
+            return
+        try:
+            data = rm_import.parse_rm_export(path)
+        except Exception as exc:  # noqa: BLE001 - surface any parse problem
+            QMessageBox.warning(
+                self, "Import Radio Mobile", f"Gagal memuat file:\n{exc}")
+            return
+        vmin = float(data["threshold_dbm"])
+        vmax = vmin + float(data["range_db"])
+        png = os.path.join(self.cache_dir,
+                           f"rm_import_{datetime.now().strftime('%H%M%S%f')}.png")
+        try:
+            rm_import.render_grid_png(data["points"], vmin, vmax, png)
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.warning(
+                self, "Import Radio Mobile", f"Gagal merender grid:\n{exc}")
+            return
+        self.map.show_coverage(png, data["bbox"])
+        fixed = data.get("fixed")
+        if fixed:
+            self.map.set_tx(fixed["lat"], fixed["lon"], fly=False)
+        self._set_status(
+            f"RM import: {len(data['points'])} titik "
+            f"({vmin:.0f}…{vmax:.0f} dBm) — {os.path.basename(path)}")
+
     def save_profile(self) -> None:
         """Serialize the current form + map view into a JSON profile file."""
         path, _ = QFileDialog.getSaveFileName(
@@ -1053,12 +1134,10 @@ class MainWindow(QMainWindow):
     def _export_raster_txt(self, result: dict, path: str) -> None:
         """Wrap the engine's raw raster dump in a Radio-Mobile-compatible file.
 
-        Layout mirrors Radio Mobile's own TXT export:
-          Range   <dynamic-range>dB <threshold>dBm     (dynamic range fixed 40 dB)
-          Fixed unit  <idx> <name> <lat> <lon> <antenna AMSL>
-          Mobile unit <idx> <name> <lat> <lon> <antenna AMSL>
-        Antenna heights are AMSL (ground elevation + AGL input), matching how
-        Radio Mobile reports site heights.
+        Formatting lives in :func:`rm_import.write_rm_export`.  Antenna heights
+        are AMSL (ground elevation + AGL input), matching how Radio Mobile
+        reports site heights, and the ``Rx(dB)`` column stores the margin above
+        the run threshold -- the same convention RM itself exports.
         """
         from . import dem_convert as dc
 
@@ -1090,36 +1169,13 @@ class MainWindow(QMainWindow):
             )
             return _f(agl) + (elev if elev is not None else 0.0)
 
-        def fmt_lat(v):
-            return f"{_f(v):09.5f}"
-
-        def fmt_lon(v):
-            return f"{_f(v):10.5f}"
-
         thr = _f(p.get("rx_threshold_dbm"), -100)
-        with open(result["raster_txt"], "r", encoding="utf-8") as src, \
-                open(path, "w", encoding="utf-8") as out:
-            out.write(f"Range\t40.0dB\t{thr:.1f}dBm\n")
-            out.write(f"Fixed unit\t1\t{tx_name}\t{fmt_lat(p.get('tx_lat'))}"
-                      f"\t{fmt_lon(p.get('tx_lon'))}"
-                      f"\t{amsl(p.get('tx_lat'), p.get('tx_lon'), p.get('tx_height')):.1f}\n")
-            if rx_lat is not None and rx_lon is not None:
-                mob_pos = f"{fmt_lat(rx_lat)}\t{fmt_lon(rx_lon)}"
-                mob_amsl = amsl(rx_lat, rx_lon, p.get('rx_height'))
-            else:
-                mob_pos = f"{fmt_lat(p.get('tx_lat'))}\t{fmt_lon(p.get('tx_lon'))}"
-                mob_amsl = amsl(p.get('tx_lat'), p.get('tx_lon'), p.get('rx_height'))
-            out.write(f"Mobile unit\t2\t{rx_name}\t{mob_pos}\t{mob_amsl:.1f}\n")
-            out.write("Latitude\tLongitude\tRx(dB)\tBest unit\n")
-            for line in src:
-                parts = line.split()
-                if len(parts) != 3:
-                    continue
-                try:
-                    lat, lon, dbm = float(parts[0]), float(parts[1]), int(parts[2])
-                except ValueError:
-                    continue
-                out.write(f"{lat:09.5f}\t{lon:10.5f}\t{dbm:07.1f}\t1\n")
+        rm_import.write_rm_export(
+            path, result["raster_txt"], threshold_dbm=thr,
+            tx_name=tx_name, tx_lat=_f(p.get("tx_lat")), tx_lon=_f(p.get("tx_lon")),
+            tx_amsl=amsl(p.get("tx_lat"), p.get("tx_lon"), p.get("tx_height")),
+            rx_name=rx_name, rx_lat=_f(rx_lat), rx_lon=_f(rx_lon),
+            rx_amsl=amsl(rx_lat, rx_lon, p.get("rx_height")))
 
     def _export_kmz(self, result: dict, png: str, bbox, path: str, base: str) -> None:
         """Build a KMZ (zipped KML GroundOverlay + PNG image)."""

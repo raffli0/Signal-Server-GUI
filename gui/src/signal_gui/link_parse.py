@@ -2,31 +2,33 @@
 
 In PPA mode Signal-Server writes (given output basename ``base``):
 
-* ``base.txt``            -- human-readable path report (budget).
-* ``base_profile``        -- 2 columns: distance, clearance (terrain - LOS).
-* ``base_curvature``      -- 2 columns: distance, (terrain - LOS) - terrain
-                             which equals ``-(LOS elevation)``.
-* ``base_fresnel60``      -- 2 columns: distance, 60% first-Fresnel-zone radius
-                             (negative, i.e. below the LOS line).
-* ``base_fresnel``        -- full Fresnel radius (negative).
-* ``base_reference`` / ``base_clutter`` -- auxiliary series.
+* ``base.txt``       -- human-readable path report (budget).
+* ``base_curvature`` -- per-sample ``distance  -(LOS height)`` metres; the LOS
+                        line drawn between the two antenna tips.
+* ``base_fresnel60`` -- ``distance  -radius`` of the 60 % first Fresnel zone
+                        (negative = below the LOS line).
+* ``base_profile``   -- ONLY the samples where terrain rises above the LOS
+                        line (``terrain - LOS``, positive entries, no trailing
+                        newline on the final record).  It is therefore *not*
+                        usable as the ground profile -- we reconstruct the true
+                        terrain by sampling the SDF tiles along the arc instead
+                        (:class:`rm_style.ElevationSource`).
+* ``base_reference`` / ``base_clutter`` -- auxiliary series (unused).
 
-From these we reconstruct, for a Radio-Mobile-style profile chart:
-
-* ``terrain``  = profile - curvature   (ground elevation, metres)
-* ``los``      = -curvature            (line-of-sight line, metres)
-* ``fresnel_lower`` = los - |fresnel60|
-* ``fresnel_upper`` = los + |fresnel60|
-
-Obstruction happens where ``terrain > fresnel_lower`` (ground enters the
-Fresnel zone).
+Budget fields come straight from the report text; ``Rx(dBm)`` is only printed
+by the engine when ERP > 0, which our argv always provides.
 """
 
 from __future__ import annotations
 
+import math
 import os
 import re
 from typing import Optional
+
+import numpy as np
+
+_EARTH_R_KM = 6371.0
 
 
 def _read_series(path: str):
@@ -50,8 +52,9 @@ def _read_series(path: str):
     return xs, ys
 
 
-def _parse_float(report: str, pattern: str) -> Optional[float]:
-    m = re.search(pattern, report)
+def _parse_float(report: str, pattern: str,
+                 flags: int = 0) -> Optional[float]:
+    m = re.search(pattern, report, flags)
     if m:
         try:
             return float(m.group(1))
@@ -60,12 +63,73 @@ def _parse_float(report: str, pattern: str) -> Optional[float]:
     return None
 
 
-def parse_link_output(base: str, rx_threshold_dbm: Optional[float] = None) -> dict:
+def _destination_point(lat: float, lon: float, bearing_deg: float,
+                       dist_km: float) -> tuple[float, float]:
+    """Great-circle destination point (initial bearing, spherical Earth)."""
+    delta = dist_km / _EARTH_R_KM
+    theta = math.radians(bearing_deg)
+    phi1 = math.radians(lat)
+    lam1 = math.radians(lon)
+    phi2 = math.asin(math.sin(phi1) * math.cos(delta)
+                     + math.cos(phi1) * math.sin(delta) * math.cos(theta))
+    lam2 = lam1 + math.atan2(
+        math.sin(theta) * math.sin(delta) * math.cos(phi1),
+        math.cos(delta) - math.sin(phi1) * math.sin(phi2))
+    return math.degrees(phi2), (math.degrees(lam2) + 540.0) % 360.0 - 180.0
+
+
+def _initial_bearing(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    phi1, phi2 = math.radians(lat1), math.radians(lat2)
+    dlon = math.radians(lon2 - lon1)
+    y = math.sin(dlon) * math.cos(phi2)
+    x = (math.cos(phi1) * math.sin(phi2)
+         - math.sin(phi1) * math.cos(phi2) * math.cos(dlon))
+    return math.degrees(math.atan2(y, x)) % 360.0
+
+
+def _sample_terrain(sdf_dir: Optional[str], hd: bool,
+                    rx: tuple[float, float], tx: tuple[float, float],
+                    dists_km: list[float],
+                    asc_file: Optional[str] = None) -> list[float]:
+    """Ground elevation (m AMSL) along the RX->TX arc at ``dists_km``.
+
+    Terrain comes from SDF tiles when ``sdf_dir`` is given, otherwise from the
+    engine's LIDAR ``.asc`` grid via ``asc_file`` (offline DEMNAS mode).
+    """
+    from .rm_style import ElevationSource
+
+    total = dists_km[-1] if dists_km else 0.0
+    brg = _initial_bearing(rx[0], rx[1], tx[0], tx[1])
+    pts = [_destination_point(rx[0], rx[1], brg, max(0.0, d)) for d in dists_km]
+    lats = np.array([p[0] for p in pts])
+    lons = np.array([p[1] for p in pts])
+    if sdf_dir:
+        src = ElevationSource(sdf_dir=sdf_dir, hd=hd)
+    else:
+        src = ElevationSource(asc_file=asc_file)
+    terr = src.sample(lats, lons)
+    # Bridge uncovered samples (DEM gaps) so the chart stays continuous.
+    if np.isnan(terr).any():
+        good = np.isfinite(terr)
+        if good.any():
+            terr = np.interp(np.arange(len(terr)), np.flatnonzero(good),
+                             terr[good])
+        else:
+            terr = np.zeros_like(terr)
+    return [float(v) for v in terr]
+
+
+def parse_link_output(base: str, rx_threshold_dbm: Optional[float] = None,
+                      *, sdf_dir: Optional[str] = None, hd: bool = False,
+                      asc_file: Optional[str] = None,
+                      tx_latlon: Optional[tuple[float, float]] = None,
+                      rx_latlon: Optional[tuple[float, float]] = None) -> dict:
     """Parse a PPA run rooted at ``base`` (the engine ``-o`` value).
 
-    Returns a dict with the budget fields and the reconstructed profile.
-    Raises ``FileNotFoundError``/``RuntimeError`` if essential files are
-    missing (so the caller can surface an engine failure).
+    The ground profile is reconstructed by sampling terrain along the arc --
+    SDF tiles (``sdf_dir``) or the LIDAR ``.asc`` export (``asc_file``,
+    offline DEMNAS mode). Without either source the function raises so the
+    caller can surface why the chart cannot be drawn.
     """
     report_path = base + ".txt"
     if not os.path.exists(report_path):
@@ -91,53 +155,83 @@ def parse_link_output(base: str, rx_threshold_dbm: Optional[float] = None) -> di
     )
     if total_loss is None:
         total_loss = computed_loss
-    rx_power = _parse_float(report, r"Signal power level at .*?:\s*([-\d.]+)\s*dBm")
+    rx_power = _parse_float(report, r"Signal power level at .*?:\s*([-+\d.]+)\s*dBm")
 
     m = re.search(r"Propagation model:\s*(.+)", report)
     model = m.group(1).strip() if m else None
 
-    # Antenna AMSL used to repair the (degenerate) TX endpoint of the series.
-    tx_amsl = _parse_float(report, r"Transmitter site.*?Antenna height:.*?/ ([\d.]+) meters AMSL",)
-    rx_amsl = _parse_float(report, r"Receiver site.*?Antenna height:.*?/ ([\d.]+) meters AMSL",)
+    tx_amsl = _parse_float(
+        report, r"Transmitter site.*?Antenna height:.*?/\s*([\d.]+)\s*meters AMSL",
+        re.S)
+    rx_amsl = _parse_float(
+        report, r"Receiver site.*?Antenna height:.*?/\s*([\d.]+)\s*meters AMSL",
+        re.S)
 
-    # --- profile series --------------------------------------------------
-    dist_p, profile = _read_series(base + "_profile")
-    _, curvature = _read_series(base + "_curvature")
+    # --- geometry grid: curvature carries every sample --------------------
+    dist_c, curvature = _read_series(base + "_curvature")
     _, fresnel60 = _read_series(base + "_fresnel60")
-
-    n = min(len(dist_p), len(curvature))
+    n = min(len(dist_c), len(fresnel60)) if fresnel60 else len(dist_c)
     if n == 0:
         raise RuntimeError("Link profile series are empty; engine may have failed.")
-
-    terrain = [profile[i] - curvature[i] for i in range(n)]
+    dists = dist_c[:n]
     los = [-curvature[i] for i in range(n)]
-    fres_lower = []
-    fres_upper = []
-    clearance = []
+    f60 = fresnel60[:n]
+
+    # The engine emits the series TX->RX; our sampled ground arc runs RX->TX,
+    # so flip the engine arrays when they start at the TX antenna tip.
+    starts_at_tx = True
+    if tx_amsl is not None and rx_amsl is not None:
+        starts_at_tx = abs(los[0] - tx_amsl) < abs(los[0] - rx_amsl)
+    if starts_at_tx:
+        dists.reverse()
+        los.reverse()
+        f60 = list(reversed(f60))
+
+    # Anchor both ends exactly on the antenna tips now that orientation is
+    # RX -> TX, and close the gap the engine leaves before the final sample.
+    if rx_amsl is not None:
+        los[0] = rx_amsl
+    if tx_amsl is not None:
+        los[-1] = tx_amsl
+    if distance_km is not None and dists and dists[-1] < distance_km - 1e-6:
+        dists.append(distance_km)
+        los.append(tx_amsl if tx_amsl is not None else los[-1])
+        f60.append(f60[-1])
+        n += 1
+
+    # --- true ground profile ---------------------------------------------
+    if (sdf_dir or asc_file) and tx_latlon and rx_latlon:
+        terrain = _sample_terrain(sdf_dir, hd, rx_latlon, tx_latlon, dists,
+                                  asc_file=asc_file)
+    else:
+        raise RuntimeError(
+            "Terrain tidak tersedia untuk rekonstruksi profil link "
+            "(butuh SDF atau LIDAR .asc).")
+    if rx_amsl is not None and terrain:
+        terrain[0] = rx_amsl          # antenna tip at the RX end
+    if tx_amsl is not None and terrain:
+        terrain[-1] = tx_amsl         # antenna tip at the TX end
+
+    fres_lower, fres_upper, clearance = [], [], []
     obstructed = False
     worst_clearance = float("inf")
+    # Interior samples only: at the endpoints the antenna tips anchor the LOS,
+    # so clearance is zero there by definition and would mask the real minimum.
     for i in range(n):
-        f60 = abs(fresnel60[i]) if i < len(fresnel60) else 0.0
-        fl = los[i] - f60
-        fu = los[i] + f60
+        f60v = abs(f60[i])
+        fl = los[i] - f60v
+        fu = los[i] + f60v
         fres_lower.append(fl)
         fres_upper.append(fu)
-        # clearance above the Fresnel lower boundary
-        clr = terrain[i] - fl
+        # Path is blocked where the ground rises into the first Fresnel zone;
+        # positive clearance = the zone stays free of terrain.
+        clr = fl - terrain[i]
         clearance.append(clr)
-        if clr < 0:
-            obstructed = True
-        if clr < worst_clearance:
-            worst_clearance = clr
-
-    # Repair the TX endpoint (engine writes 0 for the last sample).
-    if tx_amsl is not None and n > 0:
-        terrain[-1] = tx_amsl
-        los[-1] = tx_amsl
-    if rx_amsl is not None and n > 0:
-        # RX endpoint already includes the antenna tip via the spike.
-        terrain[0] = rx_amsl
-        los[0] = rx_amsl
+        if 0 < i < n - 1:
+            if clr < 0:
+                obstructed = True
+            if clr < worst_clearance:
+                worst_clearance = clr
 
     fade_margin = None
     if rx_power is not None and rx_threshold_dbm is not None:
@@ -156,9 +250,9 @@ def parse_link_output(base: str, rx_threshold_dbm: Optional[float] = None) -> di
         "rx_threshold_dbm": rx_threshold_dbm,
         "fade_margin_db": fade_margin,
         "obstructed": obstructed,
-        "worst_clearance_m": (None if worst_clearance == float("inf") else worst_clearance),
-        "profile": {
-            "distance_km": dist_p[:n],
+        "worst_clearance_m": (None if worst_clearance == float("inf")
+                              else worst_clearance),        "profile": {
+            "distance_km": dists,
             "terrain_m": terrain,
             "los_m": los,
             "fresnel_lower_m": fres_lower,

@@ -19,6 +19,14 @@ def test_eirp_dbm():
     assert abs(params.eirp_dbm(100) - (10 * math.log10(100000) + 2.14)) < 1e-6
 
 
+def test_dbm_dbuv_roundtrip():
+    # 50 Ω system: dBµV = dBm + 107.  -100 dBm == +7 dBµV.
+    assert abs(params.dbm_to_dbuv(-100.0) - 7.0) < 1e-9
+    assert abs(params.dbuv_to_dbm(7.0) - (-100.0)) < 1e-9
+    for dbm in (-120, -100, -73.5, 0, 30):
+        assert abs(params.dbuv_to_dbm(params.dbm_to_dbuv(dbm)) - dbm) < 1e-9
+
+
 def test_build_argv_flags():
     p = {
         "tx_lat": 51.849, "tx_lon": -2.2299, "tx_height": 30,

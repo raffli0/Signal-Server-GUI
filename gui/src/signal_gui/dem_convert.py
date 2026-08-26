@@ -198,24 +198,120 @@ def _normalize_sdf_names(sdf_dir: str) -> None:
                       os.path.join(sdf_dir, f.replace(":", "_")))
 
 
+# --------------------------------------------------------------------------
+# Cache-integrity guards. A run killed mid-conversion used to leave truncated
+# .hgt/.sdf artifacts that were happily reused forever -- the classic cause of
+# "hasil kadang bagus kadang hancur / radial terpotong seperti pizza".
+# --------------------------------------------------------------------------
+
+def hgt_valid(path: str, tile_size: int = 1201) -> bool:
+    """True when ``path`` is a complete big-endian int16 SRTM height grid."""
+    try:
+        expected = 2 * tile_size * tile_size
+        return os.path.getsize(path) == expected
+    except OSError:
+        return False
+
+
+def sdf_valid(path: str) -> bool:
+    """True when an ``.sdf`` looks structurally complete.
+
+    SPLAT text SDF layout: four float header lines, then a rectangular block
+    of integer elevations (>= 2 rows x >= 2 columns). We require the data
+    block to be rectangular and non-degenerate; a file killed mid-write is
+    virtually always short or ragged, which this catches without knowing the
+    nominal grid size.
+    """
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as fh:
+            head = [fh.readline() for _ in range(4)]
+            if any(not ln.strip() for ln in head):
+                return False
+            for ln in head:
+                try:
+                    float(ln.split()[0])
+                except (ValueError, IndexError):
+                    return False
+            first = fh.readline()
+            if not first.strip():
+                return False
+            cols = len(first.split())
+            if cols < 2:
+                return False
+            rows = 1
+            for ln in fh:
+                if not ln.strip():
+                    continue
+                if len(ln.split()) != cols:
+                    return False
+                rows += 1
+                if rows > 10_000_000:      # runaway guard
+                    return False
+            return rows >= 2
+    except OSError:
+        return False
+
+
+def hgt_void_pct(path: str, low: int = -1000, high: int = 32000) -> float:
+    """Percentage of sentinel/void cells in a ``.hgt`` (big-endian int16)."""
+    import numpy as np
+    a = np.fromfile(path, dtype=">i2")
+    if a.size == 0:
+        return 100.0
+    return float(((a <= low) | (a >= high)).mean() * 100.0)
+
+
+def evaluate_void(pct: float) -> tuple[str, str]:
+    """Classify a void percentage against the shared ASC thresholds.
+
+    Returns ``(level, message)`` with level ``"ok" | "warn" | "reject"``.
+    """
+    if pct > MAX_ASC_NODATA_PCT:
+        return "reject", (
+            f"{pct:.1f}% terrain VOID/NODATA pada tile hasil konversi "
+            f"(batas {MAX_ASC_NODATA_PCT:.0f}%). Radial yang menembus zona "
+            f"void akan terpotong (pola 'pizza'). Tambahkan tile DEMNAS atau "
+            f"perkecil radius.")
+    if pct > WARN_ASC_NODATA_PCT:
+        return "warn", (
+            f"{pct:.1f}% terrain VOID/NODATA pada tile ({WARN_ASC_NODATA_PCT:.0f}%"
+            f"-{MAX_ASC_NODATA_PCT:.0f}%). Coverage di zona itu mungkin tidak "
+            f"akurat.")
+    return "ok", ""
+
+
 def convert_hgt_to_sdf(srtm2sdf_exe: str, hgt_path: str, sdf_dir: str) -> Optional[str]:
-    """Convert one ``.hgt`` to ``.sdf`` in ``sdf_dir`` (skips if present).
+    """Convert one ``.hgt`` into ``sdf_dir``, replacing any previous output.
 
     ``srtm2sdf`` names the output by its north/west bounds (e.g.
-    ``5_6_102_103.sdf``), not the ``.hgt`` basename, so we detect the file
-    that actually appears in ``sdf_dir``.
+    ``5_6_102_103.sdf``), not the ``.hgt`` basename. Conversion runs inside a
+    throw-away directory so a half-written result can never land in the cache:
+    the produced file is validated and then moved into place atomically. This
+    also heals caches poisoned by earlier interrupted runs (the tool skips
+    conversion when its output already exists).
     """
+    import tempfile
+
     os.makedirs(sdf_dir, exist_ok=True)
-    before = set(os.listdir(sdf_dir))
-    subprocess.run([srtm2sdf_exe, hgt_path], cwd=sdf_dir,
-                   check=True, capture_output=True)
-    _normalize_sdf_names(sdf_dir)
-    after = set(os.listdir(sdf_dir))
-    new_sdf = sorted(f for f in (after - before) if f.endswith(".sdf"))
-    if new_sdf:
-        return os.path.join(sdf_dir, new_sdf[0])
-    # Already converted (cache hit): nothing new appeared.
-    return None
+    with tempfile.TemporaryDirectory(prefix=".srtm2sdf_", dir=sdf_dir) as td:
+        proc = subprocess.run([srtm2sdf_exe, os.path.abspath(hgt_path)],
+                              cwd=td, capture_output=True)
+        _normalize_sdf_names(td)
+        produced = [f for f in os.listdir(td) if f.endswith(".sdf")]
+        if not produced:
+            raise DemResolveError(
+                f"srtm2sdf tidak menghasilkan .sdf untuk {os.path.basename(hgt_path)}"
+                f" (exit {proc.returncode})."
+            )
+        src = os.path.join(td, produced[0])
+        if not sdf_valid(src):
+            raise DemResolveError(
+                f".sdf hasil konversi tidak valid/terpotong untuk "
+                f"{os.path.basename(hgt_path)}."
+            )
+        dst = os.path.join(sdf_dir, produced[0])
+        os.replace(src, dst)
+    return dst
 
 
 def prepare_region(
@@ -439,7 +535,10 @@ def _demnas_vrt(folder: str, cache_dir: str) -> str:
         fh.write("\n".join(tifs))
     # Force WGS84 so downstream sampling (gdallocationinfo -wgs84) and any
     # per-tile reprojection are unambiguous; DEMNAS tiles are always EPSG:4326.
-    _run(["gdalbuildvrt", "-a_srs", "EPSG:4326", "-input_file_list", lst, vrt])
+    tmp_vrt = vrt + f".tmp{os.getpid()}"
+    _run(["gdalbuildvrt", "-a_srs", "EPSG:4326",
+          "-input_file_list", lst, tmp_vrt])
+    os.replace(tmp_vrt, vrt)
     return vrt
 
 
@@ -662,6 +761,7 @@ def demnas_folder_to_sdf(
     lat_lo: float, lat_hi: float, lon_lo: float, lon_hi: float,
     center_lat: Optional[float] = None,
     center_lon: Optional[float] = None,
+    warn_cb=None,
 ) -> str:
     """Convert a local DEMNAS folder (``.tif`` tiles) to SPLAT ``.sdf``.
 
@@ -671,6 +771,10 @@ def demnas_folder_to_sdf(
     accumulate in ``cache/dem/sdf/demnas`` (or ``demnas_hd``) keyed by the
     folder, so a region is processed only once. Coverage of the transmitter
     is verified against the mosaic before conversion.
+
+    Reused artifacts are integrity-checked first and regenerated when they are
+    truncated; every write lands atomically so an interrupted run can no
+    longer poison later runs. ``warn_cb(message)`` receives NODATA warnings.
     """
     if not srtm2sdf_exe or not os.path.exists(srtm2sdf_exe):
         raise DemResolveError(
@@ -699,12 +803,14 @@ def demnas_folder_to_sdf(
     ilon_hi = math.ceil(lon_hi)
 
     clipped = os.path.join(raw_dir, "clip.tif")
+    tmp_clip = clipped + f".tmp{os.getpid()}"
     _run([
         "gdalwarp", "-t_srs", "EPSG:4326",
         "-te", str(ilon_lo), str(ilat_lo), str(ilon_hi), str(ilat_hi),
         "-tr", str(res_deg), str(res_deg), "-r", "bilinear", "-overwrite",
-        vrt, clipped,
+        vrt, tmp_clip,
     ])
+    os.replace(tmp_clip, clipped)
 
     # Split into 1-degree SRTM .hgt tiles, one per cell, named by the
     # south-west corner (standard SRTM convention, e.g. S07E107.hgt).
@@ -715,15 +821,30 @@ def demnas_folder_to_sdf(
             ew = "W" if ilon < 0 else "E"
             name = f"{ns}{abs(ilat):02d}{ew}{abs(ilon):03d}.hgt"
             out_hgt = os.path.join(raw_dir, name)
-            if os.path.exists(out_hgt):
+            if os.path.exists(out_hgt) and hgt_valid(out_hgt, tile_size):
                 hgt_files.append(out_hgt)
                 continue
-            _run([
-                "gdal_translate", "-of", "SRTMHGT",
-                "-outsize", str(tile_size), str(tile_size),
-                "-projwin", str(ilon), str(ilat + 1), str(ilon + 1), str(ilat),
-                clipped, out_hgt,
-            ])
+            # (Re)build inside a temp dir with the exact SRTM name the driver
+            # requires, then move into place so a kill mid-translate cannot
+            # cache a truncated tile.
+            import tempfile
+            os.makedirs(raw_dir, exist_ok=True)
+            with tempfile.TemporaryDirectory(prefix=".hgt_",
+                                             dir=raw_dir) as td:
+                tmp_hgt = os.path.join(td, name)
+                _run([
+                    "gdal_translate", "-of", "SRTMHGT",
+                    "-outsize", str(tile_size), str(tile_size),
+                    "-projwin", str(ilon), str(ilat + 1), str(ilon + 1),
+                    str(ilat), clipped, tmp_hgt,
+                ])
+                if not os.path.exists(tmp_hgt):
+                    continue
+                if not hgt_valid(tmp_hgt, tile_size):
+                    raise DemResolveError(
+                        f"Tile .hgt {name} terpotong/invalid setelah "
+                        f"konversi (ukuran tak sesuai grid {tile_size}).")
+                os.replace(tmp_hgt, out_hgt)
             if os.path.exists(out_hgt):
                 hgt_files.append(out_hgt)
     if not hgt_files:
@@ -731,8 +852,18 @@ def demnas_folder_to_sdf(
             "Gagal mengonversi DEMNAS menjadi .hgt (periksa CRS/proyeksi "
             "file)."
         )
+    worst_void = 0.0
+    worst_tile = ""
     for hgt in sorted(hgt_files):
+        pct = hgt_void_pct(hgt)
+        if pct > worst_void:
+            worst_void, worst_tile = pct, os.path.basename(hgt)
         convert_hgt_to_sdf(srtm2sdf_exe, hgt, sdf_dir)
+    level, msg = evaluate_void(worst_void)
+    if level == "reject":
+        raise DemResolveError(f"{msg} (tile terparah: {worst_tile})")
+    if level == "warn" and warn_cb:
+        warn_cb(f"{msg} (tile terparah: {worst_tile})")
     return sdf_dir
 
 
@@ -886,7 +1017,8 @@ def demnas_folder_to_asc(
         )
 
     asc = os.path.join(out_dir, "demnas.asc")
-    with open(asc, "w") as fh:
+    tmp_asc = asc + f".tmp{os.getpid()}"
+    with open(tmp_asc, "w") as fh:
         fh.write(f"ncols        {width}\n")
         fh.write(f"nrows        {height}\n")
         fh.write(f"xllcorner    {xll:.10f}\n")
@@ -894,6 +1026,7 @@ def demnas_folder_to_asc(
         fh.write(f"cellsize     {cellsize:.10f}\n")
         fh.write(f"NODATA_value {NODATA}\n")
         np.savetxt(fh, int_arr, fmt="%d")
+    os.replace(tmp_asc, asc)
 
     import hashlib
     h = hashlib.sha256()
