@@ -9,13 +9,15 @@ from signal_gui import dem_convert as dc
 
 
 GOOD_SDF = (
-    "252.500000\n"
-    "-7.000000\n"
-    "252.400000\n"
-    "-6.900000\n"
-    "600 625 650\n"
-    "615 640 665\n"
-)
+    "252.0016666667\n"
+    "-7.0000000000\n"
+    "252.0000000000\n"
+    "-6.9983333333\n"
+    "600\n"
+    "625\n"
+    "650\n"
+    "615\n"
+)   # 4-line header + 2x2 grid, one value per line (real srtm2sdf layout)
 
 
 def test_sdf_valid_accepts_complete(tmp_path):
@@ -34,6 +36,18 @@ def test_sdf_valid_rejects_ragged_or_short(tmp_path):
     empty = tmp_path / "empty.sdf"
     empty.write_text("")
     assert not dc.sdf_valid(str(empty))
+    truncated = tmp_path / "trunc.sdf"                      # short by one line
+    truncated.write_text("\n".join(GOOD_SDF.splitlines()[:-1]) + "\n")
+    assert not dc.sdf_valid(str(truncated))
+
+
+def test_sdf_valid_accepts_real_engine_cache():
+    import glob, os
+    for f in sorted(glob.glob(os.path.join(
+            os.path.dirname(__file__), "..", "..", "..",
+            ".dem_cache", "sdf", "*.sdf")))[:3]:
+        if os.path.exists(f):
+            assert dc.sdf_valid(f), f
 
 
 def test_hgt_valid_size_check(tmp_path):

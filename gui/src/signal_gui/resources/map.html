@@ -582,7 +582,8 @@
       covCtx.putImageData(out, 0, 0);
       var url = covCanvas.toDataURL();
       if (!overlay) {
-        overlay = L.imageOverlay(url, covBounds, { opacity: 1, interactive: false }).addTo(map);
+        var ov0 = document.getElementById('opacitySlider').value / 100.0;
+        overlay = L.imageOverlay(url, covBounds, { opacity: ov0, interactive: false }).addTo(map);
       } else {
         overlay.setUrl(url);
       }
@@ -619,7 +620,7 @@
           srcPixels = covCtx.getImageData(0, 0, img.width, img.height).data;
         } catch (e) {
           // Canvas read failed (e.g. tainted): fall back to a plain overlay.
-          overlay = L.imageOverlay(dataUri, bounds, { opacity: 1, interactive: false }).addTo(map);
+          overlay = L.imageOverlay(dataUri, bounds, { opacity: ov0, interactive: false }).addTo(map);
           _onZoomOpacity();
           return;
         }
@@ -630,7 +631,7 @@
         renderOverlay();
       };
       img.onerror = function () {
-        overlay = L.imageOverlay(dataUri, bounds, { opacity: 1, interactive: false }).addTo(map);
+        overlay = L.imageOverlay(dataUri, bounds, { opacity: ov0, interactive: false }).addTo(map);
         _onZoomOpacity();
       };
       img.src = dataUri;

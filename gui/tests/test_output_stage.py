@@ -94,7 +94,13 @@ def test_tx_center_hole_is_filled(tmp_path):
     assert (img[:, -1, 3] == 0).all()
 
     ring = (dist > 2) & (dist <= 8)
-    assert (img[ring][..., :3] == green).all()
+    ring_px = img[ring]
+    # Shade-modulated green: hue preserved (r=b=0), brightness varies with the
+    # surrounding hillshade instead of one flat fill.
+    assert (ring_px[..., 0] == 0).all()
+    assert (ring_px[..., 2] == 0).all()
+    assert (ring_px[..., 1] > 150).all()
+    assert int(ring_px[..., 1].max()) - int(ring_px[..., 1].min()) >= 10
     assert (img[ring][..., 3] == 255).all()
 
     assert not (img[hole][..., 3] == 0).any(), "Tx center must not stay transparent"
@@ -103,13 +109,13 @@ def test_tx_center_hole_is_filled(tmp_path):
 def test_enclosed_hole_uses_color_file(tmp_path):
     w, h = 15, 15
     blue = (0, 148, 255)
-    white = (30, 30, 30)
+
     magenta = (142, 63, 255)
     arr = np.full((h, w, 3), 200, dtype=np.uint8)
     yy, xx = np.mgrid[0:h, 0:w]
     dist = np.sqrt((xx - 7) ** 2 + (yy - 7) ** 2)
     arr[dist <= 6] = blue
-    arr[dist <= 1] = white
+    arr[dist <= 1] = (255, 255, 255)               # saturated white core
     ppm = tmp_path / "pal.ppm"
     _write_ppm(str(ppm), arr)
     scf = tmp_path / "custom.scf"
@@ -118,9 +124,40 @@ def test_enclosed_hole_uses_color_file(tmp_path):
     png_path = output_stage.ppm_to_png(str(ppm), color_file=str(scf))
     img = np.asarray(Image.open(png_path).convert("RGBA"))
 
-    assert (img[7, 7][..., :3] == magenta).all()
-    assert img[7, 7][..., 3] == 255
+    assert (img[7, 7][..., :3] == magenta).all()   # pure-white shade -> exact band
+    assert img[7, 7][..., 3] == 165   # semi-transparent RM-style core
     assert (img[0, 0][..., 3] == 0).all()
+
+
+def test_core_recolour_keeps_relief_texture(tmp_path):
+    """Two grey shades inside the saturated core must map to two DIFFERENT
+    modulated colours (Radio-Mobile-style rough dots), not one flat fill."""
+    w, h = 21, 21
+    green = (0, 255, 0)
+    arr = np.full((h, w, 3), 200, dtype=np.uint8)          # mid relief
+    yy, xx = np.mgrid[0:h, 0:w]
+    dist = np.sqrt((xx - 10) ** 2 + (yy - 10) ** 2)
+    arr[dist <= 8] = green                                  # coverage band
+    arr[(dist <= 6) & (dist > 2)] = 150                     # inner relief
+    arr[dist <= 2] = 255                                    # saturated tip
+    ppm = tmp_path / "tex.ppm"
+    _write_ppm(str(ppm), arr)
+
+    png_path = output_stage.ppm_to_png(str(ppm))            # bundled red-top dcf
+    img = np.asarray(Image.open(png_path).convert("RGBA"))
+
+    c150 = tuple(int(v) for v in img[10, 5][:3])   # dist=5 -> inner grey 150
+    c_tip = tuple(int(v) for v in img[10, 10][:3]) # dist=0 -> white 255
+    green_band = tuple(int(v) for v in img[10, 3][:3])  # dist=7 -> still green
+
+    assert c150 != c_tip                       # relief texture preserved
+    k150 = 0.35 + 0.65 * (150 / 255)
+    assert abs(c150[0] - 255 * k150) <= 1      # modulated red channel
+    assert c150[1] == 0 and c150[2] == 0       # stays in the red band family
+    assert c_tip == (255, 0, 0)                # saturated shade -> exact band
+    # Green band is shade-modulated (nearest grey 200 -> ~213), not flat.
+    assert green_band[0] == 0 and green_band[2] == 0
+    assert 180 <= green_band[1] <= 230
 
 
 def test_parse_strongest_color_fallback():

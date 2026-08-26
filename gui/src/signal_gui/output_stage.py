@@ -126,13 +126,43 @@ def ppm_to_png(ppm_path: str, png_path: Optional[str] = None,
     strongest = parse_strongest_color(color_file)
     enclosed_grey = grey & ~background
     lum = 0.299 * strongest[0] + 0.587 * strongest[1] + 0.114 * strongest[2]
+
+    # --- Terrain-shade field (Radio Mobile parity) -------------------------
+    # The engine paints the whole backdrop as grey hillshade; covered pixels
+    # replace it with flat band colours. Recover the shade at EVERY pixel by
+    # inpainting from the nearest grey sample, then multiply each band colour
+    # by it -- reproducing RM's rough, terrain-textured dots in all bands.
+    raw_shade = np.where(grey, rgb[..., 0], np.nan).astype(np.float64) / 255.0
+    if np.isnan(raw_shade).any():
+        idx = ndimage.distance_transform_edt(
+            np.isnan(raw_shade), return_distances=False, return_indices=True)
+        raw_shade = raw_shade[tuple(idx)]
+    raw_shade = np.clip(raw_shade, 0.0, 1.0)
+
     if lum < 200:
-        # Recolour the saturated Tx core (drawn grey/white by the engine) to the
-        # strongest palette band (red), so it stays covered instead of a white hole.
-        rgb[enclosed_grey] = strongest
+        # Saturated Tx core (engine draws it pure white/grey): recolour to the
+        # strongest band, shade-modulated, and render SEMI-TRANSPARENT so the
+        # basemap texture bleeds through (RM-style rough dotted core).
+        CORE_ALPHA = 165
+        k_core = 0.35 + 0.65 * raw_shade
+        for ch in range(3):
+            chan = strongest[ch] * k_core
+            rgb[..., ch][enclosed_grey] = chan[enclosed_grey].astype(np.uint8)
+        core_alpha = np.where(enclosed_grey, CORE_ALPHA, 255)
+
+    # Shade-modulate every other covered pixel (all palette bands).
+    mult = 0.60 + 0.40 * raw_shade
+    covered = ~background
+    if lum < 200:
+        covered &= ~enclosed_grey          # core already handled above
+    for ch in range(3):
+        chan = rgb[..., ch].astype(np.float64) * mult
+        rgb[..., ch][covered] = chan[covered].astype(np.uint8)
 
     alpha = np.where(background, 0, 255).astype(np.uint8)
-    rgba = np.dstack((rgb.astype(np.uint8), alpha))
+    if lum < 200:
+        alpha = np.minimum(alpha, core_alpha).astype(np.uint8)
+    rgba = np.dstack((rgb.astype(np.uint8), alpha)).astype(np.uint8)
     Image.fromarray(rgba, "RGBA").save(png_path)
     return png_path
 
@@ -303,3 +333,44 @@ def stage_output(ppm_path: str, stdout_text: str, title: str = "Coverage",
         with open(kml_path, "w", encoding="utf-8") as fh:
             fh.write(build_kml(png_name, bbox, title))
     return {"ppm": ppm_path, "png": png_path, "kml": kml_path, "bbox": bbox}
+
+
+def analyze_coverage_shape(png_path: str, bbox,
+                           tx_lat: float, tx_lon: float) -> dict:
+    """Measure how "circle-like" a coverage overlay is around the Tx.
+
+    Fake-terrain runs (engine falling back to sea-level/flat ground) produce a
+    near-perfect circle, while real ITM over relief produces a ragged edge.
+    Returns ``{"fill_az_pct", "edge_mean_px", "edge_rel_std"}`` where
+    ``edge_rel_std`` is the coefficient of variation of the outermost filled
+    radius over all azimuths that contain any coverage (0 % = perfect circle).
+    """
+    img = np.asarray(Image.open(png_path).convert("RGBA"))
+    h, w = img.shape[:2]
+    filled = img[..., 3] > 0
+    n, e, s, wst = (float(v) for v in bbox)
+    cx = (float(tx_lon) - wst) / (e - wst) * w
+    cy = (n - float(tx_lat)) / (n - s) * h
+    rmax = min(cx, cy, w - cx, h - cy)
+
+    angles = np.linspace(0.0, 2.0 * np.pi, 720, endpoint=False)
+    radii = np.linspace(2.0, rmax * 0.999, 400)
+    edge = np.zeros(angles.size)
+    for i, a in enumerate(angles):
+        xs = (cx + radii * np.cos(a)).astype(int)
+        ys = (cy + radii * np.sin(a)).astype(int)
+        ok = (xs >= 0) & (xs < w) & (ys >= 0) & (ys < h)
+        f = np.zeros(radii.size, dtype=bool)
+        f[ok] = filled[ys[ok], xs[ok]]
+        if f.any():
+            edge[i] = radii[np.max(np.flatnonzero(f))]
+
+    hit = edge > 0
+    o = edge[hit]
+    mean = float(o.mean()) if o.size else 0.0
+    rel = float(o.std() / mean) if mean > 0 else 1.0
+    return {
+        "fill_az_pct": float(hit.mean() * 100.0),
+        "edge_mean_px": mean,
+        "edge_rel_std": rel,
+    }

@@ -20,9 +20,11 @@ import json
 import hashlib
 import shutil
 import subprocess
+import tempfile
 import urllib.request
 import urllib.error
 import zipfile
+from contextlib import contextmanager
 from typing import Optional
 
 import numpy as np
@@ -213,43 +215,35 @@ def hgt_valid(path: str, tile_size: int = 1201) -> bool:
         return False
 
 
-def sdf_valid(path: str) -> bool:
+def sdf_valid(path: str, ppd: int = 1200) -> bool:
     """True when an ``.sdf`` looks structurally complete.
 
-    SPLAT text SDF layout: four float header lines, then a rectangular block
-    of integer elevations (>= 2 rows x >= 2 columns). We require the data
-    block to be rectangular and non-degenerate; a file killed mid-write is
-    virtually always short or ragged, which this catches without knowing the
-    nominal grid size.
+    Real srtm2sdf layout (verified against working caches): four single-value
+    header lines -- ``max_west``, ``min_north``, ``min_west``, ``max_north``
+    (degrees) -- followed by EXACTLY one integer per line,
+    ``(dlat*ppd) * (dlon*ppd)`` values total. A file killed mid-write is
+    virtually always short, which the exact-count check catches.
     """
     try:
         with open(path, "r", encoding="utf-8", errors="replace") as fh:
-            head = [fh.readline() for _ in range(4)]
-            if any(not ln.strip() for ln in head):
-                return False
-            for ln in head:
-                try:
-                    float(ln.split()[0])
-                except (ValueError, IndexError):
-                    return False
-            first = fh.readline()
-            if not first.strip():
-                return False
-            cols = len(first.split())
-            if cols < 2:
-                return False
-            rows = 1
-            for ln in fh:
-                if not ln.strip():
-                    continue
-                if len(ln.split()) != cols:
-                    return False
-                rows += 1
-                if rows > 10_000_000:      # runaway guard
-                    return False
-            return rows >= 2
+            lines = [ln.strip() for ln in fh if ln.strip()]
     except OSError:
         return False
+    if len(lines) < 6:
+        return False
+    try:
+        max_w, min_lat, min_w, max_lat = (float(lines[i]) for i in range(4))
+    except ValueError:
+        return False
+    data = lines[4:]
+    if any(len(ln.split()) != 1 for ln in data):
+        return False
+    try:
+        expected = (round((max_lat - min_lat) * ppd)
+                    * round((max_w - min_w) * ppd))
+    except (TypeError, ValueError):
+        return False
+    return expected > 0 and len(data) == expected
 
 
 def hgt_void_pct(path: str, low: int = -1000, high: int = 32000) -> float:
@@ -304,7 +298,12 @@ def convert_hgt_to_sdf(srtm2sdf_exe: str, hgt_path: str, sdf_dir: str) -> Option
                 f" (exit {proc.returncode})."
             )
         src = os.path.join(td, produced[0])
-        if not sdf_valid(src):
+        try:
+            side = int(round((os.path.getsize(hgt_path) / 2) ** 0.5))
+            ppd = max(1, side - 1)
+        except OSError:
+            ppd = 1200
+        if not sdf_valid(src, ppd=ppd):
             raise DemResolveError(
                 f".sdf hasil konversi tidak valid/terpotong untuk "
                 f"{os.path.basename(hgt_path)}."
@@ -431,6 +430,24 @@ def ensure_dem_for_area(
 # Offline DEM source: local DEMNAS GeoTIFF
 # ---------------------------------------------------------------------------
 
+@contextmanager
+def _atomic_gdal_output(dst_path: str):
+    """Yield a temp path that keeps ``dst_path``'s real name and extension.
+
+    GDAL tools pick their driver from the output filename's extension, so a
+    naive ``clip.tif.tmp<pid>`` makes gdalwarp fail with "Cannot guess driver".
+    Writing into a sibling temp directory (original basename intact) and then
+    moving atomically keeps the cache poison-proof AND GDAL-happy.
+    """
+    dst_path = os.path.abspath(dst_path)
+    tmp_dir = tempfile.mkdtemp(prefix=".gdaltmp_", dir=os.path.dirname(dst_path))
+    try:
+        yield os.path.join(tmp_dir, os.path.basename(dst_path))
+        os.replace(os.path.join(tmp_dir, os.path.basename(dst_path)), dst_path)
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
 def _run(cmd: list[str]) -> None:
     """Run a GDAL subprocess, raising DemResolveError with stderr on failure."""
     try:
@@ -535,10 +552,9 @@ def _demnas_vrt(folder: str, cache_dir: str) -> str:
         fh.write("\n".join(tifs))
     # Force WGS84 so downstream sampling (gdallocationinfo -wgs84) and any
     # per-tile reprojection are unambiguous; DEMNAS tiles are always EPSG:4326.
-    tmp_vrt = vrt + f".tmp{os.getpid()}"
-    _run(["gdalbuildvrt", "-a_srs", "EPSG:4326",
-          "-input_file_list", lst, tmp_vrt])
-    os.replace(tmp_vrt, vrt)
+    with _atomic_gdal_output(vrt) as tmp_vrt:
+        _run(["gdalbuildvrt", "-a_srs", "EPSG:4326",
+              "-input_file_list", lst, tmp_vrt])
     return vrt
 
 
@@ -803,14 +819,13 @@ def demnas_folder_to_sdf(
     ilon_hi = math.ceil(lon_hi)
 
     clipped = os.path.join(raw_dir, "clip.tif")
-    tmp_clip = clipped + f".tmp{os.getpid()}"
-    _run([
-        "gdalwarp", "-t_srs", "EPSG:4326",
-        "-te", str(ilon_lo), str(ilat_lo), str(ilon_hi), str(ilat_hi),
-        "-tr", str(res_deg), str(res_deg), "-r", "bilinear", "-overwrite",
-        vrt, tmp_clip,
-    ])
-    os.replace(tmp_clip, clipped)
+    with _atomic_gdal_output(clipped) as tmp_clip:
+        _run([
+            "gdalwarp", "-t_srs", "EPSG:4326",
+            "-te", str(ilon_lo), str(ilat_lo), str(ilon_hi), str(ilat_hi),
+            "-tr", str(res_deg), str(res_deg), "-r", "bilinear", "-overwrite",
+            vrt, tmp_clip,
+        ])
 
     # Split into 1-degree SRTM .hgt tiles, one per cell, named by the
     # south-west corner (standard SRTM convention, e.g. S07E107.hgt).
@@ -970,12 +985,13 @@ def demnas_folder_to_asc(
 
     out_dir = _cache_sub(cache_dir, "lidar")
     clipped = os.path.join(out_dir, "clip.tif")
-    _run([
-        "gdalwarp", "-t_srs", "EPSG:4326",
-        "-te", str(lon_lo), str(lat_lo), str(lon_hi), str(lat_hi),
-        "-tr", str(cellsize_deg), str(cellsize_deg), "-r", "bilinear", "-overwrite",
-        vrt, clipped,
-    ])
+    with _atomic_gdal_output(clipped) as tmp_clip:
+        _run([
+            "gdalwarp", "-t_srs", "EPSG:4326",
+            "-te", str(lon_lo), str(lat_lo), str(lon_hi), str(lat_hi),
+            "-tr", str(cellsize_deg), str(cellsize_deg), "-r", "bilinear",
+            "-overwrite", vrt, tmp_clip,
+        ])
 
     ds = gdal.Open(clipped)
     if ds is None:
@@ -1017,16 +1033,15 @@ def demnas_folder_to_asc(
         )
 
     asc = os.path.join(out_dir, "demnas.asc")
-    tmp_asc = asc + f".tmp{os.getpid()}"
-    with open(tmp_asc, "w") as fh:
-        fh.write(f"ncols        {width}\n")
-        fh.write(f"nrows        {height}\n")
-        fh.write(f"xllcorner    {xll:.10f}\n")
-        fh.write(f"yllcorner    {yll:.10f}\n")
-        fh.write(f"cellsize     {cellsize:.10f}\n")
-        fh.write(f"NODATA_value {NODATA}\n")
-        np.savetxt(fh, int_arr, fmt="%d")
-    os.replace(tmp_asc, asc)
+    with _atomic_gdal_output(asc) as tmp_asc:
+        with open(tmp_asc, "w") as fh:
+            fh.write(f"ncols        {width}\n")
+            fh.write(f"nrows        {height}\n")
+            fh.write(f"xllcorner    {xll:.10f}\n")
+            fh.write(f"yllcorner    {yll:.10f}\n")
+            fh.write(f"cellsize     {cellsize:.10f}\n")
+            fh.write(f"NODATA_value {NODATA}\n")
+            np.savetxt(fh, int_arr, fmt="%d")
 
     import hashlib
     h = hashlib.sha256()

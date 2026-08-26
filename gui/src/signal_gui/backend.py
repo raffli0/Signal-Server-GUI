@@ -489,6 +489,28 @@ class RunWorker(QThread):
                     # Manifest should reflect the configuration that actually
                     # produced this output (may differ after a segments retry).
                     self._write_manifest(p)
+                    # Fake-terrain smoke detector: a near-perfect circle over
+                    # 100% of azimuths is the signature of the engine computing
+                    # on flat/sea-level ground (real ITM over relief is ragged).
+                    try:
+                        if p.get("tx_lat") is not None and \
+                                p.get("tx_lon") is not None:
+                            shape = output_stage.analyze_coverage_shape(
+                                result["png"], result["bbox"],
+                                float(p["tx_lat"]), float(p["tx_lon"]))
+                            if shape["fill_az_pct"] > 90.0 and \
+                                    shape["edge_rel_std"] < 0.01:
+                                warn = (
+                                    "PERINGATAN bentuk: cakupan tampak "
+                                    "LINGKARAN HALUS "
+                                    f"(raggedness {shape['edge_rel_std']*100:.2f}%, "
+                                    "terrain palsu/fallback?). Simpan folder "
+                                    f"{os.path.basename(os.path.dirname(self.output_basename))}"
+                                    " dan laporkan.")
+                                self.progress.emit(warn)
+                                self.output_line.emit(warn)
+                    except Exception:  # noqa: BLE001 - diagnostics only
+                        pass
                     break
                 if attempt < attempts:
                     old_seg = p.get("plot_segments")
