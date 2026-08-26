@@ -27,6 +27,7 @@ int OrMask(double lat, double lon, int value);
 int GetMask(double lat, double lon);
 void PutSignal(double lat, double lon, unsigned char signal);
 unsigned char GetSignal(double lat, double lon);
+void FillSignalHoles(unsigned char strongest_is_max);
 double GetElevation(struct site location);
 int AddElevation(double lat, double lon, double height, int size);
 double Distance(struct site site1, struct site site2);

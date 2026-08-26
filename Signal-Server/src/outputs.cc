@@ -21,6 +21,59 @@
 #include "models/sui.hh"
 #include "image.hh"
 
+/* Topographic illumination (hillshade) at a DEM cell, returned 0-255.
+
+   This is the correct multiply-blend partner for coverage colours: it is a
+   LIGHTING value, NOT an elevation tint. Flat ground sits around 195 (never
+   black), slopes facing the sun are brighter, slopes facing away darker.
+   Sea / void cells return 255 so coverage over water keeps the full palette
+   brightness. */
+static unsigned TerrainHillshade(int indx, int x0, int y0)
+{
+	static const double SUN_AZIMUTH = 315.0 * DEG2RAD;	/* light from NW */
+	static const double SUN_ALTITUDE = 45.0 * DEG2RAD;
+	static const double AMBIENT = 0.25;
+
+	short z = dem[indx].data[x0][y0];
+	int xl = (x0 > 0) ? x0 - 1 : x0, xr = (x0 < mpi) ? x0 + 1 : x0;
+	int yl = (y0 > 0) ? y0 - 1 : y0, yr = (y0 < mpi) ? y0 + 1 : y0;
+	short zl = dem[indx].data[xl][y0], zr = dem[indx].data[xr][y0];
+	short zd = dem[indx].data[x0][yl], zu = dem[indx].data[x0][yr];
+
+	/* Sea or void neighbourhood: neutral -- keep full brightness. */
+	if (z == 0 && zl == 0 && zr == 0 && zd == 0 && zu == 0)
+		return 255;
+
+	/* NODATA sentinels (e.g. -9999 in .asc sources) must not become
+	   cliffs: substitute the centre value for them. */
+	if (zl < -9000 || zl > 15000) zl = z;
+	if (zr < -9000 || zr > 15000) zr = z;
+	if (zd < -9000 || zd > 15000) zd = z;
+	if (zu < -9000 || zu > 15000) zu = z;
+
+	/* Cell size in the SAME unit as the stored elevations
+	   (SDF terrain is stored in feet, LIDAR .asc in metres). */
+	double cell = (111320.0 / ppd) / (lidar ? 1.0 : 0.3048);
+
+	double dzn = (zr - zl) / ((xr - xl) * cell);	/* dz toward north */
+	double dze = (zu - zd) / ((yr - yl) * cell);	/* dz toward east  */
+
+	/* Surface normal (east, north, up) dotted with the sun vector. */
+	double nx = -dze, ny = -dzn, nz = 1.0;
+	double len = sqrt(nx * nx + ny * ny + nz * nz);
+	double lx = sin(SUN_AZIMUTH) * cos(SUN_ALTITUDE);
+	double ly = cos(SUN_AZIMUTH) * cos(SUN_ALTITUDE);
+	double lz = sin(SUN_ALTITUDE);
+	double lit = (nx * lx + ny * ly + nz * lz) / len;
+
+	if (lit < 0.0)
+		lit = 0.0;
+	if (lit > 1.0)
+		lit = 1.0;
+
+	return (unsigned)(255.0 * (AMBIENT + (1.0 - AMBIENT) * lit));
+}
+
 void DoPathLoss(char *filename, unsigned char geo, unsigned char kml,
 		unsigned char ngs, struct site *xmtr, unsigned char txsites)
 {
@@ -148,6 +201,17 @@ void DoPathLoss(char *filename, unsigned char geo, unsigned char kml,
 					}
 				}
 
+				/* Terrain shade: HILLSHADE (topographic
+				   illumination, 0-255) at this pixel,
+				   multiply-blended into coverage colours
+				   Radio-Mobile-style. Flat ground ~195, sea
+				   neutral 255 -- never elevation-black. */
+				terrain = TerrainHillshade(indx, x0, y0);
+
+				/* NOTE: in path-loss maps the strongest signal
+				   (loss <= level[0]) already matches band 0, so
+				   no saturated-core guard is needed here; the
+				   weak end (match == 255) stays background. */
 				if (match < region.levels) {
 					red = region.color[match][0];
 					green = region.color[match][1];
@@ -207,13 +271,16 @@ void DoPathLoss(char *filename, unsigned char geo, unsigned char kml,
 					}
 
 					else {
-						/* Plot path loss in color */
+						/* Plot path loss in color,
+						   multiply-blended with the terrain
+						   shade (cast-safe: <= 255*255). */
 
 						if (red != 0 || green != 0
 						    || blue != 0)
-							ADD_PIXEL(&ctx, 
-								red, green,
-								blue);
+							ADD_PIXEL(&ctx,
+								(red * terrain) / 255,
+								(green * terrain) / 255,
+								(blue * terrain) / 255);
 
 						else {	/* terrain / sea-level */
 
@@ -386,7 +453,24 @@ int DoSigStr(char *filename, unsigned char geo, unsigned char kml,
 					}
 				}
 
-				if (match < region.levels) {
+				/* Terrain shade: HILLSHADE (topographic
+				   illumination, 0-255) at this pixel,
+				   multiply-blended into coverage colours
+				   Radio-Mobile-style. Flat ground ~195, sea
+				   neutral 255 -- never elevation-black. */
+				terrain = TerrainHillshade(indx, x0, y0);
+
+				if (region.levels > 0
+				    && signal > region.level[0]) {
+					/* Saturated Tx core: stronger than the
+					   top palette band -> force the
+					   STRONGEST palette colour (still
+					   shade-modulated below), never bare
+					   greyscale/white. */
+					red = region.color[0][0];
+					green = region.color[0][1];
+					blue = region.color[0][2];
+				} else if (match < region.levels) {
 					red = region.color[match][0];
 					green = region.color[match][1];
 					blue = region.color[match][2];
@@ -443,13 +527,16 @@ int DoSigStr(char *filename, unsigned char geo, unsigned char kml,
 					}
 
 					else {
-						/* Plot field strength regions in color */
+						/* Plot field strength regions in color,
+						   multiply-blended with the terrain
+						   shade (cast-safe: <= 255*255). */
 
 						if (red != 0 || green != 0
 						    || blue != 0)
-							ADD_PIXEL(&ctx, 
-								red, green,
-								blue);
+							ADD_PIXEL(&ctx,
+								(red * terrain) / 255,
+								(green * terrain) / 255,
+								(blue * terrain) / 255);
 
 						else {	/* terrain / sea-level */
 
@@ -629,7 +716,24 @@ void DoRxdPwr(char *filename, unsigned char geo, unsigned char kml,
 					}
 				}
 
-				if (match < region.levels) {
+				/* Terrain shade: HILLSHADE (topographic
+				   illumination, 0-255) at this pixel,
+				   multiply-blended into coverage colours
+				   Radio-Mobile-style. Flat ground ~195, sea
+				   neutral 255 -- never elevation-black. */
+				terrain = TerrainHillshade(indx, x0, y0);
+
+				if (region.levels > 0
+				    && dBm > region.level[0]) {
+					/* Saturated Tx core: stronger than the
+					   top palette band -> force the
+					   STRONGEST palette colour (still
+					   shade-modulated below), never bare
+					   greyscale/white. */
+					red = region.color[0][0];
+					green = region.color[0][1];
+					blue = region.color[0][2];
+				} else if (match < region.levels) {
 					red = region.color[match][0];
 					green = region.color[match][1];
 					blue = region.color[match][2];
@@ -684,13 +788,16 @@ void DoRxdPwr(char *filename, unsigned char geo, unsigned char kml,
 					}
 
 					else {
-						/* Plot signal power level regions in color */
+						/* Plot signal power level regions in color,
+						   multiply-blended with the terrain
+						   shade (cast-safe: <= 255*255). */
 
 						if (red != 0 || green != 0
 						    || blue != 0)
 							ADD_PIXEL(&ctx,
-								red, green,
-								blue);
+								(red * terrain) / 255,
+								(green * terrain) / 255,
+								(blue * terrain) / 255);
 
 						else {	/* terrain / sea-level */
 

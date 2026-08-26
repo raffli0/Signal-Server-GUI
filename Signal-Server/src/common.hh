@@ -101,6 +101,8 @@ extern int mpi;
 extern int max_elevation;
 extern int min_elevation;
 extern int contour_threshold;
+extern int lidar;		/* 1 = DEM source is LIDAR (.asc, metres);
+				   0 = SDF terrain (feet) */
 extern int loops;
 extern int jgets;
 extern int width;

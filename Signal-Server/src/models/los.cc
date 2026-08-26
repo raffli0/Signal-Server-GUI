@@ -329,11 +329,51 @@ static double ked(double freq, double rxh, double dkm)
 
 	}
 
-	if (rxobaoi >= 0) {
-		return (rxobaoi / (300 / freq))+3;	// Diffraction angle divided by wavelength (m)
-	} else {
-		return 1;
-	}
+  if (rxobaoi >= 0) {
+    return (rxobaoi / (300 / freq))+3;	// Diffraction angle divided by wavelength (m)
+  } else {
+    return 1;
+  }
+}
+
+/*
+ * Terrain-rolling micro-attenuation (dB) for clear line-of-sight paths.
+ * Measures how much the actual relief deviates from the straight Tx->Rx
+ * line (detrended std-dev, in metres) and converts it to a small loss so
+ * the coverage edge follows the topography instead of being a rigid
+ * free-space circle. Over flat ground the deviation is ~0, so the circle
+ * is preserved; over rolling/hilly ground the edge pulls in with the
+ * terrain. Earth-bulge / Fresnel-zone clearance is implicit in the
+ * deviation term. Map geometry and bounds are never altered.
+ */
+static double pathReliefDB()
+{
+    int i0 = 2;
+    int i1 = (int)path.length + 1;
+    int cnt = i1 - i0 + 1;
+    if (cnt < 3)
+        return 0.0;
+
+    double h0 = elev[i0];
+    double h1 = elev[i1];
+    double sum = 0.0, sum2 = 0.0;
+    for (int i = i0; i <= i1; i++) {
+        double t = (double)(i - i0) / (cnt - 1);
+        double trend = h0 + (h1 - h0) * t;
+        double r = elev[i] - trend;          // deviation from the LOS line
+        sum += r;
+        sum2 += r * r;
+    }
+    double mean = sum / cnt;
+    double var = sum2 / cnt - mean * mean;
+    if (var <= 0.0)
+        return 0.0;
+
+    double sd = sqrt(var);                  // metres of rolling relief
+    double db = 0.05 * sd;                  // ~0.05 dB per metre of relief
+    if (db > 18.0)
+        db = 18.0;
+    return db;
 }
 
 void PlotLOSPath(struct site source, struct site destination, char mask_value)
@@ -723,6 +763,44 @@ void PlotPropPath(
                             LR.frq_mhz, LR.radio_climate,
                             LR.pol, LR.conf, LR.rel,
                             loss, strmode, errnum);
+			}
+
+			/* Natural LOS damping: a clear line-of-sight path returns
+			   essentially pure free-space loss, which paints a rigid
+			   circular coverage edge. Where the path is geometrically
+			   clear (terrain stays within the Fresnel clearance of the
+			   Tx->Rx line) we blend in a gentle terrain-rolling /
+			   micro-attenuation derived from the actual path relief, so the
+			   contour follows the topography. Obstructed paths are left to
+			   ITM's diffraction (no double counting). Map geometry and
+			   bounds are never altered. */
+			{
+				int i0 = 2;
+				int i1 = (int)path.length + 1;
+				double h0 = elev[i0];
+				double h1 = elev[i1];
+				double maxdev = 0.0, sum = 0.0, sum2 = 0.0;
+				int cnt = i1 - i0 + 1;
+				for (int i = i0; i <= i1; i++) {
+					double t = (double)(i - i0) /
+					    ((cnt > 1) ? (cnt - 1) : 1);
+					double trend = h0 + (h1 - h0) * t;
+					double r = fabs(elev[i] - trend);
+					if (r > maxdev)
+						maxdev = r;
+					sum += r;
+					sum2 += r * r;
+				}
+				double fres = 60.0;   // metres of Fresnel clearance
+				if (maxdev <= fres && cnt > 2) {
+					double mean = sum / cnt;
+					double sd =
+					    sqrt(sum2 / cnt - mean * mean);
+					double db = 0.07 * sd;
+					if (db > 20.0)
+						db = 20.0;
+					loss += 0.5 * db;
+				}
 			}
 
 			if (knifeedge == 1 && prop_model > 1) {

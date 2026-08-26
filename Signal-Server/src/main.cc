@@ -58,7 +58,7 @@ double earthradius, max_range = 0.0, forced_erp, dpp, ppd, yppd,
 int ippd, mpi, max_elevation = -32768, min_elevation = 32768, bzerror, gzerr,
     contour_threshold, pred, pblue, pgreen, ter, multiplier = 256, debug = 0,
     loops = 100, jgets = 0, MAXRAD, hottest = 0, height, width, resample = 0,
-    bzbuf_empty = 1, gzbuf_empty = 1;
+    bzbuf_empty = 1, gzbuf_empty = 1, lidar = 0;
 
 long bzbuf_pointer = 0L, bzbytes_read, gzbuf_pointer = 0L, gzbytes_read;
 
@@ -291,6 +291,73 @@ unsigned char GetSignal(double lat, double lon)
         return (dem[indx].signal[x][y]);
     else
         return 0;
+}
+
+void FillSignalHoles(unsigned char strongest_is_max)
+{
+    /* One-shot cleanup before the PPM is painted: cells inside the coverage
+       disk that the radial plotter skipped (the per-radial loop starts at
+       sample y=2, and threaded segment plotting can race/skip cells) keep a
+       raw signal of 0 and would be drawn as white/grey holes in the middle
+       of the coverage ("Tx core"). Give every such cell the strongest value
+       among its computed 4-neighbours so the painter renders it with the
+       saturated-core band colour instead. For signal-strength maps (dBu/dBm)
+       "strongest" is the largest value; for path-loss maps it is the smallest
+       non-zero value. */
+    int indx, x, y, xn, yn, k;
+    int best, v;
+    static const int dx[4] = { -1, 1, 0, 0 };
+    static const int dy[4] = { 0, 0, -1, 1 };
+
+    for (indx = 0; indx < MAXPAGES; indx++) {
+        /* Skip unused pages (sentinel bounds set at init). */
+        if (dem[indx].min_north >= dem[indx].max_north ||
+            dem[indx].max_west < 0)
+            continue;
+
+        for (x = 0; x <= mpi; x++) {
+            for (y = 0; y <= mpi; y++) {
+                if (dem[indx].signal[x][y] != 0)
+                    continue;
+
+                /* Only fill genuine INTERIOR holes: require all four
+                   neighbours to be already computed. The plotter skips a
+                   band of cells at the map edges (its per-radial loop
+                   starts at sample 2 and threaded segments can race);
+                   filling those with their strong neighbours painted a
+                   saturated "frame" around the whole coverage. Leaving
+                   the unplotted edge band untouched removes that box
+                   artifact while still patching white holes in the
+                   interior (e.g. the Tx core). */
+                bool all_computed = true;
+                for (k = 0; k < 4; k++) {
+                    xn = x + dx[k];
+                    yn = y + dy[k];
+                    if (xn < 0 || xn > mpi || yn < 0 || yn > mpi ||
+                        dem[indx].signal[xn][yn] == 0) {
+                        all_computed = false;
+                        break;
+                    }
+                }
+                if (!all_computed)
+                    continue;
+
+                best = 0;
+                for (k = 0; k < 4; k++) {
+                    xn = x + dx[k];
+                    yn = y + dy[k];
+                    v = dem[indx].signal[xn][yn];
+                    if (best == 0)
+                        best = v;
+                    else if (strongest_is_max ? (v > best) : (v < best))
+                        best = v;
+                }
+
+                if (best != 0)
+                    dem[indx].signal[x][y] = (unsigned char)best;
+            }
+        }
+    }
 }
 
 static int WriteRasterTxt(const char *basename, unsigned char dbmmode)
@@ -1098,7 +1165,7 @@ void do_allocs(void)
 int main(int argc, char *argv[])
 {
     int x, y, z = 0, knifeedge = 0, ppa = 0, normalise = 0,
-      haf = 0, pmenv = 1, lidar=0, result, segments = 4, rastertxt = 0;
+      haf = 0, pmenv = 1, result, segments = 4, rastertxt = 0;
 
     PropModel prop_model;
 
@@ -2126,6 +2193,11 @@ int main(int argc, char *argv[])
                     return 0;
                 }
             }
+
+            /* Fill skipped cells first so the coverage core cannot render
+               as white/grey holes. For dBu/dBm maps the largest stored value
+               is the strongest signal; for path-loss maps the smallest. */
+            FillSignalHoles((unsigned char)(LR.erp != 0.0));
 
             // Write bitmap
             if (LR.erp == 0.0)
