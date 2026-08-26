@@ -7,6 +7,7 @@ conversion) happens inside the same worker before launching the engine.
 
 from __future__ import annotations
 
+import math
 import os
 import re
 import subprocess
@@ -311,6 +312,58 @@ class RunWorker(QThread):
         except (OSError, TypeError, ValueError):
             pass  # manifest is best-effort diagnostics
 
+    def _run_engine(self, argv, run_env) -> tuple[int, list[str]]:
+        """Run the engine once, streaming stdout to the terminal.
+
+        Returns ``(returncode, stdout_lines)``.
+        """
+        proc = subprocess.Popen(
+            argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, bufsize=1, env=run_env,
+        )
+        stdout_text: list[str] = []
+        assert proc.stdout is not None
+        pct_re = re.compile(r"\[\s*(\d{1,3})%\]")
+        for line in proc.stdout:
+            line = line.rstrip("\n")
+            stdout_text.append(line)
+            self.output_line.emit(line)
+            m = pct_re.search(line)
+            if m:
+                self.percent.emit(min(100, int(m.group(1))))
+        proc.wait()
+        return proc.returncode, stdout_text
+
+    @staticmethod
+    def _bbox_plausible(bbox, p) -> bool:
+        """False when the engine's ``Area boundaries`` are garbage.
+
+        The threaded LIDAR plotter has a longitude-normalisation race
+        (observed as exact +-1086-degree shifts on E/W plus dropped radials --
+        the "pizza slice" pattern). Such runs must never be shown; they are
+        retried instead.
+        """
+        if not bbox:
+            return False
+        try:
+            n, e, s, w = (float(v) for v in bbox)
+        except (TypeError, ValueError):
+            return False
+        if not all(-90.0 <= v <= 90.0 for v in (n, s)):
+            return False
+        if not all(-180.0 <= v <= 180.0 for v in (e, w)):
+            return False
+        if n <= s or e <= w:
+            return False
+        lat0 = float(p.get("tx_lat") if p.get("tx_lat") is not None
+                     else (n + s) / 2.0)
+        radius_km = float(p.get("radius") or 30) or 30.0
+        dlat = radius_km / 111.0
+        dlon = radius_km / (111.32 * max(0.01, math.cos(math.radians(lat0))))
+        # Generous 4x margin: cropping/rounding may widen the box a little,
+        # but never by an order of magnitude.
+        return ((n - s) <= 4.0 * dlat + 1.0) and ((e - w) <= 4.0 * dlon + 1.0)
+
     def run(self) -> None:  # noqa: D401
         p = dict(self.parameters)
         try:
@@ -344,28 +397,15 @@ class RunWorker(QThread):
             # source, so we disable the leak detector at runtime instead.
             run_env = dict(os.environ)
             run_env.setdefault("ASAN_OPTIONS", "detect_leaks=0")
-            proc = subprocess.Popen(
-                argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                text=True, bufsize=1, env=run_env,
-            )
-            stdout_text = []
-            assert proc.stdout is not None
-            pct_re = re.compile(r"\[\s*(\d{1,3})%\]")
-            for line in proc.stdout:
-                line = line.rstrip("\n")
-                stdout_text.append(line)
-                self.output_line.emit(line)
-                m = pct_re.search(line)
-                if m:
-                    self.percent.emit(min(100, int(m.group(1))))
-            proc.wait()
+
             # --- Radio Link (point-to-point) mode ---
             if p.get("path_profile"):
+                proc_returncode, stdout_text = self._run_engine(argv, run_env)
                 report_file = self.output_basename + ".txt"
                 if not os.path.exists(report_file):
-                    if proc.returncode != 0:
+                    if proc_returncode != 0:
                         self.error_occurred.emit(
-                            f"Signal-Server exited with code {proc.returncode}"
+                            f"Signal-Server exited with code {proc_returncode}"
                         )
                     else:
                         self.error_occurred.emit(
@@ -387,29 +427,53 @@ class RunWorker(QThread):
                 self.finished.emit(True, "\n".join(stdout_text), {"link": link})
                 return
 
-            ppm = self.output_basename + ".ppm"
-            output_exists = os.path.exists(ppm)
-            if proc.returncode != 0 and not output_exists:
-                # Fatal: engine failed AND produced no output
-                self.error_occurred.emit(
-                    f"Signal-Server exited with code {proc.returncode}"
+            # --- Area coverage: the threaded LIDAR plotter occasionally
+            # emits garbage boundaries and drops radials ("pizza slices").
+            # Identical argv reproduces it intermittently, so validate every
+            # run and retry a couple of times before giving up.
+            attempts = 3
+            result = None
+            stdout_text: list[str] = []
+            for attempt in range(1, attempts + 1):
+                proc_returncode, stdout_text = self._run_engine(argv, run_env)
+                ppm = self.output_basename + ".ppm"
+                output_exists = os.path.exists(ppm)
+                if proc_returncode != 0 and not output_exists:
+                    self.error_occurred.emit(
+                        f"Signal-Server exited with code {proc_returncode}"
+                    )
+                    return
+                if not output_exists:
+                    self.error_occurred.emit(
+                        f"Engine finished but coverage file not found: {ppm}"
+                    )
+                    return
+                tx_coords = None
+                if p.get("lat") is not None and p.get("lon") is not None:
+                    try:
+                        tx_coords = (float(p["lat"]), float(p["lon"]))
+                    except (ValueError, TypeError):
+                        pass
+                result = output_stage.stage_output(
+                    ppm, "\n".join(stdout_text), title="Signal-Server Coverage",
+                    tx_coords=tx_coords, color_file=p.get("color_file"), params=p
                 )
-                return
-            if not output_exists:
+                if self._bbox_plausible(result.get("bbox"), p):
+                    break
+                if attempt < attempts:
+                    self.percent.emit(0)
+                    self.progress.emit(
+                        "PERINGATAN: hasil engine tidak konsisten terdeteksi "
+                        "(boundaries invalid / radial terpotong -- bug thread "
+                        f"plot LIDAR). Mencoba ulang {attempt}/{attempts - 1} ..."
+                    )
+                    continue
                 self.error_occurred.emit(
-                    f"Engine finished but coverage file not found: {ppm}"
-                )
+                    "Engine menghasilkan coverage rusak setelah "
+                    f"{attempts} percobaan (race normalisasi longitude pada "
+                    "plot thread LIDAR). Jalankan ulang, atau turunkan "
+                    "'Map segments' ke 8/1 sebagai workaround.")
                 return
-            tx_coords = None
-            if p.get("lat") is not None and p.get("lon") is not None:
-                try:
-                    tx_coords = (float(p["lat"]), float(p["lon"]))
-                except (ValueError, TypeError):
-                    pass
-            result = output_stage.stage_output(
-                ppm, "\n".join(stdout_text), title="Signal-Server Coverage",
-                tx_coords=tx_coords, color_file=p.get("color_file"), params=p
-            )
             raster_txt = ppm[:-4] + "_raster.txt"
             if os.path.exists(raster_txt):
                 # Sanity check: the dumped raster must actually enclose the Tx.
