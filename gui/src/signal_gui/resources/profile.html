@@ -58,9 +58,12 @@ function clearProfile() {
 }
 
 function drawProfile(p, obs) {
-  profile = p; obstructed = obs; hoverIdx = null;
-  if (!p || !p.distance_km || p.distance_km.length < 2) { clearProfile(); return; }
-  render();
+  // Terrain-profile graph disabled: do not render the terrain relief / LOS
+  // line / obstruction markers into the result view. Clear and return.
+  profile = null; obstructed = false; hoverIdx = null; geom = null;
+  ctx.clearRect(0, 0, canvas.clientWidth, canvas.clientHeight);
+  document.getElementById('title').innerHTML = '<b>Radio Link Path Profile</b>';
+  return;
 }
 
 function render() {

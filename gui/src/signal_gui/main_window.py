@@ -9,6 +9,7 @@ import shutil
 import tempfile
 import time
 from datetime import datetime
+from typing import Optional
 
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QSplitter, QVBoxLayout, QHBoxLayout, QPlainTextEdit,
@@ -342,6 +343,7 @@ class MainWindow(QMainWindow):
         self.link_summary.setWordWrap(True)
         lp.addWidget(self.link_summary)
         self.profile_view = ProfileView(self)
+        self.profile_view.setVisible(False)  # terrain-profile graph disabled
         lp.addWidget(self.profile_view, 1)
         self.link_details_btn = QPushButton("Details")
         self.link_details_btn.setCheckable(True)
@@ -694,6 +696,10 @@ class MainWindow(QMainWindow):
         # A new run invalidates the previous run's saved-Tx indicator.
         self.map.clear_tx_saved()
 
+        # Force-clean the whole render cache BEFORE a new run so no leftover
+        # image from an earlier run can ever be picked up by the GUI.
+        self._purge_render_cache()
+
         run_dir = tempfile.mkdtemp(prefix="siggui_", dir=self.cache_dir)
         out_base = os.path.join(run_dir, "coverage")
 
@@ -723,12 +729,16 @@ class MainWindow(QMainWindow):
         self.progress.setVisible(False)
         self._hide_loading()
         self.form.btn_run.setEnabled(True)
+        run_dir = (os.path.dirname(self._pending[2])
+                   if self._pending else None)
         if ok and result.get("link"):
             p = self._pending[0] if self._pending else {}
             tx = (float(p.get("tx_lat")), float(p.get("tx_lon")))
             rx = (float(p.get("rx_lat")), float(p.get("rx_lon")))
             self.map.mark_tx_saved(*tx)
             self._show_link_panel(result["link"], tx, rx)
+            # Render selesai -> paksa bersihkan cache (kecuali run aktif).
+            self._purge_render_cache(keep=run_dir)
             return
         # Area coverage (clear any previous link result)
         self.map.clear_link()
@@ -746,6 +756,8 @@ class MainWindow(QMainWindow):
                         float(p.get("az_mask_end_deg", 360.0)))
                 except Exception as exc:  # noqa: BLE001 - cosmetic layer
                     self._set_status(f"Peringatan: mask azimuth gagal ({exc})")
+            # show_coverage embeds the PNG as base64; after this the file is
+            # consumed and the cache around it is fair game.
             self.map.show_coverage(result["png"], bbox, self.form.color_path.text())
             if p.get("tx_lat") is not None and p.get("tx_lon") is not None:
                 self.map.mark_tx_saved(float(p["tx_lat"]), float(p["tx_lon"]))
@@ -755,9 +767,13 @@ class MainWindow(QMainWindow):
                 self._set_status(f"Done. KML: {result['kml']}")
             if result.get("rm_png"):
                 self._show_rm_preview(result["rm_png"])
+            # Render selesai -> paksa bersihkan semua sisa render lama
+            # (run dir aktif dipertahankan agar export tetap berfungsi).
+            self._purge_render_cache(keep=run_dir)
         else:
             self._last_result = None
             self._set_status("Finished with no coverage.")
+            self._purge_render_cache()
 
     def _show_link_panel(self, link: dict, tx: tuple, rx: tuple) -> None:
         self.link_panel.setVisible(True)
@@ -989,6 +1005,43 @@ class MainWindow(QMainWindow):
         self._hide_loading()
         self.form.btn_run.setEnabled(True)
         self._set_status("Ready")
+
+    def _purge_render_cache(self, keep: Optional[str] = None) -> None:
+        """Force-delete the render cache (``.../gui/cache/dem``) contents.
+
+        Runs automatically before and after every render so the GUI can never
+        show leftover images from an earlier run: stale ``siggui_*`` run
+        directories, downloaded DEM tiles, VRT/LIDAR/SDF products -- everything
+        is removed. ``keep`` (the active run directory) survives so the files
+        still referenced by the GUI (coverage PNG/KML, raster TXT for export)
+        remain valid until the next run purges them.
+        """
+        keep_abs = os.path.abspath(keep) if keep else None
+        try:
+            entries = list(os.scandir(self.cache_dir))
+        except OSError:
+            entries = []
+        freed = 0
+        removed = 0
+        for entry in entries:
+            try:
+                if keep_abs and os.path.abspath(entry.path) == keep_abs:
+                    continue
+                if entry.is_dir(follow_symlinks=False):
+                    freed += _dir_size(entry.path)
+                    shutil.rmtree(entry.path)
+                else:
+                    freed += entry.stat(follow_symlinks=False).st_size
+                    os.remove(entry.path)
+                removed += 1
+            except OSError as exc:
+                self.terminal.appendPlainText(
+                    f"[cache] gagal hapus {entry.name}: {exc}")
+        os.makedirs(self.cache_dir, exist_ok=True)
+        if removed:
+            self.terminal.appendPlainText(
+                f"[cache] dibersihkan paksa: {removed} item "
+                f"({_human_size(freed)}) dari {self.cache_dir}")
 
     def clear_cache(self) -> None:
         """Delete all on-disk cache (downloaded DEM/SDF tiles, DEMNAS data, and

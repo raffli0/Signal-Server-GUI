@@ -406,6 +406,8 @@ class RunWorker(QThread):
             )
             for line in params_mod.format_run_summary(p, argv, self.engine_exe):
                 self.output_line.emit(line)
+            self.output_line.emit(
+                "[run] Renderer : multiply-blend + translucent-core v2")
             self.progress.emit("Running Signal-Server: " + " ".join(argv))
             # Suppress LeakSanitizer post-run reports: the Signal-Server binary
             # is built with -fsanitize=address which includes LSan. LSan fires

@@ -103,9 +103,16 @@ def ppm_to_png(ppm_path: str, png_path: Optional[str] = None,
        (terrain/greyscale backdrop + legend strip) -> alpha 0.
     2. Grey-ish islands fully enclosed by coverage colours are out-of-range
        strong-signal pixels (the saturated Tx core, drawn grey/white by the
-       engine because they exceed the top band). They are recoloured to the
-       strongest palette entry so the core shows as the strongest colour (red)
-       instead of a white hole over a light OSM basemap.
+       engine because they exceed the top band). They are DEM-shaded per
+       pixel with the strongest palette entry:
+
+           Warna_Final = (Warna_Solid_Palet * Nilai_Greyscale_DEM) / 255
+
+       so the core shows the strongest colour (red) textured by the terrain,
+       not one flat solid fill and not a white hole over a light OSM basemap.
+
+    Every covered pixel (palette bands AND the recoloured core) is modulated
+    by that same formula; alpha is NOT touched beyond background keying.
     """
     if png_path is None:
         png_path = os.path.splitext(ppm_path)[0] + ".png"
@@ -127,41 +134,37 @@ def ppm_to_png(ppm_path: str, png_path: Optional[str] = None,
     enclosed_grey = grey & ~background
     lum = 0.299 * strongest[0] + 0.587 * strongest[1] + 0.114 * strongest[2]
 
-    # --- Terrain-shade field (Radio Mobile parity) -------------------------
-    # The engine paints the whole backdrop as grey hillshade; covered pixels
-    # replace it with flat band colours. Recover the shade at EVERY pixel by
-    # inpainting from the nearest grey sample, then multiply each band colour
-    # by it -- reproducing RM's rough, terrain-textured dots in all bands.
-    raw_shade = np.where(grey, rgb[..., 0], np.nan).astype(np.float64) / 255.0
-    if np.isnan(raw_shade).any():
+    # --- DEM greyscale field (0..255), per pixel ----------------------------
+    # The engine paints the whole backdrop as a grey hillshade of the DEM;
+    # covered pixels replace it with flat band colours. Recover the DEM
+    # greyscale at EVERY pixel by inpainting from the nearest grey sample,
+    # then recolour per pixel with
+    #     Warna_Final = (Warna_Solid_Palet * Nilai_Greyscale_DEM) / 255
+    dem_grey = np.where(grey, rgb[..., 0], np.nan).astype(np.float64)
+    if np.isnan(dem_grey).any():
         idx = ndimage.distance_transform_edt(
-            np.isnan(raw_shade), return_distances=False, return_indices=True)
-        raw_shade = raw_shade[tuple(idx)]
-    raw_shade = np.clip(raw_shade, 0.0, 1.0)
+            np.isnan(dem_grey), return_distances=False, return_indices=True)
+        dem_grey = dem_grey[tuple(idx)]
+    dem_grey = np.clip(dem_grey, 0.0, 255.0)
 
-    if lum < 200:
-        # Saturated Tx core (engine draws it pure white/grey): recolour to the
-        # strongest band, shade-modulated, and render SEMI-TRANSPARENT so the
-        # basemap texture bleeds through (RM-style rough dotted core).
-        CORE_ALPHA = 165
-        k_core = 0.35 + 0.65 * raw_shade
-        for ch in range(3):
-            chan = strongest[ch] * k_core
-            rgb[..., ch][enclosed_grey] = chan[enclosed_grey].astype(np.uint8)
-        core_alpha = np.where(enclosed_grey, CORE_ALPHA, 255)
-
-    # Shade-modulate every other covered pixel (all palette bands).
-    mult = 0.60 + 0.40 * raw_shade
     covered = ~background
-    if lum < 200:
-        covered &= ~enclosed_grey          # core already handled above
-    for ch in range(3):
-        chan = rgb[..., ch].astype(np.float64) * mult
-        rgb[..., ch][covered] = chan[covered].astype(np.uint8)
 
-    alpha = np.where(background, 0, 255).astype(np.uint8)
     if lum < 200:
-        alpha = np.minimum(alpha, core_alpha).astype(np.uint8)
+        # Saturated Tx core (engine draws it pure white/grey): recolour to
+        # the strongest band, modulated per pixel by the DEM greyscale.
+        for ch in range(3):
+            chan = strongest[ch] * dem_grey / 255.0
+            rgb[..., ch][enclosed_grey] = chan[enclosed_grey].astype(np.uint8)
+
+    # Shade-modulate every other covered pixel (all palette bands) with the
+    # same formula: the pixel's own solid colour times the DEM greyscale.
+    band_px = covered & ~enclosed_grey if lum < 200 else covered
+    for ch in range(3):
+        chan = rgb[..., ch].astype(np.float64) * dem_grey / 255.0
+        rgb[..., ch][band_px] = chan[band_px].astype(np.uint8)
+
+    # Alpha is background keying only -- no semi-transparent core hacks.
+    alpha = np.where(background, 0, 255).astype(np.uint8)
     rgba = np.dstack((rgb.astype(np.uint8), alpha)).astype(np.uint8)
     Image.fromarray(rgba, "RGBA").save(png_path)
     return png_path
