@@ -732,16 +732,17 @@ class ParameterForm(QWidget):
         self.color_btn.setStyleSheet(btn_ss)
         self.color_path = QLineEdit()
         self.color_path.setReadOnly(True)
-        self.color_path.setPlaceholderText("Default: radiomobile.dcf")
+        self.color_path.setPlaceholderText("Default: splat-classic.dcf")
         self.color_path.setStyleSheet("background: #1B1E22; color: #A0AEC0; border: 1px solid #3F474F; border-radius: 3px; padding: 3px; font-size: 10px;")
-        # Radio Mobile palette by default; bundled copy as fallback when the
-        # Signal-Server tree (ss_root) is not available (packaged builds).
+        # splat-classic.dcf by default (hard 10 dB bands + navy floor at -100 dBm
+        # so signals weaker than -100 dBm do not flood the map); bundled copy as
+        # fallback when the Signal-Server tree (ss_root) is not available.
         default_color = ""
         if self.ss_root:
-            default_color = os.path.join(self.ss_root, "color", "radiomobile.dcf")
+            default_color = os.path.join(self.ss_root, "color", "splat-classic.dcf")
         if not default_color or not os.path.exists(default_color):
             default_color = os.path.join(
-                os.path.dirname(__file__), "resources", "radiomobile.dcf")
+                os.path.dirname(__file__), "resources", "splat-classic.dcf")
         if os.path.exists(default_color):
             self.color_path.setText(default_color)
         self._color_user_chosen = False

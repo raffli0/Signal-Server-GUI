@@ -1,0 +1,16 @@
+; Radio Mobile-style DBM Signal Level Color Definition (splat-classic.dcf)
+; 10 discrete bands, strongest first. No interpolation in the engine.
+; Format: dBm: red, green, blue
+ -60: 200,  50,  50
+ -64: 180, 160,  50
+ -69: 150, 220,  50
+ -73:  50, 220,  50
+ -78:  30, 150,  30
+ -82:  30, 200, 150
+ -87:  50, 150, 220
+ -91:  30,  80, 200
+ -96:  20,  20, 150
+-100:   0,   0, 100
+; Navy floor: extend the weakest band to the noise floor so signal below
+; -100 dBm stays navy instead of falling through to transparent black.
+-200:   0,   0, 100
