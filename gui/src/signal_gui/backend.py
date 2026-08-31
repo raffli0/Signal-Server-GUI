@@ -137,11 +137,14 @@ class RunWorker(QThread):
                 vrt, spec["lat_lo"], spec["lat_hi"], spec["lon_lo"], spec["lon_hi"]
             )
             self._log_demnas_elevation(vrt, clat, clon)
+            # downsampling OFF = max_cells 0 → paksa 30m (jaga bukit kecil)
+            allow_down = bool(p.get("dem_downsample", False))
             asc, astats = dem_convert.demnas_folder_to_asc(
                 spec["folder"], spec["cache_dir"],
                 spec["lat_lo"], spec["lat_hi"], spec["lon_lo"], spec["lon_hi"],
                 ppd=spec.get("ppd", 1200),
                 target_cellsize=spec.get("dem_cellsize"),
+                max_cells=(25_000_000 if allow_down else 0),
             )
             p["lidar_file"] = asc
             p["terrain_source"] = "lidar"
@@ -193,15 +196,15 @@ class RunWorker(QThread):
     def _log_demnas_elevation(self, vrt: str, lat: float, lon: float) -> None:
         """Log the DEMNAS elevation at the transmitter so the run is auditable."""
         elev = dem_convert._sample_elevation(vrt, lat, lon)
-        if elev is None:
+        if elev is None or elev == 0:
             self.progress.emit(
-                f"PERINGATAN: DEMNAS void di Tx ({lat:.4f}, {lon:.4f}); "
-                f"engine akan pakai sea-level."
+                f"⛔ LUBANG HITAM DEM di Tx ({lat:.4f}, {lon:.4f}) elev={elev} → 100% preprocessing (TODO #1/#2)!"
             )
+            self.output_line.emit(f"[DEM] Black hole at Tx: elev={elev} m - periksa QGIS export .tif")
+        elif elev < -900 or elev > 9000:
+            self.progress.emit(f"PERINGATAN: DEMNAS void/nodata di Tx ({lat:.4f}, {lon:.4f}) elev={elev}; engine sea-level.")
         else:
-            self.progress.emit(
-                f"Elevasi Tx (DEMNAS): {elev:.1f} m  |  lokasi ({lat:.4f}, {lon:.4f})"
-            )
+            self.progress.emit(f"Elevasi Tx (DEMNAS): {elev:.1f} m  |  lokasi ({lat:.4f}, {lon:.4f}) → ✅ tidak ada lubang")
 
     def _require_sdf_variant(
         self, p: dict, sdf_dir: str, spec: Optional[dict] = None
@@ -368,13 +371,17 @@ class RunWorker(QThread):
         The threaded-LIDAR longitude race only shows up at high segment
         counts (observed broken at 16, clean at 8/4), so stepping the ladder
         down between retries converges on a healthy configuration instead of
-        repeating an identical failing run.
+        repeating an identical failing run. Fix: pastikan genap (engine
+        `segments %2==0` atau `%3==0`), jadi 30→14 bukan 15.
         """
         try:
             cur = int(cur)
         except (TypeError, ValueError):
             cur = 16
-        return max(4, cur // 2)
+        nxt = cur // 2
+        if nxt % 2 != 0:
+            nxt -= 1
+        return max(4, nxt)
 
     def run(self) -> None:  # noqa: D401
         p = dict(self.parameters)
@@ -451,7 +458,7 @@ class RunWorker(QThread):
             # Identical argv reproduces it intermittently, and the race only
             # triggers at high -segments counts (broken at 16, clean at 8/4),
             # so each retry halves the segment count as well.
-            attempts = 3
+            attempts = 4
             result = None
             stdout_text: list[str] = []
             cur_argv = argv

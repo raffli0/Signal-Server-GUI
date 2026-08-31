@@ -64,6 +64,9 @@ find_library(z z)
 
 # Spdlog
 find_package(spdlog REQUIRED)
+include_directories(${spdlog_INCLUDE_DIRS})
+# Fallback: ensure header-only spdlog from /home/dedsec/.local is visible to all targets
+include_directories("/home/dedsec/.local/include")
 
 add_executable(signalserver main.cc)
 add_executable(signalserverHD main.cc)

@@ -2163,12 +2163,12 @@ int main(int argc, char *argv[])
             // 90% of effort here
             if (use_radial)
             {
-                PlotPropagationRadius(tx_site[0], max_range, altitudeLR, ano_filename, prop_model, knifeedge, haf, pmenv, use_threads, (uint8_t)segments);
+                PlotPropagationRadius(tx_site[0], max_range, altitudeLR, ano_filename, prop_model, knifeedge, haf, pmenv, use_threads, segments);
                 spdlog::debug("Finished PlotPropagationRadius()");
             }
             else
             {
-                PlotPropagation(tx_site[0], plot_bounds, altitudeLR, ano_filename, prop_model, knifeedge, haf, pmenv, use_threads, (uint8_t)segments);
+                PlotPropagation(tx_site[0], plot_bounds, altitudeLR, ano_filename, prop_model, knifeedge, haf, pmenv, use_threads, segments);
                 spdlog::debug("Finished PlotPropagation()");
             }
 

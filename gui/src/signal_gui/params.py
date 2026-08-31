@@ -138,19 +138,23 @@ def option_states_for_model(model_pm) -> dict[str, str]:
     ))
 
 
-def auto_segments(max_segments: int = 64) -> int:
+def auto_segments(max_segments: int = 360) -> int:
     """Engine plot-segment count for parallel processing.
 
     Signal-Server defaults to 4 segments (main.cc:1101), which underuses
     modern multi-core CPUs. Use ~2x logical cores, clamped to an even value
-    ``>= 4`` (engine requires even and > 4) and ``<= 254`` (``uint8_t``).
+    ``>= 4``. Patched to allow 360° / 1° = 360 seg (int, not uint8_t) to
+    hilangkan pola jari-jari interpolasi azimuth.
     """
     try:
         cores = os.cpu_count() or 4
     except Exception:  # pragma: no cover - pathological platforms
         cores = 4
-    seg = min(max(4, 2 * cores), max_segments, 254)
+    seg = min(max(4, 2 * cores), max_segments, 360)
     if seg % 2 != 0:
+        seg += 1
+    # harus kelipatan 2 atau 3 (los.cc:1248)
+    if seg % 2 != 0 and seg % 3 != 0:
         seg += 1
     return seg
 

@@ -264,6 +264,7 @@ class ParameterForm(QWidget):
     start_requested = Signal()
     stop_requested = Signal()
     export_requested = Signal(str)  # selected export format (e.g. "KMZ")
+    export_dem_requested = Signal()
     demnas_dir_picked = Signal()    # DEMNAS folder (re)selected, even if unchanged
 
     def __init__(self, signal_server_root: str = "", parent=None):
@@ -480,13 +481,24 @@ class ParameterForm(QWidget):
         self.frequency = FocusWheelSpinBox(); self.frequency.setRange(0.1, 100000); self.frequency.setValue(900)
         self._add_row_with_info(fl, "Frequency (MHz)", self.frequency, "Operating frequency in MHz")
         self.dem_res = QComboBox(); self.dem_res.addItems(["90 m (dem3)", "30 m (dem1)", "15 m TIF"])
+        self.dem_res.setCurrentIndex(1)  # default 30m SRTM1 - jangan hilangkan bukit kecil dekat Tx
         self._add_row_with_info(
             fl, "Auto DEM resolution", self.dem_res,
             "Resolusi data elevasi. Mode Online: memilih produk Viewfinder "
             "(dem3≈90 m, dem1≈30 m, TIF15). Mode Offline DEMNAS: target "
             "resolusi konversi terrain LIDAR (3\"≈90 m, 1\"≈30 m, 15 m), "
-            "otomatis dibatasi ukuran file maksimum. Tidak berpengaruh pada "
-            "mode SDF (resolusi mengikuti varian engine).")
+            "otomatis dibatasi ukuran file maksimum. Default 30m (SRTM1) "
+            "agar bukit kecil dekat Tx tidak hilang. SDF mode nonaktif.")
+        self._dem_downsample = QCheckBox("Izinkan downsampling (hemat RAM)")
+        self._dem_downsample.setChecked(False)  # mati default - jaga detail 30m
+        self._dem_downsample.setStyleSheet("color:#CBD5E0; font-size:11px;")
+        self._dem_downsample.setToolTip("Jika OFF, engine paksa 30m tanpa clamp max_cells. ON = boleh turun ke 90m bila area >25M sel.")
+        fl.addRow(self._dem_downsample)
+        self._dem_fine_step = QCheckBox("Step halus 1/4 DEM (7.5m, anti-loncat 100m)")
+        self._dem_fine_step.setChecked(True)  # default ON - sampling 7.5-10m
+        self._dem_fine_step.setStyleSheet("color:#CBD5E0; font-size:11px;")
+        self._dem_fine_step.setToolTip("Jika ON, DEM 30m di-oversample bilinear ke 7.5m (1/4). Step engine jadi 7.5-10m, jangan loncat 100m. Butuh RAM lebih.")
+        fl.addRow(self._dem_fine_step)
 
         # Signal
         fl.addRow(self._sub_label("Signal"))
@@ -728,6 +740,13 @@ class ParameterForm(QWidget):
         self.plot_quality.setStyleSheet(self.resolution.styleSheet())
         self._add_row_with_info(fl, "Kualitas plot", self.plot_quality,
                                 "Draft membagi 2 resolusi piksel (≈4× lebih cepat) untuk pratinjau")
+        self.map_segments = QSpinBox()
+        self.map_segments.setRange(4, 360)
+        self.map_segments.setSingleStep(2)
+        self.map_segments.setValue(360)
+        self.map_segments.setToolTip("360 = 1°/seg (hilang jari-jari), 180=2°, 120=3°. Harus genap & kelipatan 2/3.")
+        self._add_row_with_info(fl, "Map segments (azimuth)", self.map_segments,
+                                "360° / segments = step azimuth. 360→1°, 180→2°. >254 butuh patch engine (sudah).")
         self.color_btn = QPushButton("Color table...")
         self.color_btn.setStyleSheet(btn_ss)
         self.color_path = QLineEdit()
@@ -768,6 +787,11 @@ class ParameterForm(QWidget):
             "range circle). Palet kustom yang dipilih manual tetap diutamakan.")
         self.rm_style.setStyleSheet("color: #CBD5E0; font-size: 11px;")
         fl.addRow(self.rm_style)
+        self.btn_export_dem = QPushButton("Export DEM .tif untuk QGIS")
+        self.btn_export_dem.setStyleSheet(btn_ss)
+        self.btn_export_dem.setToolTip("Simpan clip DEMNAS/LIDAR ter-clip (aja) ke .tif untuk buka di QGIS — cek lubang hitam 0 di Tx")
+        self.btn_export_dem.clicked.connect(lambda: self.export_dem_requested.emit())
+        fl.addRow(self.btn_export_dem)
 
         self._update_erp()
 
@@ -1047,6 +1071,7 @@ class ParameterForm(QWidget):
             "resolution": self.resolution.currentData(),
             "radius": self.radius.value(),
             "plot_quality": self.plot_quality.currentData(),
+            "plot_segments": int(self.map_segments.value()),
             "color_file": self.color_path.text() or None,
             "color_file_user": getattr(self, "_color_user_chosen", False),
             "dbm_color": self.dbm_color.isChecked(),
@@ -1054,6 +1079,8 @@ class ParameterForm(QWidget):
             "rm_style": self.rm_style.isChecked(),
             "units": units,
             "dem_resolution": dem_res_map[self.dem_res.currentIndex()],
+            "dem_downsample": self._dem_downsample.isChecked(),
+            "dem_fine_step": self._dem_fine_step.isChecked(),
         }
         return d
 
@@ -1124,6 +1151,11 @@ class ParameterForm(QWidget):
         if res_idx >= 0:
             self.resolution.setCurrentIndex(res_idx)
         self.radius.setValue(float(d.get("radius", 30)))
+        if "plot_segments" in d:
+            try:
+                self.map_segments.setValue(int(d.get("plot_segments", 360)))
+            except Exception:
+                pass
         q = d.get("plot_quality", "final")
         qi = self.plot_quality.findData(q)
         if qi >= 0:
@@ -1132,6 +1164,10 @@ class ParameterForm(QWidget):
         self.dbm_color.setChecked(bool(d.get("dbm_color", True)))
         self.raster_txt.setChecked(bool(d.get("raster_txt", False)))
         self.rm_style.setChecked(bool(d.get("rm_style", False)))
+        if hasattr(self, "_dem_downsample"):
+            self._dem_downsample.setChecked(bool(d.get("dem_downsample", False)))
+        if hasattr(self, "_dem_fine_step"):
+            self._dem_fine_step.setChecked(bool(d.get("dem_fine_step", True)))
         # Re-apply model-dependent disabling/badges for the loaded model.
         self._apply_model_gating()
 

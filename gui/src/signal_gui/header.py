@@ -25,6 +25,7 @@ class CloudRFHeader(QFrame):
     load_profile_requested = Signal()
     import_rm_requested = Signal()
     radio_link_requested = Signal()
+    line_itm_requested = Signal()
     clear_cache_requested = Signal()
 
     def __init__(self, parent=None):
@@ -252,6 +253,27 @@ class CloudRFHeader(QFrame):
         """)
         self.btn_radio_link.clicked.connect(lambda: self.radio_link_requested.emit())
         layout.addWidget(self.btn_radio_link)
+
+        self.btn_line_itm = QPushButton()
+        self.btn_line_itm.setIcon(svg_icon("share", 14, "#FBD38D"))
+        self.btn_line_itm.setText(" Garis ITM")
+        self.btn_line_itm.setToolTip("Propagasi warna ITM hanya garis lurus Tx→Rx (azimuth sempit 0.1°-1°)")
+        self.btn_line_itm.setFixedHeight(26)
+        self.btn_line_itm.setStyleSheet("""
+            QPushButton {
+                background: #744210;
+                color: #FBD38D;
+                border: 1px solid #975A16;
+                border-radius: 4px;
+                font-size: 12px;
+                font-weight: 700;
+                padding: 0 10px;
+            }
+            QPushButton:hover { background: #975A16; color: #FFFFFF; }
+            QPushButton:pressed { background: #5C3A0A; }
+        """)
+        self.btn_line_itm.clicked.connect(lambda: self.line_itm_requested.emit())
+        layout.addWidget(self.btn_line_itm)
 
         # Spacer to push right elements
         layout.addStretch()

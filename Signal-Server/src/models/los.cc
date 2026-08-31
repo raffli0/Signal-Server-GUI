@@ -191,6 +191,9 @@ namespace {
 			alloc_elev();
 			alloc_path();
 		}
+        // Report total for progress bar (fix 112% overrun)
+        progress.total.store(r->points);
+        progress.count.store(0);
 
         // Check if our start & stop angles are the same
         if (r->start_angle_rad == r->stop_angle_rad)
@@ -275,8 +278,11 @@ namespace {
                 points_processed += p.count;
             }
 
-            // Update print
-            spdlog::info("[{: 3d}%] Processing {}/{} points", int(points_processed * 100 / total_points), points_processed, total_points);
+            // Update print — cap at 100% (fix 112% bug when points_processed>total due to rounding)
+            int pct = total_points ? int(points_processed * 100 / total_points) : 100;
+            if (pct > 100) pct = 100;
+            if (points_processed > total_points) points_processed = total_points;
+            spdlog::info("[{: 3d}%] Processing {}/{} points", pct, points_processed, total_points);
         }
     }
 }
@@ -955,7 +961,7 @@ void PlotPropPath(
 }
 
 void PlotLOSMap(struct site source, double altitude, char *plo_filename,
-		bool use_threads, uint8_t segments)
+		bool use_threads, int segments)
 {
 	/* This function performs a 360 degree sweep around the
 	   transmitter site (source location), and plots the
@@ -1046,9 +1052,9 @@ void PlotLOSMap(struct site source, double altitude, char *plo_filename,
 /// @param use_threads whether to use threads or not
 /// @param segments number of segments to divide the plot by
 void PlotPropagation(struct site source, bbox bounds, 
-                    double altitude, char *plo_filename,
+                     double altitude, char *plo_filename,
 		            PropModel prop_model, int knifeedge, int haf, int pmenv, bool
-		            use_threads, uint8_t segments)
+		            use_threads, int segments)
 {
 	static __thread unsigned char mask_value = 1;
 	FILE *fd = NULL;
@@ -1103,8 +1109,8 @@ void PlotPropagation(struct site source, bbox bounds,
     */
 
     // NUM_SECTIONS must always be a multiple of 2 and greater than 4, because we have to divide a 4-sided rectangle equally
-    uint8_t lon_edge_segments = (segments / 4);   // Our longitudal edges (top & bottom) will get the greater of the two segment counts
-    uint8_t lat_edge_segments = (segments / 2) - lon_edge_segments; // Our latitudal edges are whatever is left over
+    int lon_edge_segments = (segments / 4);   // Our longitudal edges (top & bottom) will get the greater of the two segment counts
+    int lat_edge_segments = (segments / 2) - lon_edge_segments; // Our latitudal edges are whatever is left over
 
     // Calculate the widths of each segment
     double edge_width = plot_width / lon_edge_segments;
@@ -1234,7 +1240,7 @@ void PlotPropagation(struct site source, bbox bounds,
 void PlotPropagationRadius(struct site source, double range, 
                             double altitude, char *plot_filename, 
                             PropModel prop_model, int knifeedge, int haf, int pmenv, 
-                            bool use_threads, uint8_t segments)
+                            bool use_threads, int segments)
 {
 
     // Convert our imperial units to metric if needed

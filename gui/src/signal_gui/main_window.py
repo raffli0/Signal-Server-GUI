@@ -399,6 +399,7 @@ class MainWindow(QMainWindow):
         self.header.load_profile_requested.connect(self.load_profile)
         self.header.import_rm_requested.connect(self._import_rm_data)
         self.header.radio_link_requested.connect(lambda: self.start(link=True))
+        self.header.line_itm_requested.connect(self.start_line_itm)
         self.header.clear_cache_requested.connect(self.clear_cache)
         self.map.picked.connect(self._on_picked)
         self.form.tx_changed.connect(self._on_tx_coord_changed)
@@ -407,6 +408,7 @@ class MainWindow(QMainWindow):
             lambda: self.map.set_site_labels(tx=self.form.tx_name.text().strip() or None))
         self.form.rx_name.textChanged.connect(
             lambda: self.map.set_site_labels(rx=self.form.rx_name.text().strip() or None))
+        self.form.export_dem_requested.connect(self.export_dem_tif)
         self.form.demnas_dir_picked.connect(self._update_demnas_live)
         self.form.demnas_live.toggled.connect(self._update_demnas_live)
         # DEM source changes affect where elevations are sampled from.
@@ -611,6 +613,9 @@ class MainWindow(QMainWindow):
             dem_cellsize = {3: 3.0 / 3600.0,
                             1: 1.0 / 3600.0,
                             15: 15.0 / 111320.0}.get(res)
+            # Step halus 1/4 DEM: 30m -> 7.5m agar engine tidak loncat 100m
+            if p.get("dem_fine_step"):
+                dem_cellsize = dem_cellsize / 4.0 if dem_cellsize else None
             engine = p.get("engine", "Standard")
             tx_lat, tx_lon = p["tx_lat"], p["tx_lon"]
             if p.get("path_profile"):
@@ -681,6 +686,60 @@ class MainWindow(QMainWindow):
         pm = int(p.get("model_pm", 3))
         if p.get("engine") == "HD" and int(p.get("dem_resolution", 3)) != 1:
             self._set_status("HD engine requires 30 m DEM; using 30 m.")
+        # LIDAR + 360 seg + ppd 6000 = SIGSEGV (-11) race OOM. Cap LIDAR ke 60 seg aman.
+        if p.get("engine") == "LIDAR" and int(p.get("plot_segments", 360)) > 120:
+            p["plot_segments"] = 60
+            self._set_status("LIDAR: segments 360→60 (hindari crash -11, ppd tinggi)")
+            self.terminal.appendPlainText("[fix] LIDAR segments capped 60 untuk hindari SIGSEGV thread race (ppd 6000)")
+        self._run_with(p, self._dem_spec(p))
+
+    def _bearing_deg(self, lat1, lon1, lat2, lon2) -> float:
+        import math
+        phi1, phi2 = math.radians(lat1), math.radians(lat2)
+        dlon = math.radians(lon2 - lon1)
+        y = math.sin(dlon) * math.cos(phi2)
+        x = math.cos(phi1)*math.sin(phi2) - math.sin(phi1)*math.cos(phi2)*math.cos(dlon)
+        return (math.degrees(math.atan2(y, x)) + 360) % 360
+
+    def start_line_itm(self) -> None:
+        """Propagasi warna ITM hanya garis lurus Tx→Rx (azimuth sempit)."""
+        try:
+            p = self.form.collect()
+        except Exception as exc:
+            QMessageBox.warning(self, "Input error", str(exc))
+            return
+        if p.get("rx_lat") is None or p.get("rx_lon") is None:
+            QMessageBox.warning(self, "Input error", "Set Rx lat/lon dulu untuk garis Tx→Rx.")
+            return
+        # Paksa ITM
+        p["model_pm"] = 1
+        p["engine"] = "Standard"
+        # Radius = jarak Tx-Rx + 2km margin (garis saja, tidak full area)
+        dist = self._link_distance_km(p)
+        p["radius"] = math.ceil(dist) + 2
+        # Azimuth sempit 0.9° sesuai request 0.1-1° tapi di-center ke bearing Rx
+        brg = self._bearing_deg(p["tx_lat"], p["tx_lon"], p["rx_lat"], p["rx_lon"])
+        # User minta 0.1-1 → lebar 0.9°, pakai ±0.45° di sekitar bearing
+        # Untuk garis benar-benar tipis, pakai lebar 1.5° agar tetap terlihat beberapa px
+        half = 0.75  # 1.5° total
+        start = (brg - half) % 360
+        end = (brg + half) % 360
+        # Handle wrap: mask_png_sector sudah handle start>end
+        if start < 0.1: start = 0.1
+        if end < 0.1: end = 0.1
+        p["az_mask_enabled"] = True
+        p["az_mask_start_deg"] = round(start, 2)
+        p["az_mask_end_deg"] = round(end, 2)
+        # Sinkronkan UI spinbox agar user lihat
+        try:
+            self.form.az_mask.setChecked(True)
+            self.form.az_start.setValue(p["az_mask_start_deg"])
+            self.form.az_end.setValue(p["az_mask_end_deg"])
+            self.form.model.setCurrentIndex(self.form.model.findData(1))
+        except Exception:
+            pass
+        self._set_status(f"Garis ITM Tx→Rx bearing {brg:.1f}° azimuth {start:.1f}°→{end:.1f}° ({dist:.2f}km)")
+        self.terminal.appendPlainText(f"[line] ITM garis lurus Tx→Rx {dist:.2f}km bearing {brg:.1f}° mask {start:.2f}-{end:.2f}")
         self._run_with(p, self._dem_spec(p))
 
     def _run_with(self, p: dict, dem_spec: dict | None) -> None:
@@ -696,9 +755,11 @@ class MainWindow(QMainWindow):
         # A new run invalidates the previous run's saved-Tx indicator.
         self.map.clear_tx_saved()
 
-        # Force-clean the whole render cache BEFORE a new run so no leftover
-        # image from an earlier run can ever be picked up by the GUI.
-        self._purge_render_cache()
+        # JANGAN purge sebelum run — biar log tidak spam [cache] dibersihkan
+        # dan biar run sebelumnya tetap bisa di-export. Purge hanya AFTER run
+        # (keep=run_dir aktif) di _on_finished. Komentar baris ini hilangkan
+        # spam 3 item 13.4MB setiap start.
+        # self._purge_render_cache()
 
         run_dir = tempfile.mkdtemp(prefix="siggui_", dir=self.cache_dir)
         out_base = os.path.join(run_dir, "coverage")
@@ -761,6 +822,18 @@ class MainWindow(QMainWindow):
             self.map.show_coverage(result["png"], bbox, self.form.color_path.text())
             if p.get("tx_lat") is not None and p.get("tx_lon") is not None:
                 self.map.mark_tx_saved(float(p["tx_lat"]), float(p["tx_lon"]))
+            # Jika mode garis sempit ITM (az 0.1-1°), gambar juga garis kuning Tx→Rx sebagai referensi
+            if p.get("az_mask_enabled") and p.get("rx_lat") is not None and p.get("rx_lon") is not None:
+                try:
+                    # hitung lebar sektor untuk cek mode garis (<5°)
+                    s = float(p.get("az_mask_start_deg", 0))
+                    e = float(p.get("az_mask_end_deg", 0))
+                    width = (e - s) % 360
+                    if 0 < width <= 5:
+                        self.map.draw_link(float(p["tx_lat"]), float(p["tx_lon"]),
+                                           float(p["rx_lat"]), float(p["rx_lon"]), color="#ffec3d")
+                except Exception:
+                    pass
             self._last_result = result
             self._set_status("Done. Coverage shown on map.")
             if result.get("kml"):
@@ -1229,6 +1302,50 @@ class MainWindow(QMainWindow):
             tx_amsl=amsl(p.get("tx_lat"), p.get("tx_lon"), p.get("tx_height")),
             rx_name=rx_name, rx_lat=_f(rx_lat), rx_lon=_f(rx_lon),
             rx_amsl=amsl(rx_lat, rx_lon, p.get("rx_height")))
+
+    def export_dem_tif(self) -> None:
+        """Export DEM clip ter-potong untuk QGIS + validasi lubang hitam di Tx."""
+        try:
+            p = self.form.collect()
+        except Exception as exc:
+            QMessageBox.warning(self, "Input error", str(exc))
+            return
+        folder = p.get("demnas_dir")
+        if not folder or not os.path.isdir(folder):
+            QMessageBox.warning(self, "Export DEM", "Pilih folder DEMNAS (.tif) dulu.")
+            return
+        tx_lat, tx_lon = p.get("tx_lat"), p.get("tx_lon")
+        if tx_lat is None or tx_lon is None:
+            QMessageBox.warning(self, "Export DEM", "Koordinat Tx belum valid.")
+            return
+        path, _ = QFileDialog.getSaveFileName(self, "Export DEM .tif (QGIS)", "dem_clip.tif", "GeoTIFF (*.tif)")
+        if not path:
+            return
+        try:
+            from . import dem_convert as dc
+            vrt = dc._demnas_vrt(folder, self.cache_dir)
+            dc._assert_covers(vrt, float(tx_lat), float(tx_lon))
+            elev = dc._sample_elevation(vrt, float(tx_lat), float(tx_lon))
+            # export clip sekitar Tx ± radius (atau 2km default untuk cek lubang)
+            radius_km = float(p.get("radius", 2) or 2)
+            lat_deg = min(0.05, radius_km / 111.0)
+            lon_deg = radius_km / (111.32 * max(0.01, math.cos(math.radians(float(tx_lat)))))
+            import shutil, subprocess
+            cmd = ["gdalwarp", "-t_srs", "EPSG:4326",
+                   "-te", str(float(tx_lon)-lon_deg), str(float(tx_lat)-lat_deg),
+                   str(float(tx_lon)+lon_deg), str(float(tx_lat)+lat_deg),
+                   "-tr", "0.00027", "0.00027", "-r", "bilinear", vrt, path]
+            subprocess.run(cmd, check=True)
+            msg = f"DEM diekspor ke {path}\nElevasi Tx: {elev} m"
+            if elev is None or elev == 0:
+                msg += "\n⚠️ LUBANG HITAM: elev 0/void di Tx → 100% masalah preprocessing! Cek QGIS."
+                self.terminal.appendPlainText(f"[DEM] Tx void/0 di ({tx_lat},{tx_lon}) → {path}")
+            else:
+                msg += "\n✅ Tidak ada lubang di Tx → cek engine step/azimuth."
+            QMessageBox.information(self, "Export DEM", msg)
+            self._set_status(f"DEM exported: {path}")
+        except Exception as exc:
+            QMessageBox.warning(self, "Export DEM", f"Gagal: {exc}")
 
     def _export_kmz(self, result: dict, png: str, bbox, path: str, base: str) -> None:
         """Build a KMZ (zipped KML GroundOverlay + PNG image)."""

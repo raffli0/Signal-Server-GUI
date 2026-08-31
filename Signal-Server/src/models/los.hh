@@ -64,12 +64,12 @@ void PlotLOSPath(struct site source, struct site destination, char mask_value);
 void PlotPropPath(struct site source, struct site destination, unsigned char mask_value, FILE *fd, PropModel propmodel, int knifeedge,
                   int pmenv);
 
-void PlotLOSMap(struct site source, double altitude, char *plo_filename, bool use_threads, uint8_t segments);
+void PlotLOSMap(struct site source, double altitude, char *plo_filename, bool use_threads, int segments);
 
 void PlotPropagation(struct site source, bbox bounds, 
-                    double altitude, char *plo_filename,
+                     double altitude, char *plo_filename,
 		            PropModel propmodel, int knifeedge, int haf, int pmenv, 
-                    bool use_threads, uint8_t segments);
+                     bool use_threads, int segments);
 
 /// @brief Plot propagation using a center point and circular radius. This plots around a circle instead of a rectangular bounding box and is theoretically more efficient.
 /// @param source source transmitter
@@ -80,9 +80,9 @@ void PlotPropagation(struct site source, bbox bounds,
 /// @param use_threads whether to use multithreading
 /// @param segments segments to split the plot circle into (must be a multiple of 2 or 3)
 void PlotPropagationRadius(struct site source, double range, 
-                            double altitude, char *plot_filename, 
-                            PropModel prop_model, int knifeedge, int haf, int pmenv, 
-                            bool use_threads, uint8_t segments);
+                             double altitude, char *plot_filename, 
+                             PropModel prop_model, int knifeedge, int haf, int pmenv, 
+                             bool use_threads, int segments);
 
 void PlotPath(struct site source, struct site destination, char mask_value);
 

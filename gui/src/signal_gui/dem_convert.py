@@ -888,6 +888,7 @@ def _asc_cellsize(
     target: Optional[float],
     max_cells: int,
     ppd: int = 1200,
+    allow_oversample: bool = False,
 ) -> float:
     """Pick the LIDAR ``.asc`` cell size (degrees) for a run bounding box.
 
@@ -895,17 +896,22 @@ def _asc_cellsize(
     falling back to the legacy ``span/ppd`` behaviour when unspecified, then
     clamps so that:
 
-    * the grid is never finer than the source data (``native``), and
+    * the grid is never finer than the source data (``native``) unless
+      allow_oversample (step 1/4 DEM → 7.5m bilinear),
     * the total cell count stays under ``max_cells`` (bounds file size and
-      engine load time — the .asc is plain text).
+       engine load time — the .asc is plain text).
+    When target==30m (SRTM1) and downsampling OFF, max_cells clamp is
+    bypassed so bukit kecil dekat Tx tidak hilang.
     """
     if target and target > 0:
         cellsize = float(target)
     else:
         cellsize = span / float(max(1, ppd)) if ppd else (1.0 / 1200.0)
-    if native and native > 0:
+    if native and native > 0 and not allow_oversample:
         cellsize = max(cellsize, native)
-    if span > 0 and max_cells > 0:
+    # Honour explicit 30m request: don't force downsample via max_cells
+    # unless caller allows it (max_cells==0 means bypass clamp).
+    if span > 0 and max_cells and max_cells > 0:
         cellsize = max(cellsize, span / math.sqrt(max_cells))
     return cellsize
 
@@ -952,7 +958,7 @@ def demnas_folder_to_asc(
     lat_lo: float, lat_hi: float, lon_lo: float, lon_hi: float,
     ppd: int = 1200,
     target_cellsize: Optional[float] = None,
-    max_cells: int = 6_000_000,
+    max_cells: int = 25_000_000,
 ) -> tuple[str, dict]:
     """Convert a local DEMNAS folder (``.tif`` tiles) to a LIDAR ``.asc``.
 
@@ -980,8 +986,10 @@ def demnas_folder_to_asc(
     ds_vrt = gdal.Open(vrt)
     native = abs(ds_vrt.GetGeoTransform()[1]) if ds_vrt is not None else None
     ds_vrt = None
+    # allow_oversample True when target < native (step 1/4 → 7.5m bilinear)
+    allow_os = bool(target_cellsize and native and target_cellsize < native)
     cellsize_deg = _asc_cellsize(span, native or 0.0, target_cellsize,
-                                 max_cells, ppd)
+                                 max_cells, ppd, allow_oversample=allow_os)
 
     out_dir = _cache_sub(cache_dir, "lidar")
     clipped = os.path.join(out_dir, "clip.tif")
