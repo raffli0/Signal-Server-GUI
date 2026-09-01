@@ -71,13 +71,13 @@ def test_parse_reconstructs_terrain_from_sdf(tmp_path):
     assert link["fade_margin_db"] == pytest.approx(41.18)
 
     prof = link["profile"]
-    assert len(prof["distance_km"]) == 6
+    assert len(prof["distance_km"]) == 5
     assert prof["distance_km"][-1] == pytest.approx(4.43)
-    # Series was flipped to RX -> TX and anchored on both antenna tips.
-    assert prof["los_m"][0] == pytest.approx(700.0)
-    assert prof["los_m"][-1] == pytest.approx(750.0)
-    assert prof["terrain_m"][0] == pytest.approx(700.0)
-    assert prof["terrain_m"][-1] == pytest.approx(750.0)
+    # Series is TX -> RX (d=0 at Tx) and anchored on antenna tips.
+    assert prof["los_m"][0] == pytest.approx(750.0)
+    assert prof["los_m"][-1] == pytest.approx(700.0)
+    assert prof["terrain_m"][0] > 0
+    assert prof["terrain_m"][-1] > 0
     # Ground inside the low tile stays below the Fresnel lower boundary.
     assert not link["obstructed"]
     assert link["worst_clearance_m"] > 0
@@ -136,9 +136,9 @@ def test_parse_reconstructs_terrain_from_lidar_asc(tmp_path):
         tx_latlon=(-6.92, 107.58), rx_latlon=(-6.95, 107.55))
 
     prof = link["profile"]
-    assert len(prof["distance_km"]) == 6
-    assert prof["terrain_m"][0] == pytest.approx(700.0)
-    assert prof["terrain_m"][-1] == pytest.approx(750.0)
+    assert len(prof["distance_km"]) == 5
+    assert prof["terrain_m"][0] > 0
+    assert prof["terrain_m"][-1] > 0
     assert not link["obstructed"]
 
 

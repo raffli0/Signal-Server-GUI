@@ -157,14 +157,16 @@ def ppm_to_png(ppm_path: str, png_path: Optional[str] = None,
 
 
 def mask_png_sector(png_path: str, bbox, tx_lat: float, tx_lon: float,
-                    start_deg: float, end_deg: float) -> str:
+                    start_deg: float, end_deg: float,
+                    max_dist_km: Optional[float] = None) -> str:
     """Keep only the bearing wedge ``start..end`` (deg from North) of a PNG.
 
     The engine always computes the full 360-degree circle; this post-process
     zeroes the alpha of pixels whose great-circle initial bearing from the Tx
     falls outside ``[start, end]`` (``start > end`` wraps over North, e.g.
-    300..60 keeps the northern lobe). ``bbox`` is (N, E, S, W) matching the
-    overlay extent so pixel centres map linearly to coordinates.
+    300..60 keeps the northern lobe). If ``max_dist_km`` is provided, cleanly
+    cuts off the beam at that radius (matching Radio Mobile's neat Rx endpoint).
+    ``bbox`` is (N, E, S, W) matching the overlay extent so pixel centres map linearly.
     """
     img = np.asarray(Image.open(png_path).convert("RGBA")).copy()
     h, w = img.shape[:2]
@@ -189,6 +191,16 @@ def mask_png_sector(png_path: str, bbox, tx_lat: float, tx_lon: float,
 
     keep = ((brg >= start_deg) & (brg <= end_deg)) if start_deg <= end_deg \
         else ((brg >= start_deg) | (brg <= end_deg))
+
+    # Clean radial cutoff at Rx station distance (matching Radio Mobile)
+    if max_dist_km is not None and float(max_dist_km) > 0:
+        dlat_rad = np.radians(lat2 - float(tx_lat))
+        dlon_rad = np.radians(lon2 - float(tx_lon))
+        a_dist = np.sin(dlat_rad / 2.0)**2 + np.cos(phi1) * np.cos(phi2) * np.sin(dlon_rad / 2.0)**2
+        c_dist = 2.0 * np.arcsin(np.clip(np.sqrt(a_dist), 0.0, 1.0))
+        dist_km_grid = 6371.0 * c_dist
+        keep = keep & (dist_km_grid <= float(max_dist_km))
+
     # Tx cell itself always stays visible.
     keep = keep | (((lat2 - float(tx_lat)) ** 2 + (lon2 - float(tx_lon)) ** 2)
                    <= max((n - s) / h, (e - wst) / w) ** 2)

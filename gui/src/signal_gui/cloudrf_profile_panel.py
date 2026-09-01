@@ -254,42 +254,42 @@ class CloudRFProfileCanvas(QWidget):
         painter.setFont(QFont("Segoe UI", 8, QFont.Weight.Bold))
         painter.drawText(QRectF(m_left + pw / 2 - 30, H - 16, 60, 14), Qt.AlignmentFlag.AlignCenter, "Km")
 
-        # 2. Solid Vibrant Green Terrain Polygon Fill
-        poly_pts = []
+        # 2. Dynamic Segmented Terrain Fill & Contour (Green / Yellow / Red based on Fresnel & LOS)
         base_y_screen = m_top + ph
-        first_sx, _ = to_screen(dists[0], terrain[0])
-        poly_pts.append(QPointF(first_sx, base_y_screen))
-
-        for i in range(n):
-            sx, sy = to_screen(dists[i], terrain[i])
-            poly_pts.append(QPointF(sx, sy))
-
-        last_sx, _ = to_screen(dists[-1], terrain[-1])
-        poly_pts.append(QPointF(last_sx, base_y_screen))
-
-        terrain_poly = QPolygonF(poly_pts)
-        painter.setBrush(QBrush(QColor("#16A34A")))  # Vibrant Cloud-RF Green Fill
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.drawPolygon(terrain_poly)
-
-        # Draw Top Terrain Contour Line (Clearance aware: Green / Yellow / Red)
         for i in range(n - 1):
             x1, y1 = to_screen(dists[i], terrain[i])
             x2, y2 = to_screen(dists[i+1], terrain[i+1])
             l1, l2 = los[i], los[i+1]
             t1, t2 = terrain[i], terrain[i+1]
             fl1, fl2 = f_lower[i], f_lower[i+1]
-            clr1, clr2 = (l1 - t1), (l2 - t2)
-            f_rad = max(0.1, abs(l1 - fl1))
 
-            if clr1 < 0 or clr2 < 0:
-                seg_col = QColor("#EF4444")  # Red: Obstruction / Penetrating LOS
-            elif clr1 < 0.6 * f_rad or clr2 < 0.6 * f_rad:
-                seg_col = QColor("#F59E0B")  # Yellow: Marginal Fresnel penetration
+            # Obstruction & Fresnel analysis for segment [i, i+1]:
+            # 🔴 Red (#FF0000): Segmen puncak bukit/gunung yang menembus garis pandang LOS (obstructed)
+            if t1 >= l1 or t2 >= l2:
+                fill_color = QColor(220, 38, 38, 210)   # Red fill
+                line_color = QColor("#FF0000")
+            # 🟡 Yellow (#FFFF00): Segmen tanah kritis yang mulai menyentuh 60% zona Fresnel
+            elif t1 >= fl1 or t2 >= fl2:
+                fill_color = QColor(234, 179, 8, 210)   # Yellow fill
+                line_color = QColor("#FFFF00")
+            # 🟢 Green (#00E600): Segmen tanah yang berada aman di bawah zona Fresnel (> 0.6 F1)
             else:
-                seg_col = QColor("#22C55E")  # Green: Clear
+                fill_color = QColor(22, 163, 74, 210)   # Green fill
+                line_color = QColor("#00E600")
 
-            painter.setPen(QPen(seg_col, 2))
+            # Draw vertical trapezoid slice
+            trap = QPolygonF([
+                QPointF(x1, base_y_screen),
+                QPointF(x1, y1),
+                QPointF(x2, y2),
+                QPointF(x2, base_y_screen)
+            ])
+            painter.setBrush(QBrush(fill_color))
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.drawPolygon(trap)
+
+            # Draw top contour line
+            painter.setPen(QPen(line_color, 2.2))
             painter.drawLine(QPointF(x1, y1), QPointF(x2, y2))
 
         # 3. Fresnel Zone (Dashed Green Curve)
@@ -578,8 +578,9 @@ class CloudRFPathProfilePanel(QWidget):
             lbl.setTextFormat(Qt.TextFormat.RichText)
             return lbl
 
-        legend_row.addWidget(_legend_item("■", "Landcover", "#3182CE"))
-        legend_row.addWidget(_legend_item("■", "Terrain", "#22C55E"))
+        legend_row.addWidget(_legend_item("■", "Aman (>0.6 F1)", "#00E600"))
+        legend_row.addWidget(_legend_item("■", "Kritis (≤0.6 F1)", "#FFFF00"))
+        legend_row.addWidget(_legend_item("■", "Terhalang (LOS)", "#FF0000"))
         legend_row.addWidget(_legend_item("---", "Fresnel", "#48BB78"))
         legend_row.addWidget(_legend_item("—", "LOS", "#22C55E"))
         right_col.addLayout(legend_row)

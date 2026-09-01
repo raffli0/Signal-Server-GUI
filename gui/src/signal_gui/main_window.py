@@ -748,6 +748,7 @@ class MainWindow(QMainWindow):
         # Radius = jarak Tx-Rx + 2km margin (garis saja, tidak full area)
         dist = self._link_distance_km(p)
         p["radius"] = math.ceil(dist) + 2
+        p["max_dist_km"] = dist  # Cut off precisely at the Rx station (Radio Mobile style)
         # Azimuth sempit 0.9° sesuai request 0.1-1° tapi di-center ke bearing Rx
         brg = self._bearing_deg(p["tx_lat"], p["tx_lon"], p["rx_lat"], p["rx_lon"])
         # User minta 0.1-1 → lebar 0.9°, pakai ±0.45° di sekitar bearing
@@ -845,7 +846,8 @@ class MainWindow(QMainWindow):
                         result["png"], bbox,
                         float(p["tx_lat"]), float(p["tx_lon"]),
                         float(p.get("az_mask_start_deg", 0.1)),
-                        float(p.get("az_mask_end_deg", 360.0)))
+                        float(p.get("az_mask_end_deg", 360.0)),
+                        max_dist_km=p.get("max_dist_km"))
                 except Exception as exc:  # noqa: BLE001 - cosmetic layer
                     self._set_status(f"Peringatan: mask azimuth gagal ({exc})")
             # show_coverage embeds the PNG as base64; after this the file is

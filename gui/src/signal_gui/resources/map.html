@@ -301,6 +301,7 @@
     .leaflet-image-layer.leaflet-zoom-animated {
       image-rendering: pixelated;
       image-rendering: crisp-edges;
+      mix-blend-mode: multiply;
     }
 
     /* Basemap Style Picker Menu */
@@ -437,7 +438,8 @@
     }
 
     .rm-hillshade-tiles {
-      filter: grayscale(100%) contrast(112%) brightness(100%) !important;
+      filter: grayscale(100%) brightness(73%) contrast(180%) !important;
+      background-color: #9c9c9c !important;
     }
 
     /* Floating dBm readout following the cursor over the coverage overlay. */
@@ -594,8 +596,8 @@
     // Initialize Map with Satellite imagery by default
     // === Multi-style basemap definitions ===
     var baseLayers = {
-      rm_pure_topo: L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}', {
-        maxZoom: 22, maxNativeZoom: 16, attribution: 'Esri Light Gray (No Labels)', className: 'rm-hillshade-tiles'
+      rm_pure_topo: L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Elevation/World_Hillshade/MapServer/tile/{z}/{y}/{x}', {
+        maxZoom: 22, maxNativeZoom: 16, attribution: 'Radio Mobile Topo Relief (No Labels)', className: 'rm-hillshade-tiles'
       }),
       rm_topo: L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', {
         maxZoom: 22, maxNativeZoom: 17, attribution: '© OpenTopoMap', className: 'rm-topo-tiles'

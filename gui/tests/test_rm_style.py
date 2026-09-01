@@ -136,7 +136,8 @@ def test_sdf_tile_load_and_sample(tmp_path):
     data = np.arange(n_rows * n_cols, dtype=np.int32).reshape(n_rows, n_cols)
     # Tile covering lat -6..-5, lon 107..108 expressed in SPLAT west degrees.
     tile_lines = ["253.0", "-6.0", "252.0", "-5.0"]
-    tile_lines += [str(v) for v in data.reshape(-1)]
+    # Real srtm2sdf emits columns East->West
+    tile_lines += [str(v) for v in data[:, ::-1].reshape(-1)]
     sdf = tmp_path / "-6_-5_252_253.sdf"
     sdf.write_text("\n".join(tile_lines) + "\n")
 

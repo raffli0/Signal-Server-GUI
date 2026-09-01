@@ -766,12 +766,10 @@ class ParameterForm(QWidget):
         self.color_path.setReadOnly(True)
         self.color_path.setPlaceholderText("Default: splat-classic.dcf")
         self.color_path.setStyleSheet("background: #1B1E22; color: #A0AEC0; border: 1px solid #3F474F; border-radius: 3px; padding: 3px; font-size: 10px;")
-        default_color = ""
-        if self.ss_root:
+        default_color = os.path.join(
+            os.path.dirname(__file__), "resources", "radiomobile.dcf")
+        if not os.path.exists(default_color) and self.ss_root:
             default_color = os.path.join(self.ss_root, "color", "splat-classic.dcf")
-        if not default_color or not os.path.exists(default_color):
-            default_color = os.path.join(
-                os.path.dirname(__file__), "resources", "splat-classic.dcf")
         if os.path.exists(default_color):
             self.color_path.setText(default_color)
         self._color_user_chosen = False

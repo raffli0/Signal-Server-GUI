@@ -221,9 +221,10 @@ def load_sdf_tile(path: str) -> SdfTile:
     """Read one uncompressed .sdf tile (header + one integer per line).
 
     Header order matches ``LoadSDF_SDF``: max_west, min_north (south),
-    min_west, max_north (north). Data rows run south->north (row 0 =
-    ``min_north``, verified against raw SRTM .hgt ground truth),
-    columns west->east; elevations are metres.
+    min_west, max_north (north). In SPLAT .sdf files, rows run south->north
+    (row 0 = min_north) and columns are emitted East->West (col 0 = East).
+    We flip columns horizontally (data[:, ::-1]) so data columns run West->East
+    (col 0 = West) matching SdfTile and ElevationSource.
     """
     with open(path, "r", encoding="utf-8", errors="replace") as fh:
         max_west = float(fh.readline())
@@ -235,6 +236,8 @@ def load_sdf_tile(path: str) -> SdfTile:
     if n * n != raw.size:
         raise ValueError(f"{path}: {raw.size} samples is not square")
     data = raw.reshape(n, n)
+    # SPLAT .sdf columns run East -> West; flip to West -> East
+    data = data[:, ::-1]
     if min_west > 180:  # 0..360 west domain -> eastern longitudes
         west, east = 360.0 - min_west, 360.0 - max_west
     else:
