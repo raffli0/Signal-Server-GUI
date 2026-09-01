@@ -148,10 +148,23 @@ def download_tile_zip(tile_code: str, resolution: int, dest_dir: str) -> str:
     """
     if resolution not in VIEWFINDER_BASE:
         raise DemResolveError(f"Unsupported DEM resolution: {resolution}")
+    # Sanitasi tile_code: cegah path traversal `../` dan karakter aneh
+    raw_code = tile_code.strip()
+    if "/" in raw_code or "\\" in raw_code or ".." in raw_code:
+        # jika URL, ambil basename saja
+        if raw_code.startswith("http://") or raw_code.startswith("https://"):
+            pass  # URL handled below
+        else:
+            raise DemResolveError(f"Tile code tidak valid (path traversal): {tile_code}")
     if tile_code.startswith("http://") or tile_code.startswith("https://"):
         url = tile_code
         code = tile_code.rstrip("/").split("/")[-1].replace(".zip", "")
+        # sanitasi code dari URL juga
+        code = re.sub(r"[^A-Za-z0-9_-]", "", code) or "tile"
     else:
+        # hanya alfanumerik, _ dan -
+        if not re.match(r"^[A-Za-z0-9_-]+$", tile_code):
+            raise DemResolveError(f"Tile code tidak valid: {tile_code}")
         url = f"{VIEWFINDER_BASE[resolution]}/{tile_code}.zip"
         code = tile_code
     os.makedirs(dest_dir, exist_ok=True)

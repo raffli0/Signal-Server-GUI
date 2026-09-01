@@ -1,10 +1,10 @@
-; Radio Mobile "Rainbow colors" 12-level DBM Signal Palette (splat-classic.dcf)
+; Radio Mobile "Rainbow colors" 12-level DBM Signal Palette (rm_rainbow.dcf)
 ; Matches Radio Mobile 12-step scale (-60 to -100 dBm, step 4 dB):
 ;   -60 dBm : #FF1E50 (Crimson / Deep Rose Red)
 ;   -64 dBm : #FF6464 (Coral Red)
 ;   -68 dBm : #FFDC64 (Peach / Gold)
 ;   -72 dBm : #FFFF64 (Yellow)
-;   -76 dBm : #C0FF64 (Lime / Chartreuse)
+;   -76 dBm : #64FF64 (Lime / Chartreuse)
 ;   -80 dBm : #64FF64 (Bright Green)
 ;   -84 dBm : #64FF64 (Light Green)
 ;   -88 dBm : #64FFC0 (Mint / Seafoam)

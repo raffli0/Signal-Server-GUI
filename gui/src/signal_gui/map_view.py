@@ -247,9 +247,15 @@ class MapView(QWebEngineView):
         with open(png_path, "rb") as fh:
             raw = fh.read()
         b64 = base64.b64encode(raw).decode("ascii")
-        self._coverage = (f"data:image/png;base64,{b64}", [s, w, n, e])
+        data_uri = f"data:image/png;base64,{b64}"
+        self._coverage = (data_uri, [s, w, n, e])
         self._cov_palette = palette_from_color_file(color_file)
-        self._render()
+        if self._ready:
+            pal_js = f"window.__covPalette = {json.dumps(self._cov_palette)};" if self._cov_palette else ""
+            js = f"{pal_js} loadCoverage('{data_uri}', [[{s}, {w}], [{n}, {e}]]);"
+            self.page().runJavaScript(js)
+        else:
+            self._render()
 
     def clear_coverage(self) -> None:
         """Remove the coverage overlay + link line from the live map (Tx/Rx

@@ -117,9 +117,13 @@ def ppm_to_png(ppm_path: str, png_path: Optional[str] = None,
     if png_path is None:
         png_path = os.path.splitext(ppm_path)[0] + ".png"
     rgb = np.asarray(Image.open(ppm_path).convert("RGB")).copy()
+    # Background pixels in Signal-Server are either greyscale terrain (R=G=B)
+    # or sea-level water (0, 0, 170).
     grey = (rgb[..., 0] == rgb[..., 1]) & (rgb[..., 1] == rgb[..., 2])
+    sea = (rgb[..., 0] == 0) & (rgb[..., 1] == 0) & (rgb[..., 2] == 170)
+    uncovered = grey | sea
 
-    labels, _n = ndimage.label(grey)
+    labels, _n = ndimage.label(uncovered)
     border = np.unique(np.concatenate((
         labels[0, :], labels[-1, :],
         labels[:, 0], labels[:, -1],
@@ -128,42 +132,24 @@ def ppm_to_png(ppm_path: str, png_path: Optional[str] = None,
     if border.size:
         background = np.isin(labels, border)
     else:
-        background = np.zeros(grey.shape, dtype=bool)
+        background = np.zeros(rgb.shape[:2], dtype=bool)
 
     strongest = parse_strongest_color(color_file)
     enclosed_grey = grey & ~background
     lum = 0.299 * strongest[0] + 0.587 * strongest[1] + 0.114 * strongest[2]
 
-    # --- DEM greyscale field (0..255), per pixel ----------------------------
-    # The engine paints the whole backdrop as a grey hillshade of the DEM;
-    # covered pixels replace it with flat band colours. Recover the DEM
-    # greyscale at EVERY pixel by inpainting from the nearest grey sample,
-    # then recolour per pixel with
-    #     Warna_Final = (Warna_Solid_Palet * Nilai_Greyscale_DEM) / 255
-    dem_grey = np.where(grey, rgb[..., 0], np.nan).astype(np.float64)
-    if np.isnan(dem_grey).any():
-        idx = ndimage.distance_transform_edt(
-            np.isnan(dem_grey), return_distances=False, return_indices=True)
-        dem_grey = dem_grey[tuple(idx)]
-    dem_grey = np.clip(dem_grey, 0.0, 255.0)
-
-    covered = ~background
-
-    if lum < 200:
-        # Saturated Tx core (engine draws it pure white/grey): recolour to
-        # the strongest band, modulated per pixel by the DEM greyscale.
+    # For saturated Tx core (drawn grey by engine when signal exceeds top band):
+    # recolour using the strongest palette color times the local DEM relief.
+    if lum < 200 and np.any(enclosed_grey):
+        dem_local = rgb[..., 0].astype(np.float64) / 255.0
+        dem_local = np.clip(dem_local, 0.15, 1.0)
         for ch in range(3):
-            chan = strongest[ch] * dem_grey / 255.0
+            chan = strongest[ch] * dem_local
             rgb[..., ch][enclosed_grey] = chan[enclosed_grey].astype(np.uint8)
 
-    # Shade-modulate every other covered pixel (all palette bands) with the
-    # same formula: the pixel's own solid colour times the DEM greyscale.
-    band_px = covered & ~enclosed_grey if lum < 200 else covered
-    for ch in range(3):
-        chan = rgb[..., ch].astype(np.float64) * dem_grey / 255.0
-        rgb[..., ch][band_px] = chan[band_px].astype(np.uint8)
-
-    # Alpha is background keying only -- no semi-transparent core hacks.
+    # rgb in PPM ALREADY contains the true per-pixel 3D terrain hillshade
+    # from TerrainHillshade(). Keep it directly without flat border inpainting.
+    # Alpha is background keying only.
     alpha = np.where(background, 0, 255).astype(np.uint8)
     rgba = np.dstack((rgb.astype(np.uint8), alpha)).astype(np.uint8)
     Image.fromarray(rgba, "RGBA").save(png_path)

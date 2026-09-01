@@ -581,11 +581,9 @@
       }
       covCtx.putImageData(out, 0, 0);
       var url = covCanvas.toDataURL();
+      var ov0 = document.getElementById('opacitySlider').value / 100.0;
       if (!overlay) {
-        var ov0 = document.getElementById('opacitySlider').value / 100.0;
         overlay = L.imageOverlay(url, covBounds, { opacity: ov0, interactive: false }).addTo(map);
-        var el0 = overlay.getElement();
-        if (el0) { el0.style.mixBlendMode = 'multiply'; }
       } else {
         overlay.setUrl(url);
       }
@@ -612,6 +610,17 @@
       covBounds = bounds;
       map.fitBounds(bounds);
 
+      if (window.__covPalette && Array.isArray(window.__covPalette.colors)
+          && Array.isArray(window.__covPalette.levels)
+          && window.__covPalette.colors.length === window.__covPalette.levels.length) {
+        PALETTE = window.__covPalette.colors;
+        LEVEL_THRESHOLDS = window.__covPalette.levels;
+      }
+
+      var ov0 = document.getElementById('opacitySlider').value / 100.0;
+      overlay = L.imageOverlay(dataUri, bounds, { opacity: ov0, interactive: false }).addTo(map);
+      _onZoomOpacity();
+
       var img = new Image();
       img.onload = function () {
         covCanvas.width = img.width;
@@ -620,25 +629,13 @@
         covCtx.drawImage(img, 0, 0);
         try {
           srcPixels = covCtx.getImageData(0, 0, img.width, img.height).data;
+          bandMap = computeBands(srcPixels, img.width, img.height);
+          visibleBands = new Set();
+          for (var i = 0; i < PALETTE.length; i++) visibleBands.add(i);
+          buildLayerMenu();
         } catch (e) {
-          // Canvas read failed (e.g. tainted): fall back to a plain overlay.
-          overlay = L.imageOverlay(dataUri, bounds, { opacity: ov0, interactive: false }).addTo(map);
-          var elF = overlay.getElement();
-          if (elF) { elF.style.mixBlendMode = 'multiply'; }
-          _onZoomOpacity();
-          return;
+          // ignore canvas inspection failure
         }
-        bandMap = computeBands(srcPixels, img.width, img.height);
-        visibleBands = new Set();
-        for (var i = 0; i < PALETTE.length; i++) visibleBands.add(i);
-        buildLayerMenu();
-        renderOverlay();
-      };
-      img.onerror = function () {
-        overlay = L.imageOverlay(dataUri, bounds, { opacity: ov0, interactive: false }).addTo(map);
-          var elF = overlay.getElement();
-          if (elF) { elF.style.mixBlendMode = 'multiply'; }
-        _onZoomOpacity();
       };
       img.src = dataUri;
 

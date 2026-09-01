@@ -1100,7 +1100,11 @@ class MainWindow(QMainWindow):
             try:
                 if keep_abs and os.path.abspath(entry.path) == keep_abs:
                     continue
+                # Do NOT delete DEM caches (lidar, vrt, demnas, srtm, etc.) during automatic purge!
+                # Only delete stale siggui_* run folders and temporary files.
                 if entry.is_dir(follow_symlinks=False):
+                    if not entry.name.startswith("siggui_"):
+                        continue
                     freed += _dir_size(entry.path)
                     shutil.rmtree(entry.path)
                 else:

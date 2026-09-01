@@ -1,0 +1,12 @@
+; Radio Mobile Rainbow Colors (Vibrant / Saturated Dark Version for Map Overlay)
+; Format: dBm: red, green, blue
+ -60: 230,   0,   0
+ -64: 255, 120,   0
+ -69: 255, 210,   0
+ -73: 160, 230,   0
+ -78:   0, 200,   0
+ -82:   0, 210,  90
+ -87:   0, 200, 180
+ -91:   0, 200, 240
+ -96:   0, 120, 255
+-100:  40,  40, 220

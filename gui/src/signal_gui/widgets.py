@@ -495,7 +495,7 @@ class ParameterForm(QWidget):
         self._dem_downsample.setToolTip("Jika OFF, engine paksa 30m tanpa clamp max_cells. ON = boleh turun ke 90m bila area >25M sel.")
         fl.addRow(self._dem_downsample)
         self._dem_fine_step = QCheckBox("Step halus 1/4 DEM (7.5m, anti-loncat 100m)")
-        self._dem_fine_step.setChecked(True)  # default ON - sampling 7.5-10m
+        self._dem_fine_step.setChecked(False)  # default OFF - sampling 7.5-10m
         self._dem_fine_step.setStyleSheet("color:#CBD5E0; font-size:11px;")
         self._dem_fine_step.setToolTip("Jika ON, DEM 30m di-oversample bilinear ke 7.5m (1/4). Step engine jadi 7.5-10m, jangan loncat 100m. Butuh RAM lebih.")
         fl.addRow(self._dem_fine_step)

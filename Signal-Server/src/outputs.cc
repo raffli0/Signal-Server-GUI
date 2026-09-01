@@ -31,8 +31,9 @@
 static unsigned TerrainHillshade(int indx, int x0, int y0)
 {
 	static const double SUN_AZIMUTH = 315.0 * DEG2RAD;	/* light from NW */
-	static const double SUN_ALTITUDE = 45.0 * DEG2RAD;
-	static const double AMBIENT = 0.25;
+	static const double SUN_ALTITUDE = 40.0 * DEG2RAD;
+	static const double AMBIENT = 0.15;
+	static const double Z_FACTOR = 3.5; /* Radio Mobile-style punchy 3D relief */
 
 	short z = dem[indx].data[x0][y0];
 	int xl = (x0 > 0) ? x0 - 1 : x0, xr = (x0 < mpi) ? x0 + 1 : x0;
@@ -55,8 +56,8 @@ static unsigned TerrainHillshade(int indx, int x0, int y0)
 	   (SDF terrain is stored in feet, LIDAR .asc in metres). */
 	double cell = (111320.0 / ppd) / (lidar ? 1.0 : 0.3048);
 
-	double dzn = (zr - zl) / ((xr - xl) * cell);	/* dz toward north */
-	double dze = (zu - zd) / ((yr - yl) * cell);	/* dz toward east  */
+	double dzn = ((zr - zl) * Z_FACTOR) / ((xr - xl) * cell);	/* dz toward north */
+	double dze = ((zu - zd) * Z_FACTOR) / ((yr - yl) * cell);	/* dz toward east  */
 
 	/* Surface normal (east, north, up) dotted with the sun vector. */
 	double nx = -dze, ny = -dzn, nz = 1.0;
@@ -71,7 +72,12 @@ static unsigned TerrainHillshade(int indx, int x0, int y0)
 	if (lit > 1.0)
 		lit = 1.0;
 
-	return (unsigned)(255.0 * (AMBIENT + (1.0 - AMBIENT) * lit));
+	/* High-contrast Radio Mobile curve: crisp shadows on ridges & bright highlights */
+	double shade = AMBIENT + (1.0 - AMBIENT) * pow(lit, 1.25);
+	if (shade > 1.0) shade = 1.0;
+	if (shade < 0.15) shade = 0.15;
+
+	return (unsigned)(255.0 * shade);
 }
 
 void DoPathLoss(char *filename, unsigned char geo, unsigned char kml,
@@ -1128,6 +1134,10 @@ void PathReport(struct site source, struct site destination, char *name,
 	four_thirds_earth = FOUR_THIRDS * EARTHRADIUS;
 
 	fd2 = fopen(report_name, "w");
+	if (!fd2) {
+		spdlog::error("Cannot open report file {}: {}", report_name, strerror(errno));
+		return;
+	}
 
 	fprintf(fd2, "\n\t\t--==[ Path Profile Analysis ]==--\n\n");
 	fprintf(fd2, "Transmitter site: %s\n", source.name);

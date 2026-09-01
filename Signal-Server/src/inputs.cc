@@ -67,11 +67,15 @@ int loadClutter(char *filename, double radius, struct site tx)
 	spdlog::debug("Loading clutter file \"{}\" {} x {}...", filename, w, h);
 
 	if (fgets(line, 25, fd) != NULL) {
+		pch = strtok(line, " ");
+		pch = strtok(NULL, " ");
 		sscanf(pch, "%lf", &xll);
 	}
 
 	s = fgets(line, 25, fd);
 	if (fgets(line, 25, fd) != NULL) {
+		pch = strtok(line, " ");
+		pch = strtok(NULL, " ");
 		sscanf(pch, "%lf", &yll);
 	}
 
@@ -434,8 +438,9 @@ int loadLIDAR(char *filenames, int resample)
 	spdlog::debug("fc {} WIDTH {} HEIGHT {} ippd {} minN {:.5f} maxN {:.5f} minW {:.5f} maxW {:.5f} avgCellsize {:.5f}", fc,
 								width, height, ippd, min_north, max_north, min_west, max_west, avgCellsize);
 
-	if (tiles != NULL)
-		for (size_t i = 0; i < (unsigned)fc - 1; i++) tile_destroy(&tiles[i]);
+	if (tiles != NULL) {
+		for (int i = 0; i < fc; i++) tile_destroy(&tiles[i]);
+	}
 	free(tiles);
 
 	return 0;

@@ -243,11 +243,20 @@ namespace {
         return NULL;
     }
 
-	/// @brief Wait for all threads in our threads array to finish
+	/// @brief Wait for all threads and futures in our arrays to finish
 	void finishThreads()
 	{
-        for (auto& th : threads)
-            th.join();
+        for (auto& f : futures) {
+            if (f.valid())
+                f.get();
+        }
+        futures.clear();
+
+        for (auto& th : threads) {
+            if (th.joinable())
+                th.join();
+        }
+        threads.clear();
 	}
 
     /// @brief Wait for the progress accumulators to finish, then finish out any running threads
@@ -268,7 +277,7 @@ namespace {
         // Await progress completion
         while (points_processed < total_points)
         {
-            std::this_thread::sleep_for( std::chrono::milliseconds(500) );
+            std::this_thread::sleep_for( std::chrono::milliseconds(100) );
 
             // Reset count for this check
             points_processed = 0;
@@ -284,6 +293,9 @@ namespace {
             if (points_processed > total_points) points_processed = total_points;
             spdlog::info("[{: 3d}%] Processing {}/{} points", pct, points_processed, total_points);
         }
+
+        // CRITICAL: Guarantee all worker threads/futures have completely returned
+        finishThreads();
     }
 }
 
@@ -949,12 +961,14 @@ void PlotPropPath(
 		}
 	}
 
-	if(path.lat[y]>cropLat)
-		cropLat=path.lat[y];
+	{
+		std::lock_guard<std::mutex> lock(maskMutex);
+		if(path.lat[y]>cropLat)
+			cropLat=path.lat[y];
 
-	
-	if(y>cropLon)
-		cropLon=y;
+		if(y>cropLon)
+			cropLon=y;
+	}
 
 	//if(cropLon>180)
 	//	cropLon-=360;
@@ -987,16 +1001,18 @@ void PlotLOSMap(struct site source, double altitude, char *plo_filename,
 	// Four sections start here
 	// Process north edge east/west, east edge north/south,
 	// south edge east/west, west edge north/south
-	double range_min_west[] = {min_west, min_west, min_west, max_west};
-	double range_min_north[] = {max_north, min_north, min_north, min_north};
-	double range_max_west[] = {max_west, min_west, max_west, max_west};
-	double range_max_north[] = {max_north, max_north, min_north, max_north};
-	PropagationRange *r = new PropagationRange[segments];
+	const int los_segments = 4;
+	double range_min_west[los_segments] = {min_west, min_west, min_west, max_west};
+	double range_min_north[los_segments] = {max_north, min_north, min_north, min_north};
+	double range_max_west[los_segments] = {max_west, min_west, max_west, max_west};
+	double range_max_north[los_segments] = {max_north, max_north, min_north, max_north};
+	std::vector<PropagationRange> r(los_segments);
 
     // Size our progress vector appropriately
-    thread_progress = std::vector<progress_t>(segments);
+    thread_progress = std::vector<progress_t>(los_segments);
+    init_processed();
 
-	for(int i = 0; i < segments; ++i) {
+	for(int i = 0; i < los_segments; ++i) {
         r[i].los = true;
 
 		r[i].eastwest = (range_min_west[i] == range_max_west[i] ? false : true);
@@ -1023,8 +1039,6 @@ void PlotLOSMap(struct site source, double altitude, char *plo_filename,
 
 	if(use_threads)
 		finishThreads();
-
-	delete[] r;
 
 	switch (mask_value) {
 	case 1:
@@ -1189,9 +1203,7 @@ void PlotPropagation(struct site source, bbox bounds,
     thread_progress = std::vector<progress_t>(segments);
     
     // Init our vector for storing processing progress
-    if (!has_init_processed) {
-        init_processed();
-    }
+    init_processed();
 
     // Iterate over the final list of ranges
     for (size_t i = 0; i < ranges.size(); i++) {
@@ -1226,9 +1238,7 @@ void PlotPropagation(struct site source, bbox bounds,
         finishProgress();
     }
 
-	for(size_t i = 0; i < ranges.size(); i++){
-		ranges.erase(ranges.begin() + i);
-	}
+	ranges.clear();
 
     if (fd != NULL)
 		fclose(fd);
@@ -1359,9 +1369,7 @@ void PlotPropagationRadius(struct site source, double range,
     thread_progress = std::vector<progress_t>(segments);
 
     // Init our vector for storing processing progress
-    if (!has_init_processed) {
-        init_processed();
-    }
+    init_processed();
 
     // Iterate over the final list of ranges
     for (size_t i = 0; i < radii.size(); i++) {
@@ -1382,13 +1390,11 @@ void PlotPropagationRadius(struct site source, double range,
 	if(use_threads)
     {
         spdlog::debug("Waiting for threads to finish...");
-        finishThreads();
+        finishProgress();
     }
 
     // Clean up our radii
-	for(size_t i = 0; i < radii.size(); i++){
-		radii.erase(radii.begin() + i);
-	}
+	radii.clear();
 
     // Close the file
     if (fd != NULL)

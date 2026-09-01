@@ -1,6 +1,25 @@
- -60: 255,   0,   0
- -72: 255, 255,   0
- -84:   0, 200,   0
- -96:   0, 200, 200
--108:   0, 255, 255
--120:   0, 100, 255
+; Radio Mobile "Rainbow colors" 12-level DBM Signal Palette (colors.dat)
+; Exactly matches Radio Mobile 12-step scale (-60 to -100 dBm, step 4 dB):
+;   -60 dBm : #FF1E50 (Crimson / Deep Rose Red)
+;   -64 dBm : #FF6464 (Coral Red)
+;   -68 dBm : #FFDC64 (Peach / Gold)
+;   -72 dBm : #FFFF64 (Yellow)
+;   -76 dBm : #C0FF64 (Lime / Chartreuse)
+;   -80 dBm : #64FF64 (Bright Green)
+;   -84 dBm : #64FF64 (Light Green)
+;   -88 dBm : #64FFC0 (Mint / Seafoam)
+;   -92 dBm : #64FFFF (Cyan)
+;   -96 dBm : #64DCFF (Sky Blue)
+;  -100 dBm : #6464FF (Indigo / Blue)
+; Format: dBm: red, green, blue
+ -60: 255,  30,  80
+ -64: 255, 100, 100
+ -68: 255, 220, 100
+ -72: 255, 255, 100
+ -76: 192, 255, 100
+ -80: 100, 255, 100
+ -84: 100, 255, 100
+ -88: 100, 255, 192
+ -92: 100, 255, 255
+ -96: 100, 220, 255
+-100: 100, 100, 255
