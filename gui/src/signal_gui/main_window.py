@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QScrollArea, QApplication, QFrame, QSizePolicy, QDialog
 )
 from PySide6.QtCore import Qt, QTimer, QObject, QEvent, Signal
+from PySide6.QtGui import QShortcut, QKeySequence
 
 from . import backend, params as params_mod, output_stage, rm_import
 from .widgets import ParameterForm
@@ -76,6 +77,8 @@ class _MouseWheelGuard(QObject):
 from .map_view import MapView
 from .profile_view import ProfileView
 from .header import CloudRFHeader
+from .radio_link_window import RadioLinkWindow
+from .cloudrf_profile_panel import CloudRFPathProfilePanel
 
 
 class MainWindow(QMainWindow):
@@ -96,6 +99,7 @@ class MainWindow(QMainWindow):
         self.engines = backend.find_engines(self.root)
         self.cache_dir = os.path.join(self.root, "gui", "cache", "dem")
         os.makedirs(self.cache_dir, exist_ok=True)
+        self.radio_link_win: Optional[RadioLinkWindow] = None
         self._pending = None
         self._worker = None
         self._last_result = None
@@ -283,29 +287,59 @@ class MainWindow(QMainWindow):
         _wheel_guard = _MouseWheelGuard(self)
         left_scroll.viewport().installEventFilter(_wheel_guard)
 
-        # Terminal Log widget inside Left Sidebar Bottom (matching CloudRF UI screenshot!)
+        # Terminal Log widget inside Left Sidebar Bottom
         self.terminal = QPlainTextEdit()
         self.terminal.setReadOnly(True)
-        self.terminal.setMaximumHeight(140)
+        self.terminal.setMaximumHeight(130)
         self.terminal.installEventFilter(_wheel_guard)
         self.terminal.setStyleSheet("""
             QPlainTextEdit {
-                background-color: #121417;
+                background-color: #0E1013;
                 color: #CBD5E0;
-                border: 1px solid #23272B;
-                border-radius: 4px;
+                border: none;
                 font-family: Consolas, Monaco, monospace;
                 font-size: 10px;
-                padding: 6px;
+                padding: 4px;
             }
         """)
+
+        # Collapsible Console Card
+        term_card = QFrame()
+        term_card.setStyleSheet("QFrame { background-color: #14171A; border: 1px solid #23272B; border-radius: 4px; }")
+        term_v = QVBoxLayout(term_card)
+        term_v.setContentsMargins(6, 2, 6, 4)
+        term_v.setSpacing(2)
+
+        term_hdr = QHBoxLayout()
+        term_lbl = QLabel("LOG CONSOLE")
+        term_lbl.setStyleSheet("color: #718096; font-size: 9px; font-weight: 700; letter-spacing: 0.5px;")
+        btn_clear_log = QPushButton("Clear")
+        btn_clear_log.setStyleSheet("QPushButton { background: transparent; color: #A0AEC0; border: none; font-size: 10px; } QPushButton:hover { color: #FC8181; }")
+        btn_clear_log.clicked.connect(self.terminal.clear)
+        btn_toggle_log = QPushButton("▾")
+        btn_toggle_log.setStyleSheet("QPushButton { background: transparent; color: #A0AEC0; border: none; font-size: 11px; font-weight: bold; } QPushButton:hover { color: #FFFFFF; }")
+        
+        def _toggle_term():
+            vis = not self.terminal.isVisible()
+            self.terminal.setVisible(vis)
+            btn_toggle_log.setText("▾" if vis else "▸")
+
+        btn_toggle_log.clicked.connect(_toggle_term)
+        term_hdr.addWidget(term_lbl)
+        term_hdr.addStretch()
+        term_hdr.addWidget(btn_clear_log)
+        term_hdr.addWidget(btn_toggle_log)
+        term_v.addLayout(term_hdr)
+        term_v.addWidget(self.terminal)
+
         sidebar_container = QWidget()
         sidebar_container.setStyleSheet("background-color: #1B1E22;")
         sb_layout = QVBoxLayout(sidebar_container)
         sb_layout.setContentsMargins(4, 4, 4, 4)
         sb_layout.setSpacing(4)
         sb_layout.addWidget(left_scroll, 1)
-        sb_layout.addWidget(self.terminal)
+        sb_layout.addWidget(self.form.action_footer)  # STICKY ACTION FOOTER
+        sb_layout.addWidget(term_card)
 
         # Right Area (Full Map View)
         self.map = MapView(self)
@@ -325,44 +359,26 @@ class MainWindow(QMainWindow):
         rl = QVBoxLayout(right)
         rl.setContentsMargins(0, 0, 0, 0)
         rl.setSpacing(0)
-        rl.addWidget(self.map, 1)
+
+        # Vertical Splitter: Map View on Top + Integrated CloudRF Path Profile Panel on Bottom
+        self.right_splitter = QSplitter(Qt.Orientation.Vertical)
+        self.right_splitter.addWidget(self.map)
+
+        self.path_profile_panel = CloudRFPathProfilePanel(self)
+        self.path_profile_panel.setVisible(False)
+        self.path_profile_panel.close_requested.connect(self._hide_link_panel)
+        self.path_profile_panel.map_point_tracked.connect(self._on_link_point_tracked)
+        self.path_profile_panel.export_kmz_requested.connect(self._export_link_kmz)
+        self.path_profile_panel.export_png_requested.connect(self._export_link_png)
+        self.right_splitter.addWidget(self.path_profile_panel)
+        self.right_splitter.setStretchFactor(0, 55)
+        self.right_splitter.setStretchFactor(1, 45)
+
+        rl.addWidget(self.right_splitter, 1)
         self._right_pane = right
 
         # Loading overlay (shown over the map during propagation runs).
         self._build_loading_overlay()
-
-        # Radio Link result panel (hidden until a link is computed)
-        self.link_panel = QWidget()
-        self.link_panel.setStyleSheet("background:#0f1115; border-top:1px solid #23272e;")
-        self.link_panel.setFixedHeight(330)
-        lp = QVBoxLayout(self.link_panel)
-        lp.setContentsMargins(8, 6, 8, 6)
-        lp.setSpacing(4)
-        self.link_summary = QLabel("")
-        self.link_summary.setStyleSheet("color:#cbd5e0; font-size:11px;")
-        self.link_summary.setWordWrap(True)
-        lp.addWidget(self.link_summary)
-        self.profile_view = ProfileView(self)
-        self.profile_view.setVisible(False)  # terrain-profile graph disabled
-        lp.addWidget(self.profile_view, 1)
-        self.link_details_btn = QPushButton("Details")
-        self.link_details_btn.setCheckable(True)
-        self.link_details_btn.setStyleSheet(
-            "QPushButton{background:#2D3748;color:#E2E8F0;border:1px solid #3F474F;"
-            "border-radius:3px;padding:3px 8px;font-size:10px;} "
-            "QPushButton:checked{background:#4A5568;}")
-        self.link_report = QPlainTextEdit()
-        self.link_report.setReadOnly(True)
-        self.link_report.setVisible(False)
-        self.link_report.setStyleSheet(
-            "background:#0b0d10; color:#9fb3c8; font-family:monospace; "
-            "font-size:10px; border:1px solid #23272e;")
-        self.link_details_btn.toggled.connect(
-            lambda v: self.link_report.setVisible(v))
-        lp.addWidget(self.link_details_btn)
-        lp.addWidget(self.link_report)
-        self.link_panel.setVisible(False)
-        rl.addWidget(self.link_panel)
 
         rl.addWidget(self.status)
         rl.addWidget(self.progress)
@@ -392,6 +408,9 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(central_w)
 
         # Wire up Form and Map Signals
+        self.header.toggle_sidebar_requested.connect(self._toggle_sidebar)
+        self._shortcut_sidebar = QShortcut(QKeySequence("Ctrl+B"), self)
+        self._shortcut_sidebar.activated.connect(self._toggle_sidebar)
         self.form.start_requested.connect(self.start)
         self.form.pick_requested.connect(self.map.arm)
         self.form.export_requested.connect(self.export_model)
@@ -425,6 +444,18 @@ class MainWindow(QMainWindow):
         self._on_rx_coord_changed()
         # Open the map centered on the transmitter by default (not Rx).
         self.map._focus = self.map.tx_pos
+
+    def _toggle_sidebar(self) -> None:
+        """Toggle left sidebar visibility smoothly with state persistence."""
+        visible = not self._sidebar.isVisible()
+        self._sidebar.setVisible(visible)
+        if visible:
+            cur_w = self.width()
+            sb_w = max(340, min(int(cur_w * 0.32), 480))
+            self._splitter.setSizes([sb_w, cur_w - sb_w])
+        else:
+            self._splitter.setSizes([0, self.width()])
+        self.map.invalidate_size()
 
     # ------------------------------------------------------------------ AMSL lookup
     def _demnas_folder_for_lookup(self) -> str | None:
@@ -803,7 +834,7 @@ class MainWindow(QMainWindow):
             return
         # Area coverage (clear any previous link result)
         self.map.clear_link()
-        self.link_panel.setVisible(False)
+        self.path_profile_panel.setVisible(False)
         if ok and result.get("bbox"):
             p = self._pending[0] if self._pending else {}
             bbox = result["bbox"]
@@ -822,18 +853,6 @@ class MainWindow(QMainWindow):
             self.map.show_coverage(result["png"], bbox, self.form.color_path.text())
             if p.get("tx_lat") is not None and p.get("tx_lon") is not None:
                 self.map.mark_tx_saved(float(p["tx_lat"]), float(p["tx_lon"]))
-            # Jika mode garis sempit ITM (az 0.1-1°), gambar juga garis kuning Tx→Rx sebagai referensi
-            if p.get("az_mask_enabled") and p.get("rx_lat") is not None and p.get("rx_lon") is not None:
-                try:
-                    # hitung lebar sektor untuk cek mode garis (<5°)
-                    s = float(p.get("az_mask_start_deg", 0))
-                    e = float(p.get("az_mask_end_deg", 0))
-                    width = (e - s) % 360
-                    if 0 < width <= 5:
-                        self.map.draw_link(float(p["tx_lat"]), float(p["tx_lon"]),
-                                           float(p["rx_lat"]), float(p["rx_lon"]), color="#ffec3d")
-                except Exception:
-                    pass
             self._last_result = result
             self._set_status("Done. Coverage shown on map.")
             if result.get("kml"):
@@ -849,52 +868,83 @@ class MainWindow(QMainWindow):
             self._purge_render_cache()
 
     def _show_link_panel(self, link: dict, tx: tuple, rx: tuple) -> None:
-        self.link_panel.setVisible(True)
-        # Radio Mobile link-grade colouring on the relative RX signal (fade
-        # margin): >= +3 dB green, >= -3 dB yellow, otherwise red.
+        p = self._pending[0] if self._pending else self.form.collect()
+        obs = link.get("obstructed", False)
         fm = link.get("fade_margin_db")
-        if fm is not None and fm >= 3:
-            link_color = "#68d391"
-        elif fm is not None and fm >= -3:
-            link_color = "#ffec3d"
+        if obs or (fm is not None and fm < -3):
+            link_color = "#FF0000"
+        elif fm is not None and fm < 3:
+            link_color = "#FFFF00"
         else:
-            link_color = "#fc8181"
+            link_color = "#00E600"
         self.map.draw_link(tx[0], tx[1], rx[0], rx[1], color=link_color)
         self._last_result = {"link": link}
         self._set_status("Done. Radio link computed.")
 
-        def _fmt(v, unit="", nd=2):
-            if v is None:
-                return "&mdash;"
-            return f"{v:.{nd}f} {unit}"
+        # Show Integrated Cloud-RF Path Profile Panel directly on the right pane!
+        self.path_profile_panel.update_link_results(link, p)
+        self.path_profile_panel.setVisible(True)
+        h = self._right_pane.height()
+        if h > 300:
+            self.right_splitter.setSizes([int(h * 0.52), int(h * 0.48)])
 
-        obs = link.get("obstructed", False)
-        obs_html = ('<span style="color:#fc8181;font-weight:700;">OBSTRUCTED</span>'
-                    if obs else
-                    '<span style="color:#68d391;font-weight:700;">CLEAR</span>')
-        fm = link.get("fade_margin_db")
-        fm_html = _fmt(fm, "dB")
-        if fm is not None:
-            fm_html += ' <span style="color:%s;">(%s)</span>' % (
-                "#68d391" if fm >= 0 else "#fc8181",
-                "OK" if fm >= 0 else "FAIL",
-            )
-        rows = [
-            ("Distance", _fmt(link.get("distance_km"), "km")),
-            ("Azimuth", _fmt(link.get("azimuth_deg"), "&deg;")),
-            ("Model", (link.get("model") or "&mdash;")),
-            ("Free-space loss", _fmt(link.get("free_space_loss_db"), "dB")),
-            ("Computed loss", _fmt(link.get("computed_loss_db"), "dB")),
-            ("Terrain shielding", _fmt(link.get("terrain_shielding_db"), "dB")),
-            ("Total loss", _fmt(link.get("total_loss_db"), "dB")),
-            ("Rx power", _fmt(link.get("rx_power_dbm"), "dBm")),
-            ("Fade margin", fm_html),
-            ("Path", obs_html),
-        ]
-        self.link_summary.setText(
-            "&nbsp;&nbsp;".join(f"<b>{k}:</b> {v}" for k, v in rows))
-        self.profile_view.set_profile(link.get("profile"), obs)
-        self.link_report.setPlainText(link.get("report_text", ""))
+    def _hide_link_panel(self) -> None:
+        self.path_profile_panel.setVisible(False)
+        self.map.clear_link()
+
+    def _export_link_png(self) -> None:
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export Path Profile PNG", "path_profile.png", "PNG Image (*.png)"
+        )
+        if not path:
+            return
+        pix = self.path_profile_panel.canvas.grab()
+        pix.save(path)
+        self._set_status(f"Path profile image saved: {path}")
+
+    def _export_link_kmz(self) -> None:
+        self.export_requested.emit("KMZ")
+
+    def _on_link_point_tracked(self, lat: float, lon: float, dist_km: float, amsl_m: float, agl_m: float, ground_m: float) -> None:
+        """Update interactive tracking marker on the map as the user moves cursor on profile (2D drone altitude)."""
+        self.map.set_link_cursor(lat, lon, dist_km, amsl_m, agl_m, ground_m)
+
+    def _swap_tx_rx_link(self) -> None:
+        """Swap Tx and Rx coordinates, antenna heights, and re-run link."""
+        try:
+            tx_lat = self.form.tx_lat.value()
+            tx_lon = self.form.tx_lon.value()
+            tx_h = self.form.tx_height.value()
+
+            rx_lat = self.form.rx_lat.value()
+            rx_lon = self.form.rx_lon.value()
+            rx_h = self.form.rx_height.value()
+
+            self.form.tx_lat.setValue(rx_lat)
+            self.form.tx_lon.setValue(rx_lon)
+            self.form.tx_height.setValue(rx_h)
+
+            self.form.rx_lat.setValue(tx_lat)
+            self.form.rx_lon.setValue(tx_lon)
+            self.form.rx_height.setValue(tx_h)
+
+            self.map.set_tx(rx_lat, rx_lon, fly=False)
+            self.map.set_rx(tx_lat, tx_lon, fly=False)
+
+            self.start(link=True)
+        except Exception as exc:
+            self._set_status(f"Swap error: {exc}")
+
+    def _on_link_recompute(self, updated_params: dict) -> None:
+        """Handle real-time antenna height stepping from the Radio Link window."""
+        try:
+            if "tx_height" in updated_params:
+                self.form.tx_height.setValue(updated_params["tx_height"])
+            if "rx_height" in updated_params:
+                self.form.rx_height.setValue(updated_params["rx_height"])
+            self.start(link=True)
+        except Exception as exc:
+            self._set_status(f"Recompute error: {exc}")
 
     def _show_rm_preview(self, rm_png: str) -> None:
         """Non-modal preview of the Radio Mobile-style picture."""
@@ -966,7 +1016,7 @@ class MainWindow(QMainWindow):
             lat, lon = self.form.tx_coord.get()
         except (ValueError, TypeError):
             return
-        self.map.set_tx(lat, lon, fly=not self._pick_no_fly)
+        self.map.set_tx(lat, lon, fly=False)
         self._set_status(f"Tx set: {lat:.5f}, {lon:.5f}")
         self._update_demnas_live()
         self._schedule_amsl()
@@ -976,7 +1026,7 @@ class MainWindow(QMainWindow):
             lat, lon = self.form.rx_coord.get()
         except (ValueError, TypeError):
             return
-        self.map.set_rx(lat, lon, fly=not self._pick_no_fly)
+        self.map.set_rx(lat, lon, fly=False)
         self._schedule_amsl()
 
     # ------------------------------------------------------------------ profile

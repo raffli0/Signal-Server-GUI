@@ -88,19 +88,14 @@ def _initial_bearing(lat1: float, lon1: float, lat2: float, lon2: float) -> floa
 
 
 def _sample_terrain(sdf_dir: Optional[str], hd: bool,
-                    rx: tuple[float, float], tx: tuple[float, float],
+                    tx: tuple[float, float], rx: tuple[float, float],
                     dists_km: list[float],
                     asc_file: Optional[str] = None) -> list[float]:
-    """Ground elevation (m AMSL) along the RX->TX arc at ``dists_km``.
-
-    Terrain comes from SDF tiles when ``sdf_dir`` is given, otherwise from the
-    engine's LIDAR ``.asc`` grid via ``asc_file`` (offline DEMNAS mode).
-    """
+    """Ground elevation (m AMSL) along the TX -> RX arc at ``dists_km`` (d=0 at TX)."""
     from .rm_style import ElevationSource
 
-    total = dists_km[-1] if dists_km else 0.0
-    brg = _initial_bearing(rx[0], rx[1], tx[0], tx[1])
-    pts = [_destination_point(rx[0], rx[1], brg, max(0.0, d)) for d in dists_km]
+    brg = _initial_bearing(tx[0], tx[1], rx[0], rx[1])
+    pts = [_destination_point(tx[0], tx[1], brg, max(0.0, d)) for d in dists_km]
     lats = np.array([p[0] for p in pts])
     lons = np.array([p[1] for p in pts])
     if sdf_dir:
@@ -173,44 +168,36 @@ def parse_link_output(base: str, rx_threshold_dbm: Optional[float] = None,
     n = min(len(dist_c), len(fresnel60)) if fresnel60 else len(dist_c)
     if n == 0:
         raise RuntimeError("Link profile series are empty; engine may have failed.")
-    dists = dist_c[:n]
+
+    total_d = distance_km if distance_km is not None else dist_c[-1]
+    # Dists always increases from 0.0 (TX at left) to total_d (RX at right)
+    dists = [float(v) for v in np.linspace(0.0, total_d, n)]
     los = [-curvature[i] for i in range(n)]
     f60 = fresnel60[:n]
 
-    # The engine emits the series TX->RX; our sampled ground arc runs RX->TX,
-    # so flip the engine arrays when they start at the TX antenna tip.
-    starts_at_tx = True
+    # Signal-Server emits the series destination (RX) -> source (TX).
+    # We want Left = TX (d=0) to Right = RX (d=total_d).
+    starts_at_rx = True
     if tx_amsl is not None and rx_amsl is not None:
-        starts_at_tx = abs(los[0] - tx_amsl) < abs(los[0] - rx_amsl)
-    if starts_at_tx:
-        dists.reverse()
+        starts_at_rx = abs(los[0] - rx_amsl) < abs(los[0] - tx_amsl)
+    if starts_at_rx:
         los.reverse()
-        f60 = list(reversed(f60))
+        f60.reverse()
 
-    # Anchor both ends exactly on the antenna tips now that orientation is
-    # RX -> TX, and close the gap the engine leaves before the final sample.
-    if rx_amsl is not None:
-        los[0] = rx_amsl
+    # Anchor endpoints on antenna tips (TX at 0, RX at -1)
     if tx_amsl is not None:
-        los[-1] = tx_amsl
-    if distance_km is not None and dists and dists[-1] < distance_km - 1e-6:
-        dists.append(distance_km)
-        los.append(tx_amsl if tx_amsl is not None else los[-1])
-        f60.append(f60[-1])
-        n += 1
+        los[0] = tx_amsl
+    if rx_amsl is not None:
+        los[-1] = rx_amsl
 
-    # --- true ground profile ---------------------------------------------
+    # --- true ground profile along TX -> RX arc ---
     if (sdf_dir or asc_file) and tx_latlon and rx_latlon:
-        terrain = _sample_terrain(sdf_dir, hd, rx_latlon, tx_latlon, dists,
+        terrain = _sample_terrain(sdf_dir, hd, tx_latlon, rx_latlon, dists,
                                   asc_file=asc_file)
     else:
         raise RuntimeError(
             "Terrain tidak tersedia untuk rekonstruksi profil link "
             "(butuh SDF atau LIDAR .asc).")
-    if rx_amsl is not None and terrain:
-        terrain[0] = rx_amsl          # antenna tip at the RX end
-    if tx_amsl is not None and terrain:
-        terrain[-1] = tx_amsl         # antenna tip at the TX end
 
     fres_lower, fres_upper, clearance = [], [], []
     obstructed = False

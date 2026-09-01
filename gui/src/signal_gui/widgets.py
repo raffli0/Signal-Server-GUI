@@ -455,53 +455,36 @@ class ParameterForm(QWidget):
         """
         self.setStyleSheet(input_ss)
 
-        # -- 1. Site / Tx  (merged: site + signal + feeder + antenna)
-        fl = self._section("tx", _SECTION_ICON["tx"], "Site / Tx", expanded=False)
+        # =========================================================================
+        # -- 1. Transmitter (Tx)
+        # =========================================================================
+        fl_tx = self._section("tx", _SECTION_ICON["tx"], "Transmitter (Tx)", expanded=False)
         self.units = QComboBox(); self.units.addItems(["Metric", "Imperial"])
-        self._add_row_with_info(fl, "Units", self.units, "Unit system (Metric / Imperial)")
+        self._add_row_with_info(fl_tx, "Units", self.units, "Unit system (Metric / Imperial)")
         self.tx_name = QLineEdit()
         self.tx_name.setPlaceholderText("Site name (e.g. BTS-01)")
-        self._add_row_with_info(fl, "Site name", self.tx_name, "Label for this transmitter site")
+        self._add_row_with_info(fl_tx, "Site name", self.tx_name, "Label for this transmitter site")
         self.tx_network = QLineEdit()
         self.tx_network.setPlaceholderText("Network (e.g. Telkomsel)")
-        self._add_row_with_info(fl, "Network", self.tx_network, "Operator / network identifier")
+        self._add_row_with_info(fl_tx, "Network", self.tx_network, "Operator / network identifier")
         self.tx_coord = SiteCoordWidget()
         self.tx_coord.set(-6.916667, 107.6083)
-        fl.addRow(QLabel("Coordinates"), self.tx_coord)
+        fl_tx.addRow(QLabel("Coordinates"), self.tx_coord)
         self.btn_pick_tx = QPushButton("Pick on map (Tx)")
         self.btn_pick_tx.setStyleSheet(btn_ss)
         self.btn_pick_tx.clicked.connect(lambda: self.pick_requested.emit("tx"))
-        fl.addRow(self.btn_pick_tx)
+        fl_tx.addRow(self.btn_pick_tx)
         self.tx_height = FocusWheelSpinBox(); self.tx_height.setRange(0, 10000); self.tx_height.setValue(1)
-        self._add_row_with_info(fl, "Antena Height AGL (m)", self.tx_height, "Transmitter antenna height above ground")
+        self._add_row_with_info(fl_tx, "Antenna Height AGL (m)", self.tx_height, "Transmitter antenna height above ground")
         self.tx_amsl = QLabel("Elevasi tanah: \u2014")
         self._style_amsl_label(self.tx_amsl)
-        fl.addRow(self.tx_amsl)
+        fl_tx.addRow(self.tx_amsl)
         self.tx_height.valueChanged.connect(lambda _: self._refresh_amsl_labels())
         self.frequency = FocusWheelSpinBox(); self.frequency.setRange(0.1, 100000); self.frequency.setValue(900)
-        self._add_row_with_info(fl, "Frequency (MHz)", self.frequency, "Operating frequency in MHz")
-        self.dem_res = QComboBox(); self.dem_res.addItems(["90 m (dem3)", "30 m (dem1)", "15 m TIF"])
-        self.dem_res.setCurrentIndex(1)  # default 30m SRTM1 - jangan hilangkan bukit kecil dekat Tx
-        self._add_row_with_info(
-            fl, "Auto DEM resolution", self.dem_res,
-            "Resolusi data elevasi. Mode Online: memilih produk Viewfinder "
-            "(dem3≈90 m, dem1≈30 m, TIF15). Mode Offline DEMNAS: target "
-            "resolusi konversi terrain LIDAR (3\"≈90 m, 1\"≈30 m, 15 m), "
-            "otomatis dibatasi ukuran file maksimum. Default 30m (SRTM1) "
-            "agar bukit kecil dekat Tx tidak hilang. SDF mode nonaktif.")
-        self._dem_downsample = QCheckBox("Izinkan downsampling (hemat RAM)")
-        self._dem_downsample.setChecked(False)  # mati default - jaga detail 30m
-        self._dem_downsample.setStyleSheet("color:#CBD5E0; font-size:11px;")
-        self._dem_downsample.setToolTip("Jika OFF, engine paksa 30m tanpa clamp max_cells. ON = boleh turun ke 90m bila area >25M sel.")
-        fl.addRow(self._dem_downsample)
-        self._dem_fine_step = QCheckBox("Step halus 1/4 DEM (7.5m, anti-loncat 100m)")
-        self._dem_fine_step.setChecked(False)  # default OFF - sampling 7.5-10m
-        self._dem_fine_step.setStyleSheet("color:#CBD5E0; font-size:11px;")
-        self._dem_fine_step.setToolTip("Jika ON, DEM 30m di-oversample bilinear ke 7.5m (1/4). Step engine jadi 7.5-10m, jangan loncat 100m. Butuh RAM lebih.")
-        fl.addRow(self._dem_fine_step)
+        self._add_row_with_info(fl_tx, "Frequency (MHz)", self.frequency, "Operating frequency in MHz")
 
-        # Signal
-        fl.addRow(self._sub_label("Signal"))
+        # Tx Signal & Feeder
+        fl_tx.addRow(self._sub_label("RF Power & Feeder"))
         self.rf_power = FocusWheelSpinBox(); self.rf_power.setRange(0, 1e7); self.rf_power.setValue(1)
         self.tx_dbm_label = QLabel("≈ 30.0 dBm")
         self.tx_dbm_label.setStyleSheet("color: #319795; font-size: 11px; font-weight: bold;")
@@ -511,30 +494,25 @@ class ParameterForm(QWidget):
         pw_hl.setSpacing(8)
         pw_hl.addWidget(self.rf_power, 1)
         pw_hl.addWidget(self.tx_dbm_label)
-        self._add_row_with_info(fl, "Transmit power (Watt)", pw_row, "Transmitter power output in Watts")
+        self._add_row_with_info(fl_tx, "Transmit power (Watt)", pw_row, "Transmitter power output in Watts")
         self.tx_gain = FocusWheelSpinBox(); self.tx_gain.setRange(-50, 50); self.tx_gain.setValue(10)
-        self._add_row_with_info(fl, "Antenna gain (dBi)", self.tx_gain, "Transmitter antenna gain in dBi")
-
-        # Feeder
-        fl.addRow(self._sub_label("Feeder"))
+        self._add_row_with_info(fl_tx, "Antenna gain (dBi)", self.tx_gain, "Transmitter antenna gain in dBi")
         self.cable_loss = FocusWheelSpinBox(); self.cable_loss.setRange(0, 50); self.cable_loss.setValue(0)
-        self._add_row_with_info(fl, "Line loss (dB)", self.cable_loss, "Transmission line / cable loss")
+        self._add_row_with_info(fl_tx, "Line loss (dB)", self.cable_loss, "Transmission line / cable loss")
         self.erp_label = QLabel("ERP: - W"); self.erp_label.setStyleSheet("color: #319795; font-size: 11px; font-weight: bold;")
         self.eirp_label = QLabel("EIRP: - dBm"); self.eirp_label.setStyleSheet("color: #319795; font-size: 11px; font-weight: bold;")
-        fl.addRow(self.erp_label); fl.addRow(self.eirp_label)
-        # RX threshold for THIS unit (parity with Radio Mobile's per-unit setting).
-        # Metadata only: the engine accepts a single -rt from the Rx side.
+        fl_tx.addRow(self.erp_label); fl_tx.addRow(self.eirp_label)
         self.tx_thr, self.tx_thr_uv, tx_thr_w = self._make_threshold_pair(
             -100, (-200, 100), (-100, 250))
         self._add_row_with_info(
-            fl, "RX threshold (unit ini)", tx_thr_w,
+            fl_tx, "RX threshold (unit ini)", tx_thr_w,
             "Ambang terima stasiun ini (dBm ⇄ dBµV). Disimpan di profil/manifest; "
             "engine hanya menerima satu -rt dari sisi Rx.")
         for w in (self.rf_power, self.tx_gain, self.cable_loss):
             w.valueChanged.connect(self._update_erp)
 
-        # Antenna
-        fl.addRow(self._sub_label("Antenna"))
+        # Tx Antenna Pattern & Direction
+        fl_tx.addRow(self._sub_label("Antenna Pattern & Direction"))
         self.ant_btn = QPushButton("Select pattern (.az/.el)...")
         self.ant_btn.setStyleSheet(btn_ss)
         self.ant_path = QLineEdit()
@@ -542,142 +520,125 @@ class ParameterForm(QWidget):
         self.ant_path.setPlaceholderText("No pattern selected")
         self.ant_path.setStyleSheet("background: #1B1E22; color: #A0AEC0; border: 1px solid #3F474F; border-radius: 3px; padding: 3px; font-size: 10px;")
         self.ant_btn.clicked.connect(self._pick_antenna)
-        fl.addRow(self.ant_btn, self.ant_path)
+        fl_tx.addRow(self.ant_btn, self.ant_path)
         self.pol = QComboBox(); self.pol.addItems(["vertical", "horizontal"])
-        self._add_row_with_info(fl, "Polarisation", self.pol, "Antenna polarization")
+        self._add_row_with_info(fl_tx, "Polarisation", self.pol, "Antenna polarization")
         self.azimuth = FocusWheelSpinBox(); self.azimuth.setRange(0, 359); self.azimuth.setValue(0)
-        self._add_row_with_info(fl, "Azimuth (deg)", self.azimuth, "Antenna orientation / azimuth angle")
+        self._add_row_with_info(fl_tx, "Azimuth (deg)", self.azimuth, "Antenna orientation / azimuth angle")
         self.downtilt = FocusWheelSpinBox(); self.downtilt.setRange(-10, 90); self.downtilt.setValue(0)
-        self._add_row_with_info(fl, "Downtilt (deg)", self.downtilt, "Electrical / mechanical downtilt angle")
+        self._add_row_with_info(fl_tx, "Downtilt (deg)", self.downtilt, "Electrical / mechanical downtilt angle")
         self.downtilt_dir = FocusWheelSpinBox(); self.downtilt_dir.setRange(0, 359); self.downtilt_dir.setValue(0)
-        self._add_row_with_info(fl, "Downtilt dir (deg)", self.downtilt_dir, "Downtilt direction angle")
-        # Azimuth sector (Radio Mobile parity): limit the displayed coverage to
-        # a bearing wedge. The engine always computes the full circle; the
-        # result PNG is masked afterwards, so this is display-only.
+        self._add_row_with_info(fl_tx, "Downtilt dir (deg)", self.downtilt_dir, "Downtilt direction angle")
         self.az_mask = QCheckBox("Limit to azimuth sector")
         self.az_mask.setChecked(False)
-        fl.addRow(self.az_mask)
+        fl_tx.addRow(self.az_mask)
         self.az_start = FocusWheelSpinBox()
         self.az_start.setRange(0.1, 360.0); self.az_start.setDecimals(1)
         self.az_start.setSingleStep(0.5); self.az_start.setValue(0.1)
         self.az_start.setEnabled(False)
-        self._add_row_with_info(fl, "Azimuth start (deg)", self.az_start,
+        self._add_row_with_info(fl_tx, "Azimuth start (deg)", self.az_start,
                                 "Start bearing of the sector (0.1-360, North=0)")
         self.az_end = FocusWheelSpinBox()
         self.az_end.setRange(0.1, 360.0); self.az_end.setDecimals(1)
         self.az_end.setSingleStep(0.5); self.az_end.setValue(360.0)
         self.az_end.setEnabled(False)
-        self._add_row_with_info(fl, "Azimuth end (deg)", self.az_end,
+        self._add_row_with_info(fl_tx, "Azimuth end (deg)", self.az_end,
                                 "End bearing of the sector (start>end wraps over North)")
         self.az_mask.toggled.connect(self.az_start.setEnabled)
         self.az_mask.toggled.connect(self.az_end.setEnabled)
 
-        # -- 2. Mobile / Rx
-        fl = self._section("rx", _SECTION_ICON["rx"], "Mobile / Rx", expanded=False)
+        # =========================================================================
+        # -- 2. Receiver (Rx)
+        # =========================================================================
+        fl_rx = self._section("rx", _SECTION_ICON["rx"], "Receiver (Rx)", expanded=False)
         self.rx_name = QLineEdit()
         self.rx_name.setPlaceholderText("Site name (e.g. UE-01)")
-        self._add_row_with_info(fl, "Site name", self.rx_name, "Label for this receiver site")
+        self._add_row_with_info(fl_rx, "Site name", self.rx_name, "Label for this receiver site")
         self.rx_coord = SiteCoordWidget()
         self.rx_coord.set(-6.834056, 107.738457)
-        fl.addRow(QLabel("Coordinates"), self.rx_coord)
+        fl_rx.addRow(QLabel("Coordinates"), self.rx_coord)
         self.tx_coord.changed.connect(self.tx_changed)
         self.rx_coord.changed.connect(self.rx_changed)
         self.btn_pick_rx = QPushButton("Pick on map (Rx)")
         self.btn_pick_rx.setStyleSheet(btn_ss)
         self.btn_pick_rx.clicked.connect(lambda: self.pick_requested.emit("rx"))
-        fl.addRow(self.btn_pick_rx)
+        fl_rx.addRow(self.btn_pick_rx)
         self.rx_height = FocusWheelSpinBox(); self.rx_height.setRange(0, 10000); self.rx_height.setValue(1)
-        self._add_row_with_info(fl, "Antena Height AGL (m)", self.rx_height, "Receiver height above ground")
+        self._add_row_with_info(fl_rx, "Antenna Height AGL (m)", self.rx_height, "Receiver height above ground")
         self.rx_amsl = QLabel("Elevasi tanah: \u2014")
         self._style_amsl_label(self.rx_amsl)
-        fl.addRow(self.rx_amsl)
+        fl_rx.addRow(self.rx_amsl)
         self.rx_height.valueChanged.connect(lambda _: self._refresh_amsl_labels())
         self.rx_gain = FocusWheelSpinBox(); self.rx_gain.setRange(-50, 50); self.rx_gain.setValue(0)
-        self._add_row_with_info(fl, "Rx gain (dBd)", self.rx_gain, "Receiver antenna gain in dBd")
+        self._add_row_with_info(fl_rx, "Rx gain (dBd)", self.rx_gain, "Receiver antenna gain in dBd")
         self.rx_thr, self.rx_thr_uv, rx_thr_w = self._make_threshold_pair(
             -100, (-200, 100), (-100, 250))
         self._add_row_with_info(
-            fl, "Rx threshold", rx_thr_w,
+            fl_rx, "Rx threshold", rx_thr_w,
             "Minimum required signal threshold (dBm ⇄ dBµV). Ini yang dikirim "
             "ke engine sebagai -rt (RX relative = margin pada link report).")
 
-        # -- 3. Model (EXPANDED BY DEFAULT, EXACTLY MATCHING CLOUDRF SCREENSHOT!)
-        fl = self._section("model", _SECTION_ICON["model"], "Model", expanded=True)
+        # =========================================================================
+        # -- 3. Propagation Model (Default Expanded!)
+        # =========================================================================
+        fl_model = self._section("model", _SECTION_ICON["model"], "Propagation Model", expanded=True)
         self._gated_rows = []
         self.model = QComboBox()
         for label, val in params_mod.MODELS:
             display_label = "Okumura-Hata (0.15-1.5GHz)" if val == 3 else label
             self.model.addItem(display_label, val)
-        # Default to Okumura-Hata matching CloudRF
         idx = self.model.findData(3)
         if idx >= 0:
             self.model.setCurrentIndex(idx)
-        self._add_row_with_info(fl, "Model", self.model, "Radio propagation model choice")
+        self._add_row_with_info(fl_model, "Model", self.model, "Radio propagation model choice")
         self.model.currentIndexChanged.connect(lambda *a: self._apply_model_gating())
-
-        self.reliability = QComboBox()
-        self.reliability.addItems(["50%", "80%", "90%", "95%", "99%"])
-        self._add_gated_row(
-            fl, "Reliability", self.reliability, "ITM statistical time/location "
-            "reliability", gate_key="reliability")
 
         self.context = QComboBox()
         self.context.addItems(["Urban", "Suburban", "Rural"])
         self.context.setCurrentText("Rural")
         self._add_gated_row(
-            fl, "Context", self.context,
+            fl_model, "Context", self.context,
             "Propagation environment classification. Only used by empirical "
             "models (Hata, ECC33, SUI, COST231-Hata, Ericsson); ignored by "
             "ITM, LOS, FSPL, ITWOM, Plane Earth, Egli and Soil.",
             gate_key="context")
 
+        self.reliability = QComboBox()
+        self.reliability.addItems(["50%", "80%", "90%", "95%", "99%"])
+        self._add_gated_row(
+            fl_model, "Reliability", self.reliability, "ITM statistical time/location "
+            "reliability", gate_key="reliability")
+
         self.diffraction = QComboBox()
         self.diffraction.addItems(["Off (LOS)", "Knife-edge (KED)"])
         self._add_gated_row(
-            fl, "Diffraction", self.diffraction,
+            fl_model, "Diffraction", self.diffraction,
             "Knife-edge diffraction (-ked) adds terrain diffraction loss for "
             "empirical models. ITM/ITWOM already include diffraction built-in.",
             gate_key="diffraction")
 
-        # Hidden fields for backward compatibility
-        self.knife = QCheckBox("Knife-edge diffraction (-ked)")
-        self.knife.setVisible(False)
-
-        # -- 4. Environment
-        fl = self._section("env", _SECTION_ICON["env"], "Environment", expanded=False)
         self.climate = QComboBox()
         self.climate.addItem("(default)", 0)
         for v, label in params_mod.CLIMATE_ZONES:
             self.climate.addItem(f"{v}: {label}", v)
         self._add_gated_row(
-            fl, "Radio climate", self.climate,
+            fl_model, "Radio climate", self.climate,
             "Radio climate zone (ITM/ITWOM only)", gate_key="climate")
-        self.clutter_btn = QPushButton("Select clutter (.clt)...")
-        self.clutter_btn.setStyleSheet(btn_ss)
-        self.clutter_path = QLineEdit()
-        self.clutter_path.setReadOnly(True)
-        self.clutter_path.setPlaceholderText("No clutter file")
-        self.clutter_path.setStyleSheet("background: #1B1E22; color: #A0AEC0; border: 1px solid #3F474F; border-radius: 3px; padding: 3px; font-size: 10px;")
-        self.clutter_btn.clicked.connect(lambda: self._pick(self.clutter_path, "Clutter (*.clt)"))
-        fl.addRow(self.clutter_btn, self.clutter_path)
-        self.gc = FocusWheelSpinBox(); self.gc.setRange(0, 1000); self.gc.setValue(0)
-        self._add_row_with_info(fl, "Ground clutter (m)", self.gc, "Clutter height in meters")
-        self.obstacles = QPlainTextEdit(); self.obstacles.setPlaceholderText("lat,lon,height per line (-udt)")
-        self.obstacles.setMaximumHeight(60)
-        self.obstacles.setStyleSheet("background: #1B1E22; color: #E2E8F0; border: 1px solid #3F474F; font-size: 11px;")
-        fl.addRow("Obstacles", self.obstacles)
 
-        # -- 5. Output / Engine
-        fl = self._section("output", _SECTION_ICON["output"], "Output", expanded=False)
-        self.engine = QComboBox(); self.engine.addItems(list(params_mod.ENGINES.keys()))
-        self.engine.setCurrentText("LIDAR")
-        self._add_row_with_info(fl, "Engine", self.engine, "Signal-Server engine build")
+        self.knife = QCheckBox("Knife-edge diffraction (-ked)")
+        self.knife.setVisible(False)
+
+        # =========================================================================
+        # -- 4. Terrain & DEM Source
+        # =========================================================================
+        fl_dem = self._section("env", _SECTION_ICON["env"], "Terrain & DEM Source", expanded=False)
         self.dem_source = QComboBox()
         self.dem_source.addItems(["Online – Viewfinder SRTM", "Offline – DEMNAS (.tif)"])
         self.dem_source.setCurrentIndex(1)
         self._add_row_with_info(
-            fl, "DEM source", self.dem_source,
+            fl_dem, "DEM source", self.dem_source,
             "Sumber elevasi: Online (unduh Viewfinder SRTM) atau Offline (file DEMNAS .tif lokal, tanpa internet)")
+
         demnas_row = QWidget()
         dv = QVBoxLayout(demnas_row)
         dv.setContentsMargins(0, 0, 0, 0)
@@ -704,12 +665,14 @@ class ParameterForm(QWidget):
         dv.addWidget(self.demnas_status)
         demnas_lbl = QLabel("DEMNAS folder")
         demnas_lbl.setStyleSheet("color: #CBD5E0; font-size: 11px; font-weight: 500;")
-        fl.addRow(demnas_lbl, demnas_row)
+        fl_dem.addRow(demnas_lbl, demnas_row)
         self.dem_source.currentTextChanged.connect(self._update_demnas_visibility)
         self._update_demnas_visibility()
+
         self.terrain = QComboBox(); self.terrain.addItems(["SDF (terrain)", "LIDAR (.asc)"])
         self.terrain.setCurrentIndex(1)
-        self._add_row_with_info(fl, "Terrain source", self.terrain, "Elevation data source format (SDF = engine sama dgn online; LIDAR = engine LIDAR)")
+        self._add_row_with_info(fl_dem, "Terrain format", self.terrain, "Elevation data source format (SDF = standard engine; LIDAR = LIDAR engine)")
+
         self.sdf_btn = QPushButton("SDF directory...")
         self.sdf_btn.setStyleSheet(btn_ss)
         self.sdf_path = QLineEdit()
@@ -717,7 +680,8 @@ class ParameterForm(QWidget):
         self.sdf_path.setPlaceholderText("No SDF directory")
         self.sdf_path.setStyleSheet("background: #1B1E22; color: #A0AEC0; border: 1px solid #3F474F; border-radius: 3px; padding: 3px; font-size: 10px;")
         self.sdf_btn.clicked.connect(self._pick_dir)
-        fl.addRow(self.sdf_btn, self.sdf_path)
+        fl_dem.addRow(self.sdf_btn, self.sdf_path)
+
         self.lidar_btn = QPushButton("LIDAR file...")
         self.lidar_btn.setStyleSheet(btn_ss)
         self.lidar_path = QLineEdit()
@@ -725,37 +689,83 @@ class ParameterForm(QWidget):
         self.lidar_path.setPlaceholderText("No LIDAR file")
         self.lidar_path.setStyleSheet("background: #1B1E22; color: #A0AEC0; border: 1px solid #3F474F; border-radius: 3px; padding: 3px; font-size: 10px;")
         self.lidar_btn.clicked.connect(lambda: self._pick(self.lidar_path, "LIDAR (*.asc)"))
-        fl.addRow(self.lidar_btn, self.lidar_path)
+        fl_dem.addRow(self.lidar_btn, self.lidar_path)
+
+        self.dem_res = QComboBox(); self.dem_res.addItems(["90 m (dem3)", "30 m (dem1)", "15 m TIF"])
+        self.dem_res.setCurrentIndex(1)
+        self._add_row_with_info(
+            fl_dem, "DEM resolution", self.dem_res,
+            "Resolusi data elevasi. Default 30m (SRTM1) agar detail kontur bukit terjaga.")
+
+        self._dem_downsample = QCheckBox("Izinkan downsampling (hemat RAM)")
+        self._dem_downsample.setChecked(False)
+        self._dem_downsample.setStyleSheet("color:#CBD5E0; font-size:11px;")
+        fl_dem.addRow(self._dem_downsample)
+
+        self._dem_fine_step = QCheckBox("Step halus 1/4 DEM (7.5m)")
+        self._dem_fine_step.setChecked(False)
+        self._dem_fine_step.setStyleSheet("color:#CBD5E0; font-size:11px;")
+        fl_dem.addRow(self._dem_fine_step)
+
+        # Clutter & Obstacles
+        self.clutter_btn = QPushButton("Select clutter (.clt)...")
+        self.clutter_btn.setStyleSheet(btn_ss)
+        self.clutter_path = QLineEdit()
+        self.clutter_path.setReadOnly(True)
+        self.clutter_path.setPlaceholderText("No clutter file")
+        self.clutter_path.setStyleSheet("background: #1B1E22; color: #A0AEC0; border: 1px solid #3F474F; border-radius: 3px; padding: 3px; font-size: 10px;")
+        self.clutter_btn.clicked.connect(lambda: self._pick(self.clutter_path, "Clutter (*.clt)"))
+        fl_dem.addRow(self.clutter_btn, self.clutter_path)
+        self.gc = FocusWheelSpinBox(); self.gc.setRange(0, 1000); self.gc.setValue(0)
+        self._add_row_with_info(fl_dem, "Ground clutter (m)", self.gc, "Clutter height in meters")
+        self.obstacles = QPlainTextEdit(); self.obstacles.setPlaceholderText("lat,lon,height per line (-udt)")
+        self.obstacles.setMaximumHeight(50)
+        self.obstacles.setStyleSheet("background: #1B1E22; color: #E2E8F0; border: 1px solid #3F474F; font-size: 11px;")
+        fl_dem.addRow("Obstacles", self.obstacles)
+
+        self.btn_export_dem = QPushButton("Export DEM .tif untuk QGIS")
+        self.btn_export_dem.setStyleSheet(btn_ss)
+        self.btn_export_dem.setToolTip("Simpan clip DEMNAS/LIDAR ter-clip ke .tif untuk diinspeksi di QGIS")
+        self.btn_export_dem.clicked.connect(lambda: self.export_dem_requested.emit())
+        fl_dem.addRow(self.btn_export_dem)
+
+        # =========================================================================
+        # -- 5. Output & Visualization
+        # =========================================================================
+        fl_out = self._section("output", _SECTION_ICON["output"], "Output & Visualization", expanded=False)
+        self.engine = QComboBox(); self.engine.addItems(list(params_mod.ENGINES.keys()))
+        self.engine.setCurrentText("LIDAR")
+        self._add_row_with_info(fl_out, "Engine", self.engine, "Signal-Server engine build")
+
+        self.radius = FocusWheelSpinBox(); self.radius.setRange(0.1, 10000); self.radius.setValue(2)
+        self._add_row_with_info(fl_out, "Radius (km)", self.radius, "Plot coverage radius in km")
+
         self.resolution = QComboBox()
         for r in params_mod.RESOLUTIONS:
             self.resolution.addItem(str(r), r)
         self.resolution.setCurrentText("1200")
-        self._add_row_with_info(fl, "Resolution", self.resolution, "Tile pixel resolution")
-        self.radius = FocusWheelSpinBox(); self.radius.setRange(0.1, 10000); self.radius.setValue(2)
-        self._add_row_with_info(fl, "Radius (km)", self.radius, "Plot coverage radius in km")
+        self._add_row_with_info(fl_out, "Resolution", self.resolution, "Tile pixel resolution")
+
         self.plot_quality = QComboBox()
         self.plot_quality.addItem("Final (resolusi penuh)", "final")
         self.plot_quality.addItem("Draft (2× cepat)", "draft")
         self.plot_quality.setCurrentIndex(0)
-        self.plot_quality.setStyleSheet(self.resolution.styleSheet())
-        self._add_row_with_info(fl, "Kualitas plot", self.plot_quality,
+        self._add_row_with_info(fl_out, "Plot quality", self.plot_quality,
                                 "Draft membagi 2 resolusi piksel (≈4× lebih cepat) untuk pratinjau")
+
         self.map_segments = QSpinBox()
         self.map_segments.setRange(4, 360)
         self.map_segments.setSingleStep(2)
         self.map_segments.setValue(360)
-        self.map_segments.setToolTip("360 = 1°/seg (hilang jari-jari), 180=2°, 120=3°. Harus genap & kelipatan 2/3.")
-        self._add_row_with_info(fl, "Map segments (azimuth)", self.map_segments,
-                                "360° / segments = step azimuth. 360→1°, 180→2°. >254 butuh patch engine (sudah).")
+        self._add_row_with_info(fl_out, "Map segments", self.map_segments,
+                                "360° / segments = step azimuth. 360→1°, 180→2°.")
+
         self.color_btn = QPushButton("Color table...")
         self.color_btn.setStyleSheet(btn_ss)
         self.color_path = QLineEdit()
         self.color_path.setReadOnly(True)
         self.color_path.setPlaceholderText("Default: splat-classic.dcf")
         self.color_path.setStyleSheet("background: #1B1E22; color: #A0AEC0; border: 1px solid #3F474F; border-radius: 3px; padding: 3px; font-size: 10px;")
-        # splat-classic.dcf by default (hard 10 dB bands + navy floor at -100 dBm
-        # so signals weaker than -100 dBm do not flood the map); bundled copy as
-        # fallback when the Signal-Server tree (ss_root) is not available.
         default_color = ""
         if self.ss_root:
             default_color = os.path.join(self.ss_root, "color", "splat-classic.dcf")
@@ -766,138 +776,134 @@ class ParameterForm(QWidget):
             self.color_path.setText(default_color)
         self._color_user_chosen = False
         self.color_btn.clicked.connect(self._pick_color)
-        fl.addRow(self.color_btn, self.color_path)
+        fl_out.addRow(self.color_btn, self.color_path)
+
         self.dbm_color = QCheckBox("dBm colour scale")
         self.dbm_color.setChecked(True)
         self.dbm_color.setStyleSheet("color: #CBD5E0; font-size: 11px;")
-        fl.addRow(self.dbm_color)
-        self.raster_txt = QCheckBox("Save raster data (TXT)")
-        self.raster_txt.setChecked(False)
-        self.raster_txt.setToolTip(
-            "Engine menulis <output>_raster.txt berisi lat/lon/Rx(dBm) per "
-            "pixel — bisa dibandingkan dengan Radio Mobile.")
-        self.raster_txt.setStyleSheet("color: #CBD5E0; font-size: 11px;")
-        fl.addRow(self.raster_txt)
+        fl_out.addRow(self.dbm_color)
+
         self.rm_style = QCheckBox("Palet & render gaya Radio Mobile")
         self.rm_style.setChecked(False)
-        self.rm_style.setToolTip(
-            "Pakai palet otomatis dari rmwcore/colors*.dat (Radio Mobile) "
-            "untuk engine, lalu hasilkan gambar gaya Radio Mobile "
-            "(terrain hypsometrik + hillshade + coverage + simbol site + "
-            "range circle). Palet kustom yang dipilih manual tetap diutamakan.")
         self.rm_style.setStyleSheet("color: #CBD5E0; font-size: 11px;")
-        fl.addRow(self.rm_style)
-        self.btn_export_dem = QPushButton("Export DEM .tif untuk QGIS")
-        self.btn_export_dem.setStyleSheet(btn_ss)
-        self.btn_export_dem.setToolTip("Simpan clip DEMNAS/LIDAR ter-clip (aja) ke .tif untuk buka di QGIS — cek lubang hitam 0 di Tx")
-        self.btn_export_dem.clicked.connect(lambda: self.export_dem_requested.emit())
-        fl.addRow(self.btn_export_dem)
+        fl_out.addRow(self.rm_style)
+
+        self.raster_txt = QCheckBox("Save raster data (TXT)")
+        self.raster_txt.setChecked(False)
+        self.raster_txt.setStyleSheet("color: #CBD5E0; font-size: 11px;")
+        fl_out.addRow(self.raster_txt)
 
         self._update_erp()
 
-        # Action Buttons row (Lock + Green Run)
-        btn_box = QWidget()
-        btn_layout = QHBoxLayout(btn_box)
-        btn_layout.setContentsMargins(4, 10, 4, 10)
-        btn_layout.setSpacing(10)
+        # Build Sticky Action Footer widget
+        self.action_footer = self._build_action_footer()
+
+        # Apply model-dependent disabling/badges now that all rows exist.
+        self._apply_model_gating()
+
+    def _build_action_footer(self) -> QWidget:
+        """Create the sticky action footer containing Run, Lock, and Export controls."""
+        footer = QFrame()
+        footer.setStyleSheet("""
+            QFrame {
+                background-color: #14171A;
+                border: 1px solid #282D34;
+                border-radius: 6px;
+                padding: 4px;
+            }
+        """)
+        fv = QVBoxLayout(footer)
+        fv.setContentsMargins(6, 6, 6, 6)
+        fv.setSpacing(6)
+
+        # Primary Action Row: Lock + Big Green Calculate Button
+        row_run = QHBoxLayout()
+        row_run.setSpacing(6)
 
         self.btn_lock = QPushButton()
-        self.btn_lock.setIcon(self._icon("lock", 18, "#FFFFFF"))
-        self.btn_lock.setToolTip("Lock Form Inputs")
-        self.btn_lock.setFixedSize(40, 40)
+        self.btn_lock.setIcon(self._icon("lock", 16, "#CBD5E0"))
+        self.btn_lock.setToolTip("Lock / Unlock Form Inputs")
+        self.btn_lock.setFixedSize(36, 36)
         self.btn_lock.setStyleSheet("""
             QPushButton {
-                background-color: #0088CC;
-                color: #FFFFFF;
-                border: none;
-                border-radius: 6px;
-                font-size: 18px;
+                background-color: #1E293B;
+                color: #CBD5E0;
+                border: 1px solid #334155;
+                border-radius: 5px;
             }
-            QPushButton:hover { background-color: #00A3E0; }
+            QPushButton:hover { background-color: #334155; color: #FFFFFF; }
         """)
         self.btn_lock.clicked.connect(self._toggle_lock)
 
-        self.btn_run = QPushButton()
-        self.btn_run.setIcon(self._icon("play", 18, "#FFFFFF"))
-        self.btn_run.setToolTip("Calculate / Run Propagation Plot")
-        self.btn_run.setFixedHeight(40)
+        self.btn_run = QPushButton(" Run Coverage")
+        self.btn_run.setIcon(self._icon("play", 16, "#FFFFFF"))
+        self.btn_run.setToolTip("Calculate & Render RF Propagation Plot")
+        self.btn_run.setFixedHeight(36)
         self.btn_run.setStyleSheet("""
             QPushButton {
-                background-color: #2ECC71;
+                background-color: #10B981;
                 color: #FFFFFF;
                 border: none;
-                border-radius: 6px;
+                border-radius: 5px;
                 font-weight: bold;
-                font-size: 20px;
+                font-size: 13px;
+                letter-spacing: 0.3px;
             }
-            QPushButton:hover { background-color: #27AE60; }
-            QPushButton:disabled { background-color: #555; }
+            QPushButton:hover { background-color: #059669; }
+            QPushButton:pressed { background-color: #047857; }
+            QPushButton:disabled { background-color: #4B5563; }
         """)
         self.btn_run.clicked.connect(lambda: self.start_requested.emit())
 
-        btn_layout.addWidget(self.btn_lock)
-        btn_layout.addWidget(self.btn_run, 1)
-        self.layout.addWidget(btn_box)
+        row_run.addWidget(self.btn_lock)
+        row_run.addWidget(self.btn_run, 1)
+        fv.addLayout(row_run)
 
-        # Output / Export Model Box
-        export_box = QFrame()
-        export_box.setStyleSheet("""
-            QFrame {
-                background-color: #1E2226;
-                border: 1px solid #2D3339;
-                border-radius: 4px;
-                padding: 6px;
-            }
-        """)
-        export_layout = QVBoxLayout(export_box)
-        export_layout.setContentsMargins(6, 4, 6, 6)
-        export_layout.setSpacing(6)
-
-        exp_lbl = QLabel("A (MODELS)")
-        exp_lbl.setStyleSheet("color: #CBD5E0; font-size: 11px; font-weight: bold; font-family: monospace;")
-        exp_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        export_layout.addWidget(exp_lbl)
-
+        # Export Format + Download Row
         row_exp = QHBoxLayout()
         row_exp.setSpacing(6)
+
+        exp_icon_lbl = QLabel()
+        exp_icon_lbl.setPixmap(_pixmap("layers", 14, "#94A3B8"))
+        row_exp.addWidget(exp_icon_lbl)
+
         self.export_fmt = QComboBox()
         self.export_fmt.addItems(["KMZ", "KML", "PNG", "PNG (RM-style)", "TXT (Raster)", "GeoTIFF", "KMZ (3D)", "SHP"])
         self.export_fmt.setStyleSheet("""
             QComboBox {
-                background: #121417;
+                background: #1E2226;
                 color: #E2E8F0;
-                border: 1px solid #3F474F;
-                border-radius: 3px;
-                padding: 3px 6px;
+                border: 1px solid #374151;
+                border-radius: 4px;
+                padding: 4px 6px;
                 font-size: 11px;
             }
         """)
 
-        self.btn_export = QPushButton()
-        self.btn_export.setIcon(self._icon("download", 14, "#E2E8F0"))
-        self.btn_export.setToolTip("Download Model Output")
-        self.btn_export.setFixedSize(30, 26)
+        self.btn_export = QPushButton(" Export")
+        self.btn_export.setIcon(self._icon("download", 13, "#E2E8F0"))
+        self.btn_export.setToolTip("Export Coverage Layer in Selected Format")
+        self.btn_export.setFixedHeight(28)
         self.btn_export.setStyleSheet("""
             QPushButton {
-                background-color: #2D3748;
-                color: #E2E8F0;
-                border: 1px solid #3F474F;
-                border-radius: 3px;
-                font-size: 12px;
+                background-color: #334155;
+                color: #F8FAFC;
+                border: 1px solid #475569;
+                border-radius: 4px;
+                font-size: 11px;
+                font-weight: 600;
+                padding: 0 10px;
             }
-            QPushButton:hover { background-color: #3182CE; }
+            QPushButton:hover { background-color: #2563EB; color: #FFFFFF; border-color: #3B82F6; }
         """)
         self.btn_export.clicked.connect(
             lambda: self.export_requested.emit(self.export_fmt.currentText()))
 
         row_exp.addWidget(self.export_fmt, 1)
         row_exp.addWidget(self.btn_export)
-        export_layout.addLayout(row_exp)
+        fv.addLayout(row_exp)
 
-        self.layout.addWidget(export_box)
-
-        # Apply model-dependent disabling/badges now that all rows exist.
-        self._apply_model_gating()
+        return footer
 
     def _toggle_lock(self):
         self.is_locked = not self.is_locked

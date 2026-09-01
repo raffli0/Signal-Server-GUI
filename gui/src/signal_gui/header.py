@@ -20,6 +20,7 @@ _ICON_COLOR = "#CBD5E0"
 class CloudRFHeader(QFrame):
     """Header bar with CloudRF branding, preset bar, section icons, and version tags."""
 
+    toggle_sidebar_requested = Signal()
     section_clicked = Signal(str)  # Emits key of section to expand/scroll to
     save_profile_requested = Signal()
     load_profile_requested = Signal()
@@ -42,7 +43,33 @@ class CloudRFHeader(QFrame):
 
         # 1. Logo & Brand
         brand_layout = QHBoxLayout()
-        brand_layout.setSpacing(6)
+        brand_layout.setSpacing(8)
+
+        # Sidebar Toggle Hamburger Button
+        self.btn_toggle_sidebar = QPushButton("☰")
+        self.btn_toggle_sidebar.setToolTip("Sembunyikan / Tampilkan Sidebar (Ctrl+B)")
+        self.btn_toggle_sidebar.setFixedSize(28, 28)
+        self.btn_toggle_sidebar.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_toggle_sidebar.setStyleSheet("""
+            QPushButton {
+                background: #23272B;
+                color: #CBD5E0;
+                font-size: 14px;
+                font-weight: bold;
+                border: 1px solid #33383F;
+                border-radius: 4px;
+            }
+            QPushButton:hover {
+                background: #3182CE;
+                color: #FFFFFF;
+                border-color: #4299E1;
+            }
+            QPushButton:pressed {
+                background: #2B6CB0;
+            }
+        """)
+        self.btn_toggle_sidebar.clicked.connect(lambda: self.toggle_sidebar_requested.emit())
+        brand_layout.addWidget(self.btn_toggle_sidebar)
 
         logo_lbl = QLabel()
         logo_lbl.setPixmap(svg_icon("wifi", 18, "#38BDF8").pixmap(18, 18))

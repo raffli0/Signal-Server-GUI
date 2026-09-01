@@ -313,6 +313,9 @@ def load_asc_tile(path: str) -> SdfTile:
                 tokens.extend(parts)
     data = np.asarray(tokens, dtype=np.float32).reshape(
         int(header["nrows"]), int(header["ncols"]))
+    # ESRI ASCII raster rows are written North -> South (row 0 = North).
+    # SdfTile and ElevationSource expect rows running South -> North (row 0 = South / yllcorner).
+    data = np.flipud(data)
     cell = header["cellsize"]
     xll, yll = header["xllcorner"], header["yllcorner"]
     return SdfTile(yll, yll + cell * data.shape[0], xll,

@@ -173,7 +173,7 @@ class MapView(QWebEngineView):
         self._armed = role
         self.page().runJavaScript(f"window.__armedRole='{role}';")
 
-    def set_tx(self, lat: float, lon: float, fly: bool = True) -> None:
+    def set_tx(self, lat: float, lon: float, fly: bool = False) -> None:
         self.tx_pos = (lat, lon)
         self._focus = (lat, lon)
         if self._ready:
@@ -181,7 +181,7 @@ class MapView(QWebEngineView):
             if fly:
                 self.page().runJavaScript(f"flyToSite({lat},{lon});")
 
-    def set_rx(self, lat: float, lon: float, fly: bool = True) -> None:
+    def set_rx(self, lat: float, lon: float, fly: bool = False) -> None:
         self.rx_pos = (lat, lon)
         self._focus = (lat, lon)
         if self._ready:
@@ -326,12 +326,26 @@ class MapView(QWebEngineView):
             "if (typeof map !== 'undefined' && map) { map.invalidateSize(false); }")
 
     def draw_link(self, tx_lat: float, tx_lon: float, rx_lat: float, rx_lon: float,
-                  color: str = "#ffec3d") -> None:
+                  color: str = "#00e600") -> None:
         """Draw the Tx->Rx Radio Link polyline on the map (color = link grade)."""
         self.page().runJavaScript(
             f"drawLink({tx_lat},{tx_lon},{rx_lat},{rx_lon},'{color}');")
 
+    def set_link_cursor(self, lat: float, lon: float, dist_km: float = 0.0,
+                        amsl_m: float = 0.0, agl_m: float = 0.0, ground_m: float = 0.0) -> None:
+        """Move the interactive tracking marker along the Tx->Rx link on the map with 2D altitude/AGL."""
+        self.page().runJavaScript(
+            f"setLinkCursor({lat},{lon},{dist_km},{amsl_m},{agl_m},{ground_m});")
+
     def clear_link(self) -> None:
-        """Remove the Radio Link polyline from the map."""
+        """Remove the Radio Link polyline and tracking cursor from the map."""
         self.page().runJavaScript("clearLink();")
+
+    def toggle_contour(self) -> None:
+        """Toggle the 3D terrain relief / contour texture of the coverage overlay in real time."""
+        self.page().runJavaScript("if (typeof toggleContour === 'function') toggleContour();")
+
+    def set_contour(self, enabled: bool) -> None:
+        """Set whether 3D terrain relief / contour is shown on the coverage overlay."""
+        self.page().runJavaScript(f"if (typeof setContour === 'function') setContour({str(enabled).lower()});")
 
