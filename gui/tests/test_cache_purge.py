@@ -37,7 +37,7 @@ def test_purge_keeps_active_run_only(tmp_path):
     win._purge_render_cache(keep=str(active))
 
     assert not stale.exists()          # sisa render lama -> hilang
-    assert not (tmp_path / "raw").exists()   # tile DEM ikut terhapus
+    assert (tmp_path / "raw").exists()   # tile DEM dipertahankan (tidak dihapus otomatis)
     assert (active / "coverage.png").exists()  # run aktif dipertahankan
     assert any("[cache]" in ln for ln in win.terminal.lines)
 

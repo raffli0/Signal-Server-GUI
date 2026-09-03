@@ -88,8 +88,8 @@ MODEL_OPTION_STATES: dict[int, dict[str, str]] = {
          "context": OPTION_ACTIVE, "diffraction": OPTION_ACTIVE},
     11: {"reliability": OPTION_NA, "climate": OPTION_NA,
          "context": OPTION_ACTIVE, "diffraction": OPTION_ACTIVE},
-     12: {"reliability": OPTION_NA, "climate": OPTION_NA,
-          "context": OPTION_ACTIVE, "diffraction": OPTION_ACTIVE},
+    12: {"reliability": OPTION_NA, "climate": OPTION_NA,
+         "context": OPTION_ACTIVE, "diffraction": OPTION_ACTIVE},
 }
 
 
@@ -297,6 +297,16 @@ def build_argv(
         _opt(args, "-rel", params.get("reliability"))
     if states["climate"] == OPTION_ACTIVE:
         _opt(args, "-cl", params.get("climate_zone"))
+
+    # Two-Ray Ground Reflection overlay mode (can be enabled for any propagation model)
+    tworay = params.get("tworay") or params.get("two_rays") or params.get("use_two_rays")
+    if tworay:
+        mode = params.get("two_ray_mode", "interference").lower()
+        if mode == "normal" or tworay == 1:
+            args += ["-tworay", "1"]
+        else:
+            args += ["-tworay", "2"]
+
     # Processing parallelism (optimisation; engine defaults to 4 segments).
     # Always pass an explicit segment count so wide runs use all cores instead
     # of the engine's fixed 4-thread default.

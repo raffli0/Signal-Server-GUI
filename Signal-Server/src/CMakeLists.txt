@@ -51,7 +51,8 @@ add_library(ericsson STATIC models/ericsson.cc)
 add_library(fspl STATIC models/fspl.cc)
 add_library(hata STATIC models/hata.cc)
 add_library(itwom3.0 STATIC models/itwom3.0.cc)
-add_library(los STATIC models/los.cc models/egli.cc)
+add_library(two_ray STATIC models/two_ray.cc)
+add_library(los STATIC models/los.cc models/egli.cc models/two_ray.cc)
 add_library(pel STATIC models/pel.cc)
 add_library(soil STATIC models/soil.cc)
 add_library(sui STATIC models/sui.cc)
@@ -103,6 +104,7 @@ target_link_libraries(signalserver
 			PUBLIC fspl
 			PUBLIC hata
 			PUBLIC itwom3.0
+			PUBLIC two_ray
 			PUBLIC los
 			PUBLIC pel
 			PUBLIC soil
@@ -128,6 +130,7 @@ target_link_libraries(signalserverHD
 			PUBLIC fspl
 			PUBLIC hata
 			PUBLIC itwom3.0
+			PUBLIC two_ray
 			PUBLIC los
 			PUBLIC pel
 			PUBLIC soil
@@ -153,6 +156,7 @@ target_link_libraries(signalserverLIDAR
 			PUBLIC fspl
 			PUBLIC hata
 			PUBLIC itwom3.0
+			PUBLIC two_ray
 			PUBLIC los
 			PUBLIC pel
 			PUBLIC soil

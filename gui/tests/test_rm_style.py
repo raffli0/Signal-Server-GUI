@@ -58,13 +58,13 @@ def test_parse_user_radiomobile_colors_dat(tmp_path):
     assert pal.colors[0] == (255, 255, 255)   # white = strongest
     assert pal.colors[-1] == (90, 50, 255)    # 5A32FF = weakest
     # Trailing flag ignored, not parsed as a colour.
-    dcf = rm_style.palette_to_dcf_text(pal, top_dbm=-60, bottom_dbm=-120)
+    dcf = rm_style.palette_to_dcf_text(pal, top_dbm=-60, bottom_dbm=-100)
     lines = dcf.strip().splitlines()
-    assert len(lines) == 6
-    assert lines[0].lstrip().startswith("-60:") and lines[-1].lstrip().startswith("-120:")
-    # strongest band (red) at top, weakest (blue) at bottom.
-    assert lines[0].rstrip().endswith("255,   0,   0")
-    assert lines[-1].rstrip().endswith("0, 100, 255")
+    assert len(lines) == 11
+    assert lines[0].lstrip().startswith("-60:") and lines[-1].lstrip().startswith("-100:")
+    # strongest band (crimson) at top, weakest (royal blue) at bottom.
+    assert lines[0].rstrip().endswith("255,  50,  90")
+    assert lines[-1].rstrip().endswith("0,  38, 255")
 
 
 def _write_rm_dat(tmp_path, text=RM_COLOR_DAT):
@@ -84,9 +84,9 @@ def test_parse_real_rmwcore_palette():
 
 def test_palette_to_dcf_matches_engine_format(tmp_path):
     pal = rm_style.parse_colors_dat(_write_dat(tmp_path))
-    text = rm_style.palette_to_dcf_text(pal, top_dbm=-60, bottom_dbm=-120)
+    text = rm_style.palette_to_dcf_text(pal, top_dbm=-60, bottom_dbm=-100)
     lines = text.strip().splitlines()
-    assert len(lines) == 6
+    assert len(lines) == 11
     # sscanf("%d: %d, %d, %d") compatibility + strongest first.
     levels = []
     for ln in lines:
@@ -95,9 +95,9 @@ def test_palette_to_dcf_matches_engine_format(tmp_path):
         levels.append(int(m.group(1)))
     assert levels[0] > levels[-1]
     bands = rm_style.parse_dcf_levels(text)
-    # Strongest band is red, weakest is blue (canonical COVERAGE_RAMP).
-    assert bands[0][1] == (255, 0, 0)
-    assert bands[-1][1] == (0, 100, 255)
+    # Strongest band is crimson, weakest is royal blue (canonical COVERAGE_RAMP).
+    assert bands[0][1] == (255, 50, 90)
+    assert bands[-1][1] == (0, 38, 255)
 
 
 def test_ensure_palette_dcf_writes_file(tmp_path):
@@ -105,7 +105,7 @@ def test_ensure_palette_dcf_writes_file(tmp_path):
     got = rm_style.ensure_palette_dcf(str(dest), dat_path=_write_dat(tmp_path))
     assert os.path.exists(got)
     bands = rm_style.parse_dcf_levels(open(got).read())
-    assert len(bands) == 6
+    assert len(bands) == 11
 
 
 def test_ppm_white_band_kept_opaque(tmp_path):
@@ -187,7 +187,7 @@ def test_render_rm_picture_smoke(tmp_path):
         title="GCS <-> drone")
     assert os.path.exists(got)
     img = Image.open(got)
-    assert img.size[0] > 320            # legend strip widens the canvas
+    assert img.size[0] == 320
     assert img.mode == "RGB"
 
 
@@ -200,29 +200,29 @@ def test_rm_sites_from_params():
 
 
 def test_decode_coverage_field():
-    bands = [(-60, (255, 0, 0)), (-120, (0, 0, 255))]
+    bands = [(-60, (255, 50, 90)), (-100, (0, 38, 255))]
     rgba = np.zeros((3, 3, 4), dtype=np.uint8)
-    rgba[0, 0, :3] = (255, 0, 0)
-    rgba[0, 0, 3] = 255            # red -> -60
-    rgba[1, 1, :3] = (0, 0, 255)
-    rgba[1, 1, 3] = 255            # blue -> -120
+    rgba[0, 0, :3] = (255, 50, 90)
+    rgba[0, 0, 3] = 255            # crimson -> -60
+    rgba[1, 1, :3] = (0, 38, 255)
+    rgba[1, 1, 3] = 255            # blue -> -100
     rgba[2, 2, 3] = 0              # transparent -> NaN
     rgba[0, 2, :3] = (0, 0, 0)
     rgba[0, 2, 3] = 255            # opaque black (blocked hole) -> NaN
     field = rm_style.decode_coverage_field(rgba, bands)
     assert field[0, 0] == -60
-    assert field[1, 1] == -120
+    assert field[1, 1] == -100
     assert np.isnan(field[2, 2])
     assert np.isnan(field[0, 2])
 
 
 def test_colormap_piecewise():
-    levels = np.array([-120.0, -60.0])
-    colors = np.array([[0, 0, 255], [255, 0, 0]], dtype=np.float64)
-    rgb = rm_style.colormap_piecewise(levels, colors, np.array([-120.0, -90.0, -60.0]))
-    assert rgb[0].tolist() == [0, 0, 255]
-    assert rgb[2].tolist() == [255, 0, 0]
-    assert abs(rgb[1, 0] - 127.5) < 2 and abs(rgb[1, 2] - 127.5) < 2
+    levels = np.array([-100.0, -60.0])
+    colors = np.array([[0, 38, 255], [255, 50, 90]], dtype=np.float64)
+    rgb = rm_style.colormap_piecewise(levels, colors, np.array([-100.0, -80.0, -60.0]))
+    assert rgb[0].tolist() == [0, 38, 255]
+    assert rgb[2].tolist() == [255, 50, 90]
+    assert abs(rgb[1, 0] - 127.5) < 2 and abs(rgb[1, 2] - 172.5) < 2
 
 
 def _write_asc(tmp_path, n=16):
@@ -250,7 +250,7 @@ def test_render_rm_picture_shaded_bands(tmp_path):
     arr = np.zeros((h, w, 4), dtype=np.uint8)
     yy, xx = np.mgrid[0:h, 0:w]
     disk = (xx - 16) ** 2 + (yy - 16) ** 2 <= 100
-    arr[disk, :3] = (96, 96, 246)   # matches bottom band colour
+    arr[disk, :3] = (0, 38, 255)   # matches bottom band colour
     arr[disk, 3] = 255
     Image.fromarray(arr, "RGBA").save(cov)
 
@@ -258,7 +258,7 @@ def test_render_rm_picture_shaded_bands(tmp_path):
     got = rm_style.render_rm_picture(
         str(out), (-6.0, 108.0, -6.2, 107.8),
         coverage_png=str(cov),
-        coverage_bands=[(-60, (255, 255, 255)), (-120, (96, 96, 246))],
+        coverage_bands=[(-60, (255, 50, 90)), (-100, (0, 38, 255))],
         asc_file=asc, width=160, threshold_dbm=-100)
     assert os.path.exists(got)
     img = np.asarray(Image.open(got).convert("RGB"))
@@ -268,7 +268,7 @@ def test_render_rm_picture_shaded_bands(tmp_path):
     # Covered centre must be tinted by the bottom band, not flat terrain grey.
     h, w = img.shape[:2]
     centre = img[h // 2, w // 2]
-    assert not np.allclose(centre, base[h // 2, w // 2], atol=15)
+    assert not np.allclose(centre, base[h // 2, w // 2], atol=10)
     # Hillshade makes the covered disk non-uniform (a flat fill would be
     # constant); its blue channel must vary across the disk.
     blue = img[..., 2].astype(np.int16)

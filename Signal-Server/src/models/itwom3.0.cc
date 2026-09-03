@@ -2153,7 +2153,9 @@ double d1thx(double pfl[], const double &x1, const double &x2)
 			++k;
 		}
 
-		s[j + 2] = pfl[k + 2] + (pfl[k + 2] - pfl[k + 1]) * xa;
+		int k1 = std::min(np + 1, std::max(2, k + 1));
+		int k2 = std::min(np + 1, k + 2);
+		s[j + 2] = pfl[k2] + (pfl[k2] - pfl[k1]) * xa;
 		xa = xa + xb;
 	}
 
@@ -2206,7 +2208,9 @@ double d1thx2(double pfl[], const double &x1, const double &x2,
 			++k;
 		}
 
-		s[j + 2] = pfl[k + 2] + (pfl[k + 2] - pfl[k + 1]) * xc;
+		int k1 = std::min(np + 1, std::max(2, k + 1));
+		int k2 = std::min(np + 1, k + 2);
+		s[j + 2] = pfl[k2] + (pfl[k2] - pfl[k1]) * xc;
 		xc = xc + xb;
 	}
 

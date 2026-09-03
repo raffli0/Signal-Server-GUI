@@ -12,11 +12,14 @@
 #include "pel.hh"
 #include "egli.hh"
 #include "soil.hh"
+#include "two_ray.hh"
 #include "../geo.hh"
 #include <mutex>
 #include <spdlog/spdlog.h>
 #include <vector>
 #include <limits.h>
+
+extern double rxGain;
 
 namespace {
 	bool ***processed;
@@ -131,7 +134,7 @@ namespace {
         bool vertical = (v->min_west == v->max_west) ? true : false;
 
         // Calculate total number of points we are going to process
-        unsigned int totalPoints = vertical ? (int)((v->max_north - v->min_north) / dpp) : (int)((v->max_west - v->min_west) / dpp);
+        unsigned int totalPoints = vertical ? (unsigned int)std::max(1, (int)std::ceil(fabs(v->max_north - v->min_north) / dpp)) : (unsigned int)std::max(1, (int)std::ceil(fabs(v->max_west - v->min_west) / dpp));
         progress.total.store(totalPoints);
 
         // Init the count
@@ -161,7 +164,7 @@ namespace {
 				PlotLOSPath(v->source, edge, v->mask_value);
 			else
 				PlotPropPath(v->source, edge, v->mask_value, v->fd, v->prop_model,
-					v->knifeedge, v->pmenv);
+					v->knifeedge, v->pmenv, v->tworay);
             // Increment our counters
 			++y;
             progress.count++;
@@ -222,7 +225,7 @@ namespace {
             if (r->los)
                 PlotLOSPath(r->source, edge, r->mask_value);
             else
-                PlotPropPath(r->source, edge, r->mask_value, r->fd, r->prop_model, r->knifeedge, r->pmenv);
+                PlotPropPath(r->source, edge, r->mask_value, r->fd, r->prop_model, r->knifeedge, r->pmenv, r->tworay);
 
             // Increment
             rad += rps;
@@ -520,7 +523,8 @@ void PlotPropPath(
     FILE * fd, 
     PropModel prop_model,
 	int knifeedge, 
-    int pmenv
+    int pmenv,
+    int tworay
 )
 {
 
@@ -598,10 +602,10 @@ void PlotPropPath(
 			if (cos_rcvr_angle < -1.0)
 				cos_rcvr_angle = -1.0;
 
-			if (got_elevation_pattern || fd != NULL) {
+			if (got_elevation_pattern || fd != NULL || tworay > 0) {
 				/* Determine the elevation angle to the first obstruction
-				   along the path IF elevation pattern data is available
-				   or an output (.ano) file has been designated. */
+				   along the path IF elevation pattern data is available,
+				   an output (.ano) file has been designated, or Two-Ray is active. */
 
 				for (x = 2, block = 0; (x < y && block == 0);
 				     x++) {
@@ -676,15 +680,19 @@ void PlotPropPath(
 			
                 case ITM_LR:
                     // Longley Rice ITM
-                    point_to_point_ITM(source.alt * METERS_PER_FOOT,
-                            destination.alt *
-                            METERS_PER_FOOT,
-                            LR.eps_dielect,
-                            LR.sgm_conductivity,
-                            LR.eno_ns_surfref,
-                            LR.frq_mhz, LR.radio_climate,
-                            LR.pol, LR.conf, LR.rel,
-                            loss, strmode, errnum);
+                    if (elev[0] < 4) {
+                        loss = FSPLpathLoss(LR.frq_mhz, dkm, false);
+                    } else {
+                        point_to_point_ITM(source.alt * METERS_PER_FOOT,
+                                destination.alt *
+                                METERS_PER_FOOT,
+                                LR.eps_dielect,
+                                LR.sgm_conductivity,
+                                LR.eno_ns_surfref,
+                                LR.frq_mhz, LR.radio_climate,
+                                LR.pol, LR.conf, LR.rel,
+                                loss, strmode, errnum);
+                    }
                     break;
                 
                 case HATA:
@@ -733,15 +741,19 @@ void PlotPropPath(
                 
                 case ITWOM_3:
                     // ITWOM 3.0
-                    point_to_point(source.alt * METERS_PER_FOOT,
-                            destination.alt *
-                            METERS_PER_FOOT, LR.eps_dielect,
-                            LR.sgm_conductivity,
+                    if (elev[0] < 4) {
+                        loss = FSPLpathLoss(LR.frq_mhz, dkm, false);
+                    } else {
+                        point_to_point(source.alt * METERS_PER_FOOT,
+                                destination.alt *
+                                METERS_PER_FOOT, LR.eps_dielect,
+                                LR.sgm_conductivity,
 
-                            LR.eno_ns_surfref, LR.frq_mhz,
-                            LR.radio_climate, LR.pol,
-                            LR.conf, LR.rel, loss, strmode,
-                            errnum);
+                                LR.eno_ns_surfref, LR.frq_mhz,
+                                LR.radio_climate, LR.pol,
+                                LR.conf, LR.rel, loss, strmode,
+                                errnum);
+                    }
                     break;
                 
                 case ERICSSON:
@@ -772,15 +784,19 @@ void PlotPropPath(
 
                 default:
                     spdlog::warn("Defaulting to ITM propagation model");
-                    point_to_point_ITM(source.alt * METERS_PER_FOOT,
-                            destination.alt *
-                            METERS_PER_FOOT,
-                            LR.eps_dielect,
-                            LR.sgm_conductivity,
-                            LR.eno_ns_surfref,
-                            LR.frq_mhz, LR.radio_climate,
-                            LR.pol, LR.conf, LR.rel,
-                            loss, strmode, errnum);
+                    if (elev[0] < 4) {
+                        loss = FSPLpathLoss(LR.frq_mhz, dkm, false);
+                    } else {
+                        point_to_point_ITM(source.alt * METERS_PER_FOOT,
+                                destination.alt *
+                                METERS_PER_FOOT,
+                                LR.eps_dielect,
+                                LR.sgm_conductivity,
+                                LR.eno_ns_surfref,
+                                LR.frq_mhz, LR.radio_climate,
+                                LR.pol, LR.conf, LR.rel,
+                                loss, strmode, errnum);
+                    }
 			}
 
 			/* Natural LOS damping: a clear line-of-sight path returns
@@ -821,6 +837,19 @@ void PlotPropPath(
 				}
 			}
 
+			// Apply Two-Ray Ground Reflection on Line-Of-Sight paths (overlay mode for any propagation model)
+			if (tworay > 0 && !block) {
+				bool coherent = (tworay == 1);
+				double tx_amsl = elev[2] + (source.alt * METERS_PER_FOOT);
+				double rx_amsl = elev[y + 2] + (destination.alt * METERS_PER_FOOT);
+				TwoRayResult tr = CalculateTwoRay(
+					LR.frq_mhz, tx_amsl, rx_amsl,
+					dkm, LR.pol, LR.eps_dielect, LR.sgm_conductivity,
+					elev, y, coherent, 0.0
+				);
+				loss = tr.path_loss_db;
+			}
+
 			if (knifeedge == 1 && prop_model > 1) {
 				diffloss =
 				    ked(LR.frq_mhz,
@@ -851,7 +880,7 @@ void PlotPropPath(
 			/* Integrate the antenna's radiation
 			   pattern into the overall path loss. */
 
-			x = (int)rint(10.0 * (10.0 - elevation));
+			x = (int)rint(10.0 * (elevation + 10.0));
 
 			if (x >= 0 && x <= 1000) {
 				azimuth = rint(azimuth);
@@ -867,13 +896,13 @@ void PlotPropPath(
 
 			if (LR.erp != 0.0) {
 				if (dbm) {
-					/* dBm is based on EIRP (ERP + 2.14) */
+					/* dBm is based on EIRP (ERP + 2.14) + Rx Antenna Gain */
 
 					rxp =
 					    LR.erp /
 					    (pow(10.0, (loss - 2.14) / 10.0));
 
-					dBm = 10.0 * (log10(rxp * 1000.0));
+					dBm = 10.0 * (log10(rxp * 1000.0)) + rxGain;
 
 					if (fd != NULL)
 						buffer_offset += sprintf(fd_buffer+buffer_offset,
@@ -1065,10 +1094,11 @@ void PlotLOSMap(struct site source, double altitude, char *plo_filename,
 /// @param pmenv 
 /// @param use_threads whether to use threads or not
 /// @param segments number of segments to divide the plot by
+/// @param tworay whether to use two-ray propagation
 void PlotPropagation(struct site source, bbox bounds, 
                      double altitude, char *plo_filename,
 		            PropModel prop_model, int knifeedge, int haf, int pmenv, bool
-		            use_threads, int segments)
+		            use_threads, int segments, int tworay)
 {
 	static __thread unsigned char mask_value = 1;
 	FILE *fd = NULL;
@@ -1110,19 +1140,6 @@ void PlotPropagation(struct site source, bbox bounds,
     double plot_width = bounds.upper_left.lon - bounds.lower_right.lon;
     double plot_height = bounds.upper_left.lat - bounds.lower_right.lat;
 
-    /**
-     * EXAMPLE - 6 segments
-     * 
-     * We divide our area into as follows:
-     * __|__1__|__2__|__
-     *   |           |
-     * 6 |           | 3
-     * __|___________|__
-     *   |  5  |  4  |
-     * 
-    */
-
-    // NUM_SECTIONS must always be a multiple of 2 and greater than 4, because we have to divide a 4-sided rectangle equally
     int lon_edge_segments = (segments / 4);   // Our longitudal edges (top & bottom) will get the greater of the two segment counts
     int lat_edge_segments = (segments / 2) - lon_edge_segments; // Our latitudal edges are whatever is left over
 
@@ -1139,70 +1156,99 @@ void PlotPropagation(struct site source, bbox bounds,
 
     // Create our longitudal (top and bottom edge) ranges
     for (int i = 0; i < lon_edge_segments; i++) {
-        // Create two ranges for the top & bottom edges which will share longitude values
         PropagationRange top_range;
         PropagationRange bot_range;
-        // We're not doing an LOS plot
         top_range.los = false;
         bot_range.los = false;
+        top_range.source = source;
+        bot_range.source = source;
+        top_range.altitude = altitude;
+        bot_range.altitude = altitude;
+        top_range.use_threads = use_threads;
+        bot_range.use_threads = use_threads;
+        top_range.mask_value = mask_value;
+        bot_range.mask_value = mask_value;
+        top_range.fd = fd;
+        bot_range.fd = fd;
+        top_range.prop_model = prop_model;
+        bot_range.prop_model = prop_model;
+        top_range.knifeedge = knifeedge;
+        bot_range.knifeedge = knifeedge;
+        top_range.pmenv = pmenv;
+        bot_range.pmenv = pmenv;
+        top_range.tworay = tworay;
+        bot_range.tworay = tworay;
+
         // Calculate the longitudes for both ranges
         double lon_min = bounds.lower_right.lon + (edge_width * i);
-        double lon_max = bounds.lower_right.lon + (edge_width * (1+i));
+        double lon_max = bounds.lower_right.lon + (edge_width * (1 + i));
+
         // Set top (on our max_north latitude)
         top_range.min_west = lon_min;
         top_range.max_west = lon_max;
         top_range.min_north = bounds.upper_left.lat;
         top_range.max_north = bounds.upper_left.lat;
+
         // Set bottom (on our min_north latitude)
         bot_range.min_west = lon_min;
         bot_range.max_west = lon_max;
         bot_range.min_north = bounds.lower_right.lat;
         bot_range.max_north = bounds.lower_right.lat;
+
         // Append to our vector
         ranges.push_back(top_range);
         ranges.push_back(bot_range);
-        // Log
-        spdlog::debug("Added top & bottom segments from {:.6f}W to {:.6f}W", lon_min, lon_max);
     }
 
     // Create our latitudal (left and right) ranges
     for (int i = 0; i < lat_edge_segments; i++) {
-        // Create two ranges for the left & right edges since they share latitude values
         PropagationRange left_range;
         PropagationRange right_range;
-        // We're not doing an LOS plot
         left_range.los = false;
         right_range.los = false;
+        left_range.source = source;
+        right_range.source = source;
+        left_range.altitude = altitude;
+        right_range.altitude = altitude;
+        left_range.use_threads = use_threads;
+        right_range.use_threads = use_threads;
+        left_range.mask_value = mask_value;
+        right_range.mask_value = mask_value;
+        left_range.fd = fd;
+        right_range.fd = fd;
+        left_range.prop_model = prop_model;
+        right_range.prop_model = prop_model;
+        left_range.knifeedge = knifeedge;
+        right_range.knifeedge = knifeedge;
+        left_range.pmenv = pmenv;
+        right_range.pmenv = pmenv;
+        left_range.tworay = tworay;
+        right_range.tworay = tworay;
+
         // Calculate the latitude start & stop for both ranges
         double lat_min = bounds.lower_right.lat + (edge_height * i);
-        double lat_max = bounds.lower_right.lat + (edge_height * (i+1));
+        double lat_max = bounds.lower_right.lat + (edge_height * (i + 1));
+
         // Set left (on our max_west longitude)
         left_range.min_west = bounds.upper_left.lon;
         left_range.max_west = bounds.upper_left.lon;
         left_range.min_north = lat_min;
         left_range.max_north = lat_max;
+
         // Set right (on our min_west longitude)
         right_range.min_west = bounds.lower_right.lon;
         right_range.max_west = bounds.lower_right.lon;
         right_range.min_north = lat_min;
         right_range.max_north = lat_max;
+
         // Append to our vector
         ranges.push_back(left_range);
         ranges.push_back(right_range);
-        // Log
-        spdlog::debug("Added left & right segments from {:.6f}N to {:.6f}N", lat_min, lat_max);
     }
 
-    // Make sure we didn't do anythng wrong
-    if (ranges.size() != segments) {
-        spdlog::error("Our vector of ranges ({}) does not match expected segment count {}", ranges.size(), segments);
-        exit(1);
-    }
+    // Initialise thread progress vector
+    thread_progress = std::vector<progress_t>(ranges.size());
 
-    // Size our progress vector appropriately
-    thread_progress = std::vector<progress_t>(segments);
-    
-    // Init our vector for storing processing progress
     init_processed();
 
     // Iterate over the final list of ranges
@@ -1216,12 +1262,12 @@ void PlotPropagation(struct site source, bbox bounds,
         ranges[i].prop_model = prop_model;
         ranges[i].knifeedge = knifeedge;
         ranges[i].pmenv = pmenv;
+        ranges[i].tworay = tworay;
         // Set the segment id
         thread_progress[i].id = i;
         // Start a thread if we're using threads
         if (use_threads) {
             spdlog::debug("Starting calc thread for edge segment {:.6f}N {:.6f}W to {:.6f}N {:.6f}W", ranges[i].min_north, ranges[i].min_west, ranges[i].max_north, ranges[i].max_west);
-            //threads.push_back(std::thread(rangePropagation, i, &ranges[i]));
             futures.push_back( std::async( std::launch::async, rangePropagation, std::ref(thread_progress[i]), &ranges[i] ) );
         }
         else {
@@ -1234,7 +1280,6 @@ void PlotPropagation(struct site source, bbox bounds,
 	if(use_threads)
     {
         spdlog::debug("Waiting for threads to finish...");
-        //finishThreads();
         finishProgress();
     }
 
@@ -1250,16 +1295,8 @@ void PlotPropagation(struct site source, bbox bounds,
 void PlotPropagationRadius(struct site source, double range, 
                             double altitude, char *plot_filename, 
                             PropModel prop_model, int knifeedge, int haf, int pmenv, 
-                            bool use_threads, int segments)
+                            bool use_threads, int segments, int tworay)
 {
-
-    // Convert our imperial units to metric if needed
-    if (metric)
-    {
-        range *= KM_PER_MILE;
-        altitude *= METERS_PER_FOOT;
-    }
-
     // Ensure segments is a logical value
     if ((segments % 2 != 0) && (segments % 3 != 0))
     {
@@ -1283,11 +1320,13 @@ void PlotPropagationRadius(struct site source, double range,
 		}
 	}
     // Print debug
-	spdlog::debug("Plotting {} contours of \"{}\" out to a radius of {:.2f} km with Rx antenna(s) at {:.2f} m AGL",
+	spdlog::debug("Plotting {} contours of \"{}\" out to a radius of {:.2f} {} with Rx antenna(s) at {:.2f} {} AGL",
             plotType,
 			source.name,
-			range,
-			altitude
+			metric ? range * KM_PER_MILE : range,
+			metric ? "km" : "miles",
+			metric ? altitude * METERS_PER_FOOT : altitude,
+			metric ? "m" : "ft"
     );
 
     // Optional clutter debug print
@@ -1346,6 +1385,7 @@ void PlotPropagationRadius(struct site source, double range,
         propRadius.prop_model = prop_model;
         propRadius.knifeedge = knifeedge;
         propRadius.pmenv = pmenv;
+        propRadius.tworay = tworay;
         // We're not doing LOS
         propRadius.los = false;
         // Calculate start and stop angles

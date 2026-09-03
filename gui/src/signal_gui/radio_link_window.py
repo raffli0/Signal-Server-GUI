@@ -17,17 +17,18 @@ import re
 from typing import Optional, Dict, Any, List
 
 from .link_parse import _destination_point, _initial_bearing
+from .two_ray import calculate_two_ray, TwoRayDetails
 
 from PySide6.QtCore import Qt, Signal, QRectF, QPointF
 from PySide6.QtGui import (
     QColor, QFont, QPainter, QPainterPath, QPen, QBrush, QLinearGradient,
-    QGuiApplication
+    QGuiApplication, QPolygonF
 )
 from PySide6.QtWidgets import (
     QDialog, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel,
     QPushButton, QDoubleSpinBox, QComboBox, QLineEdit, QGroupBox,
     QMenuBar, QFileDialog, QMessageBox, QToolTip, QFrame, QSizePolicy,
-    QTextEdit, QScrollArea
+    QTextEdit, QScrollArea, QCheckBox, QRadioButton, QButtonGroup
 )
 
 
@@ -86,6 +87,165 @@ class DarkSMeterWidget(QWidget):
             painter.drawRoundedRect(x, y, seg_w, h, 1.5, 1.5)
 
 
+class PropagationModeDialog(QDialog):
+    """Propagation Mode & Threshold Properties Dialog matching Radio Mobile."""
+
+    def __init__(self, parent=None, use_two_rays=False, mode="normal",
+                 thresh_green=3.0, thresh_yellow=-3.0, dark_bg=True):
+        super().__init__(parent)
+        self.setWindowTitle("Propagation Mode")
+        self.setFixedWidth(460)
+        self.setStyleSheet("""
+            QDialog {
+                background-color: #ECE9D8;
+                color: #000000;
+                font-family: 'Segoe UI', Tahoma, sans-serif;
+            }
+            QGroupBox {
+                font-weight: bold;
+                color: #000000;
+                border: 1px solid #919B9C;
+                border-radius: 3px;
+                margin-top: 8px;
+                padding-top: 10px;
+                background-color: #ECE9D8;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                left: 10px;
+                padding: 0 4px;
+                color: #000000;
+            }
+            QCheckBox, QRadioButton {
+                color: #000000;
+                font-size: 11px;
+            }
+            QDoubleSpinBox {
+                background-color: #FFFFFF;
+                color: #000000;
+                border: 1px solid #7F9DB9;
+                padding: 2px 4px;
+                font-size: 11px;
+            }
+            QPushButton {
+                background-color: #F0F0F0;
+                color: #000000;
+                border: 1px solid #707070;
+                border-radius: 3px;
+                padding: 4px 16px;
+                font-size: 11px;
+                min-width: 75px;
+            }
+            QPushButton:hover {
+                background-color: #E5F1FB;
+                border-color: #0078D7;
+            }
+            QPushButton:pressed {
+                background-color: #CCE4F7;
+            }
+        """)
+
+        layout = QVBoxLayout(self)
+        layout.setSpacing(10)
+        layout.setContentsMargins(14, 14, 14, 14)
+
+        # 1. GroupBox: Propagation mode
+        grp_mode = QGroupBox("Propagation mode")
+        grp_l = QHBoxLayout(grp_mode)
+        grp_l.setContentsMargins(12, 12, 12, 12)
+
+        self.chk_two_rays = QCheckBox("Use \"Two Rays\" for Line-Of-Sight")
+        self.chk_two_rays.setChecked(use_two_rays)
+        grp_l.addWidget(self.chk_two_rays, 1)
+
+        v_radio = QVBoxLayout()
+        v_radio.setSpacing(6)
+        self.rb_normal = QRadioButton("Normal")
+        self.rb_average = QRadioButton("Average")
+        if mode == "normal":
+            self.rb_normal.setChecked(True)
+        else:
+            self.rb_average.setChecked(True)
+
+        self.btn_grp = QButtonGroup(self)
+        self.btn_grp.addButton(self.rb_normal)
+        self.btn_grp.addButton(self.rb_average)
+        v_radio.addWidget(self.rb_normal)
+        v_radio.addWidget(self.rb_average)
+        grp_l.addLayout(v_radio)
+
+        layout.addWidget(grp_mode)
+
+        # 2. Green Threshold Row
+        row_green = QHBoxLayout()
+        self.chk_green = QCheckBox("Draw a green line if RX relative signal (dB) is >=")
+        self.chk_green.setChecked(True)
+        self.chk_green.setStyleSheet("background-color: #80FF80; padding: 3px; border-radius: 2px;")
+        self.spin_green = QDoubleSpinBox()
+        self.spin_green.setRange(-100.0, 100.0)
+        self.spin_green.setValue(thresh_green)
+        self.spin_green.setDecimals(1)
+        self.spin_green.setFixedWidth(65)
+        row_green.addWidget(self.chk_green, 1)
+        row_green.addWidget(self.spin_green)
+        layout.addLayout(row_green)
+
+        # 3. Yellow Threshold Row
+        row_yellow = QHBoxLayout()
+        self.chk_yellow = QCheckBox("Else draw a yellow line if RX relative signal (dB) is >=")
+        self.chk_yellow.setChecked(True)
+        self.chk_yellow.setStyleSheet("background-color: #FFFF80; padding: 3px; border-radius: 2px;")
+        self.spin_yellow = QDoubleSpinBox()
+        self.spin_yellow.setRange(-100.0, 100.0)
+        self.spin_yellow.setValue(thresh_yellow)
+        self.spin_yellow.setDecimals(1)
+        self.spin_yellow.setFixedWidth(65)
+        row_yellow.addWidget(self.chk_yellow, 1)
+        row_yellow.addWidget(self.spin_yellow)
+        layout.addLayout(row_yellow)
+
+        # 4. Red Threshold Row
+        self.chk_red = QCheckBox("Else draw a red line")
+        self.chk_red.setChecked(True)
+        self.chk_red.setStyleSheet("background-color: #FF8080; padding: 3px; border-radius: 2px;")
+        layout.addWidget(self.chk_red)
+
+        # 5. Dark Background Checkbox
+        self.chk_dark_bg = QCheckBox("Draw lines with dark background")
+        self.chk_dark_bg.setChecked(dark_bg)
+        layout.addWidget(self.chk_dark_bg)
+
+        # 6. Explanatory Note
+        lbl_note = QLabel(
+            "Note that if the net topology is type cluster and number of hops>0, then the "
+            "color yellow is not used and the threshold is set to 0 both for green and red"
+        )
+        lbl_note.setWordWrap(True)
+        lbl_note.setStyleSheet("color: #4A5568; font-size: 10px;")
+        layout.addWidget(lbl_note)
+
+        # 7. Button Box
+        btn_box = QHBoxLayout()
+        btn_box.addStretch(1)
+        btn_ok = QPushButton("OK")
+        btn_ok.setDefault(True)
+        btn_ok.clicked.connect(self.accept)
+        btn_cancel = QPushButton("Cancel")
+        btn_cancel.clicked.connect(self.reject)
+        btn_box.addWidget(btn_ok)
+        btn_box.addWidget(btn_cancel)
+        layout.addLayout(btn_box)
+
+    def get_settings(self) -> dict:
+        return {
+            "use_two_rays": self.chk_two_rays.isChecked(),
+            "mode": "normal" if self.rb_normal.isChecked() else "average",
+            "thresh_green": self.spin_green.value(),
+            "thresh_yellow": self.spin_yellow.value(),
+            "dark_bg": self.chk_dark_bg.isChecked(),
+        }
+
+
 class DarkPathProfileCanvas(QWidget):
     """Modern Dark Path Profile Canvas with Great Circle Curvature & Fresnel Zones."""
 
@@ -104,6 +264,11 @@ class DarkPathProfileCanvas(QWidget):
         self._cursor_idx: Optional[int] = None
         self._hover_idx: Optional[int] = None
 
+        # Two-Ray Ground Reflection states
+        self._use_two_rays = False
+        self._two_ray_mode = "normal"
+        self._two_ray_details: Optional[TwoRayDetails] = None
+
     def set_data(self, profile: Optional[dict], obstructed: bool = False,
                  freq_mhz: float = 1200.0, tx_agl: float = 10.0, rx_agl: float = 2.0):
         self._profile = profile
@@ -113,7 +278,40 @@ class DarkPathProfileCanvas(QWidget):
         self._rx_agl = rx_agl
         self._cursor_idx = None
         self._hover_idx = None
+        self._update_two_ray_calculation()
         self.update()
+
+    def set_two_ray_settings(self, use_two_rays: bool, mode: str = "normal"):
+        self._use_two_rays = use_two_rays
+        self._two_ray_mode = mode
+        self._update_two_ray_calculation()
+        self.update()
+
+    def _update_two_ray_calculation(self):
+        if not self._profile or not self._use_two_rays:
+            self._two_ray_details = None
+            return
+        dists = self._profile.get("distance_km", [])
+        terrain = self._profile.get("terrain_m", [])
+        los = self._profile.get("los_m", [])
+        if len(dists) < 2 or len(terrain) < 2 or len(los) < 2:
+            self._two_ray_details = None
+            return
+
+        tx_amsl = los[0]
+        rx_amsl = los[-1]
+        self._two_ray_details = calculate_two_ray(
+            freq_mhz=self._frequency_mhz,
+            dists_km=dists,
+            terrain_m=terrain,
+            tx_amsl_m=tx_amsl,
+            rx_amsl_m=rx_amsl,
+            pol=1,
+            eps_dielect=15.0,
+            sgm_conductivity=0.005,
+            mode=self._two_ray_mode,
+            surface_roughness_m=0.0
+        )
 
     def _get_index_at(self, x_pos: float) -> Optional[int]:
         if not self._profile or "distance_km" not in self._profile:
@@ -336,6 +534,41 @@ class DarkPathProfileCanvas(QWidget):
             path_los.lineTo(*to_screen(dists[i], los[i]))
         painter.drawPath(path_los)
 
+        # 6b. Two-Ray Ground Reflection Bounce Ray & Specular Point
+        tx_x, tx_tip_y = to_screen(dists[0], los[0])
+        rx_x, rx_tip_y = to_screen(dists[-1], los[-1])
+
+        if self._use_two_rays and self._two_ray_details:
+            refl_d = self._two_ray_details.reflection_dist_km
+            refl_h = self._two_ray_details.reflection_elev_m
+            refl_sx, refl_sy = to_screen(refl_d, refl_h)
+
+            # Two-Ray Ground Bounce Ray (Cyan dashed line Tx -> Prefl -> Rx)
+            pen_bounce = QPen(QColor("#00F0FF"), 1.8, Qt.PenStyle.DashLine)
+            painter.setPen(pen_bounce)
+            painter.drawLine(QPointF(tx_x, tx_tip_y), QPointF(refl_sx, refl_sy))
+            painter.drawLine(QPointF(refl_sx, refl_sy), QPointF(rx_x, rx_tip_y))
+
+            # Specular Ground Reflection Marker (Diamond)
+            painter.setBrush(QBrush(QColor("#00F0FF")))
+            painter.setPen(QPen(QColor("#FFFFFF"), 1.5))
+            poly_dia = QPolygonF([
+                QPointF(refl_sx, refl_sy - 5),
+                QPointF(refl_sx + 5, refl_sy),
+                QPointF(refl_sx, refl_sy + 5),
+                QPointF(refl_sx - 5, refl_sy)
+            ])
+            painter.drawPolygon(poly_dia)
+
+            # Two-Ray HUD indicator in top right
+            d_r = self._two_ray_details.delta_r_m
+            d_phi = self._two_ray_details.phase_diff_deg
+            g_mag = self._two_ray_details.gamma_mag
+            hud_txt = f"Two-Ray: Δr={d_r:.2f}m | Δφ={d_phi:.1f}° | |Γ|={g_mag:.2f} ({self._two_ray_mode.capitalize()})"
+            painter.setPen(QColor("#00F0FF"))
+            painter.setFont(QFont("Segoe UI", 8, QFont.Weight.Bold))
+            painter.drawText(QRectF(m_left, m_top + 4, pw - 8, 16), Qt.AlignmentFlag.AlignRight, hud_txt)
+
         # 7. Antenna Mast Endpoints
         tx_x, tx_tip_y = to_screen(dists[0], los[0])
         _, tx_base_y = to_screen(dists[0], terrain[0])
@@ -394,6 +627,15 @@ class RadioLinkWindow(QDialog):
         self._tx_lon: Optional[float] = None
         self._rx_lat: Optional[float] = None
         self._rx_lon: Optional[float] = None
+        self._link_data: Optional[dict] = None
+        self._current_params: Optional[dict] = None
+
+        # Two-Ray Ground Reflection & Threshold settings
+        self._use_two_rays = False
+        self._two_ray_mode = "normal"
+        self._thresh_green = 3.0
+        self._thresh_yellow = -3.0
+        self._dark_bg = True
         self.setStyleSheet("""
             QDialog {
                 background-color: #121417;
@@ -492,10 +734,16 @@ class RadioLinkWindow(QDialog):
         act_copy.triggered.connect(self._copy_report)
         act_export_img = m_edit.addAction("Export Path Profile PNG...")
         act_export_img.triggered.connect(self._export_image)
+        act_export_raster = m_edit.addAction("Export raster.txt (Radio Mobile Format)...")
+        act_export_raster.triggered.connect(self._export_raster_txt)
 
         m_view = self.menu_bar.addMenu("View")
         act_details = m_view.addAction("Show Full Path Budget Report")
         act_details.triggered.connect(self._show_full_report)
+
+        m_prop = self.menu_bar.addMenu("Propagation")
+        act_prop_mode = m_prop.addAction("Propagation Mode & Two-Ray...")
+        act_prop_mode.triggered.connect(self._open_propagation_mode_dialog)
 
         act_swap = self.menu_bar.addAction("Swap (Tx ⇄ Rx)")
         act_swap.triggered.connect(self._on_swap_clicked)
@@ -869,6 +1117,30 @@ class RadioLinkWindow(QDialog):
             clr_text = f"Clearance at {worst_dist:.2f}km"
             fres_text = f"Worst Fresnel={max(0.6, worst_fres_ratio):.1f}F1"
 
+        # Two-Ray Ground Reflection Calculation (if enabled)
+        if self._use_two_rays and dists and terrain and los and len(dists) > 2:
+            two_ray_info = calculate_two_ray(
+                freq_mhz=freq,
+                dists_km=dists,
+                terrain_m=terrain,
+                tx_amsl_m=los[0],
+                rx_amsl_m=los[-1],
+                pol=1,
+                eps_dielect=15.0,
+                sgm_conductivity=0.005,
+                mode=self._two_ray_mode,
+                surface_roughness_m=0.0
+            )
+            loss_db = two_ray_info.path_loss_db
+            fs_loss = two_ray_info.fspl_db
+            # Calculate Rx power taking two-ray multipath into account
+            tx_pwr_w = float(params.get("tx_power_w", params.get("power", 12.0)))
+            tx_pwr_dbm = 10.0 * math.log10(max(0.001, tx_pwr_w) * 1000.0)
+            tx_gain_dbi = float(params.get("tx_antenna_gain", 6.0))
+            rx_gain_dbi = float(params.get("rx_antenna_gain", params.get("rx_gain", 8.0)))
+            rx_dbm = tx_pwr_dbm + tx_gain_dbi - loss_db + rx_gain_dbi
+            fade_margin = rx_dbm - rx_thresh
+
         # Update Top KPI Labels (3 rows x 5 columns)
         self.kpi_labels["azimuth"].setText(f"Azimuth={az_deg:.2f}°")
         self.kpi_labels["elev_angle"].setText(f"Elev. angle={elev_angle:+.3f}°")
@@ -882,16 +1154,17 @@ class RadioLinkWindow(QDialog):
         self.kpi_labels["forest"].setText(f"Forest={forest_loss:.1f} dB")
         self.kpi_labels["statistics"].setText(f"Statistics={stat_loss:.1f} dB")
 
-        self.kpi_labels["path_loss"].setText(f"PathLoss={loss_db:.1f}dB")
+        path_loss_title = f"PathLoss={loss_db:.1f}dB (2-Ray)" if self._use_two_rays else f"PathLoss={loss_db:.1f}dB"
+        self.kpi_labels["path_loss"].setText(path_loss_title)
         self.kpi_labels["e_field"].setText(f"E field={efield:.1f}dBµV/m")
         self.kpi_labels["rx_level_dbm"].setText(f"Rx level={rx_dbm:.1f}dBm")
         self.kpi_labels["rx_level_uv"].setText(f"Rx level={rx_uv:.2f}µV")
         self.kpi_labels["rx_relative"].setText(f"Rx Relative={fade_margin:+.1f}dB")
 
-        # Determine status
-        if obs or fade_margin < -3.0:
+        # Determine status with user-configurable thresholds
+        if obs or fade_margin < self._thresh_yellow:
             self._set_kpi_style("bad", fade_margin)
-        elif fade_margin < 3.0:
+        elif fade_margin < self._thresh_green:
             self._set_kpi_style("marginal", fade_margin)
         else:
             self._set_kpi_style("ok", fade_margin)
@@ -903,6 +1176,7 @@ class RadioLinkWindow(QDialog):
         self._orig_tx_h = tx_h
         self._orig_rx_h = rx_h
 
+        self.canvas.set_two_ray_settings(self._use_two_rays, self._two_ray_mode)
         self.canvas.set_data(link.get("profile"), obstructed=obs, freq_mhz=freq,
                              tx_agl=tx_h, rx_agl=rx_h)
 
@@ -1001,6 +1275,74 @@ class RadioLinkWindow(QDialog):
         pix.save(fn, "PNG")
         QMessageBox.information(self, "Image Saved", f"Path Profile saved to {fn}")
 
+    def _export_raster_txt(self):
+        if not self._link_data:
+            QMessageBox.warning(self, "No Link Data", "No Radio Link data available to export.")
+            return
+
+        fn, _ = QFileDialog.getSaveFileName(
+            self, "Export Radio Mobile Raster", "raster.txt", "Text Files (*.txt);;All Files (*)"
+        )
+        if not fn:
+            return
+
+        profile = self.canvas._profile
+        if not profile or "distance_km" not in profile or "terrain_m" not in profile:
+            QMessageBox.warning(self, "No Profile", "Terrain profile data is missing.")
+            return
+
+        dists = profile["distance_km"]
+        terrain = profile["terrain_m"]
+        n_pts = len(dists)
+        if n_pts == 0:
+            return
+
+        tx_lat = float(self._link_data.get("tx_lat", 0.0))
+        tx_lon = float(self._link_data.get("tx_lon", 0.0))
+        azimuth = float(self._link_data.get("azimuth_deg", 0.0))
+        rx_thresh = float(self._link_data.get("rx_threshold_dbm", -119.0))
+        tx_power_dbm = float(self._link_data.get("tx_power_dbm", 46.14))
+        tx_gain = float(self._link_data.get("tx_gain_dbi", 8.0))
+        rx_gain = float(self._link_data.get("rx_gain_dbi", 8.0))
+        freq_mhz = float(self._link_data.get("frequency_mhz", 1200.0))
+        tx_amsl = float(profile.get("los_m", [500.0])[0])
+        rx_amsl = float(profile.get("los_m", [500.0])[-1])
+
+        lines = ["Azimuth(deg)\tDistance(Km)\tLatitude(deg)\tLongitude(deg)\tElevation(m)\tRx(dBm)\tMargin(dB)"]
+
+        for i in range(n_pts):
+            d_km = dists[i]
+            elev_m = terrain[i]
+            if d_km <= 0.0:
+                continue
+
+            pt_lat, pt_lon = _destination_point(tx_lat, tx_lon, azimuth, d_km)
+            
+            fspl = 20.0 * math.log10(max(0.01, d_km)) + 20.0 * math.log10(max(1.0, freq_mhz)) + 32.44
+            los_elev = tx_amsl + (rx_amsl - tx_amsl) * (i / max(1, n_pts - 1))
+            earth_bulge = (d_km * (dists[-1] - d_km) * 1000.0 * 1000.0) / (2.0 * (4.0 / 3.0) * 6371000.0)
+            eff_elev = elev_m + earth_bulge
+            clearance = los_elev - eff_elev
+
+            if clearance >= 0:
+                loss = fspl - 1.5
+            else:
+                h_obs = abs(clearance)
+                v = h_obs * math.sqrt((2.0 / (3e8 / (freq_mhz * 1e6))) * (1.0 / (max(100.0, d_km * 1000.0)) + 1.0 / (max(100.0, (dists[-1] - d_km) * 1000.0))))
+                diff_loss = 6.9 + 20.0 * math.log10(math.sqrt((v - 0.1)**2 + 1.0) + v - 0.1) if v > -0.7 else 0.0
+                loss = fspl + max(0.0, diff_loss)
+
+            rx_dbm = tx_power_dbm + tx_gain + rx_gain - loss
+            margin = rx_dbm - rx_thresh
+            lines.append(f"{azimuth:.1f}\t{d_km:.3f}\t{pt_lat:.6f}\t{pt_lon:.6f}\t{elev_m:.1f}\t{rx_dbm:.2f}\t{margin:.2f}")
+
+        try:
+            with open(fn, "w", encoding="utf-8") as f:
+                f.write("\n".join(lines) + "\n")
+            QMessageBox.information(self, "Raster Exported", f"Successfully exported {len(lines) - 1} points to:\n{fn}")
+        except Exception as e:
+            QMessageBox.critical(self, "Export Error", f"Failed to save raster file:\n{e}")
+
     def _show_full_report(self):
         if not self._link_data:
             return
@@ -1035,3 +1377,23 @@ class RadioLinkWindow(QDialog):
         btn.clicked.connect(dlg.accept)
         layout.addWidget(btn, 0, Qt.AlignmentFlag.AlignRight)
         dlg.exec()
+
+    def _open_propagation_mode_dialog(self):
+        dlg = PropagationModeDialog(
+            self,
+            use_two_rays=self._use_two_rays,
+            mode=self._two_ray_mode,
+            thresh_green=self._thresh_green,
+            thresh_yellow=self._thresh_yellow,
+            dark_bg=self._dark_bg
+        )
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            s = dlg.get_settings()
+            self._use_two_rays = s["use_two_rays"]
+            self._two_ray_mode = s["mode"]
+            self._thresh_green = s["thresh_green"]
+            self._thresh_yellow = s["thresh_yellow"]
+            self._dark_bg = s["dark_bg"]
+            self.canvas.set_two_ray_settings(self._use_two_rays, self._two_ray_mode)
+            if self._link_data and self._current_params:
+                self.update_link_results(self._link_data, self._current_params)

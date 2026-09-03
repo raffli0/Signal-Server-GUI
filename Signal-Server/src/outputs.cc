@@ -1181,7 +1181,7 @@ void PathReport(struct site source, struct site destination, char *name,
 	angle2 = ElevationAngle2(source, destination, earthradius);
 
 	if (got_azimuth_pattern || got_elevation_pattern) {
-		x = (int)rint(10.0 * (10.0 - angle2));
+		x = (int)rint(10.0 * (angle2 + 10.0));
 
 		if (x >= 0 && x <= 1000)
 			pattern =
@@ -1611,7 +1611,7 @@ void PathReport(struct site source, struct site destination, char *name,
 			/* Integrate the antenna's radiation
 			   pattern into the overall path loss. */
 
-			x = (int)rint(10.0 * (10.0 - elevation));
+			x = (int)rint(10.0 * (elevation + 10.0));
 
 			if (x >= 0 && x <= 1000) {
 				pattern =

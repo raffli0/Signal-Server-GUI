@@ -31,19 +31,32 @@ _HEX_COLOR_RE = re.compile(r"^([0-9A-Fa-f]{6})$")
 _DCF_LINE_RE = re.compile(r"^\s*([-+]?\d+)\s*:\s*([-+]?\d+)\s*,\s*([-+]?\d+)\s*,\s*([-+]?\d+)")
 
 DEFAULT_TOP_DBM = -60
-DEFAULT_BOTTOM_DBM = -120
+DEFAULT_BOTTOM_DBM = -100
 
-# Canonical coverage colour ramp (strongest -> weakest), used for the engine
-# colour table so the displayed coverage follows a clear red -> yellow -> green
-# -> greenish-blue -> cyan -> blue scale instead of Radio Mobile's white->blue
-# (a white centre reads as a hole over a light OSM basemap).
+# Canonical Radio Mobile 11-level "Rainbow colors" ramp (< -100 to -60 dBm, step 4 dB):
+#   -60 dBm: Crimson / Deep Rose Red
+#   -64 dBm: Coral Red
+#   -68 dBm: Gold / Peach
+#   -72 dBm: Yellow
+#   -76 dBm: Lime / Chartreuse
+#   -80 dBm: Bright Green
+#   -84 dBm: Green (Rx Sensitivity Threshold)
+#   -88 dBm: Mint / Seafoam
+#   -92 dBm: Cyan
+#   -96 dBm: Sky Blue
+#  -100 dBm: Indigo / Royal Blue
 COVERAGE_RAMP = (
-    (255, 0, 0),      # red            (strongest signal)
-    (255, 255, 0),    # yellow
-    (0, 200, 0),      # green
-    (0, 200, 200),    # greenish-blue (teal)
-    (0, 255, 255),    # cyan
-    (0, 100, 255),    # blue           (weakest signal)
+    (255,  50,  90),   # -60 dBm: Crimson
+    (255, 100, 100),   # -64 dBm: Coral Red
+    (255, 220, 100),   # -68 dBm: Gold / Peach
+    (255, 255, 100),   # -72 dBm: Yellow
+    (192, 255, 100),   # -76 dBm: Lime / Chartreuse
+    (100, 255, 100),   # -80 dBm: Bright Green
+    (100, 255, 100),   # -84 dBm: Green (Rx Threshold)
+    (100, 255, 192),   # -88 dBm: Mint / Seafoam
+    (100, 255, 255),   # -92 dBm: Cyan
+    (100, 220, 255),   # -96 dBm: Sky Blue
+    (  0,  38, 255),   # -100 dBm: Royal Blue
 )
 
 # Visual-compositing tunables for the RM-style coverage overlay.
@@ -369,6 +382,26 @@ def decode_coverage_field(rgba: np.ndarray,
     return out.reshape(rgb.shape[:2])
 
 
+def colormap_discrete(levels: np.ndarray, colors: np.ndarray,
+                      values: np.ndarray) -> np.ndarray:
+    """Discrete stepped band colours matching Signal-Server & Radio Mobile.
+
+    Interval matching (Rentang dBm):
+      dBm >= levels[0]              -> colors[0] (top red)
+      levels[i] <= dBm < levels[i-1]-> colors[i]
+      dBm < levels[-1]              -> colors[-1] (bottom blue)
+    """
+    order = np.argsort(-levels)  # descending order (-60, -64, ...)
+    lv = levels[order]
+    cv = colors[order]
+    out = np.zeros(values.shape + (3,), dtype=np.float64)
+    out[...] = cv[-1]
+    for i in range(len(lv) - 1, -1, -1):
+        mask = values >= lv[i]
+        out[mask] = cv[i]
+    return out
+
+
 def colormap_piecewise(levels: np.ndarray, colors: np.ndarray,
                        values: np.ndarray) -> np.ndarray:
     """Piecewise-linear interpolate band colours across dBm levels.
@@ -478,15 +511,17 @@ def render_rm_picture(out_png: str, bbox, *,
         if palette is not None:
             filled = np.where(np.isnan(elev), 0.0, elev)
             rgb = palette.hypso_rgb(filled).astype(np.float64)
+            rgb *= (0.45 + 0.55 * shade)[..., None]
         else:
-            base = np.where(np.isnan(elev), 235.0,
-                            245.0 - 90.0 * _norm01(elev))
-            rgb = np.dstack([base] * 3)
-        rgb *= (0.45 + 0.55 * shade)[..., None]
-        rgb[np.isnan(elev)] = 225.0  # uncovered terrain: flat light grey
+            # Radio Mobile greyscale shaded relief base (1:1 with base.kmz):
+            # Flat terrain / sea = 147.0 (neutral grey)
+            # Slopes modulated by hillshade
+            relief = 147.0 * (0.65 + 0.70 * (shade - 0.5))
+            rgb = np.dstack([np.clip(relief, 80.0, 245.0)] * 3)
+        rgb[np.isnan(elev)] = 147.0  # uncovered terrain: flat light grey
         terrain = Image.fromarray(rgb.clip(0, 255).astype(np.uint8), "RGB")
     else:
-        terrain = Image.new("RGB", (W, H), (226, 230, 234))
+        terrain = Image.new("RGB", (W, H), (147, 147, 147))
 
     canvas = terrain.convert("RGBA")
 
@@ -503,12 +538,13 @@ def render_rm_picture(out_png: str, bbox, *,
             if not np.all(np.isnan(field)):
                 levels = np.array([lvl for lvl, _ in bands], dtype=np.float64)
                 colors = np.array([c for _, c in bands], dtype=np.float64)
-                # Supersample x2 for bilinear band blending + smooth AA.
+                # Supersample x2 for clean band rendering + smooth AA.
                 f2 = ndimage.zoom(field, 2, order=1)
-                sh2 = ndimage.zoom(shade, 2, order=1)
-                sig = colormap_piecewise(levels, colors, f2)
-                shade_f = SHADE_MIN + (1.0 - SHADE_MIN) * sh2
-                sig = sig * shade_f[..., None]
+                t2 = ndimage.zoom(rgb, (2, 2, 1), order=1)
+                # Discrete stepped bands (rentang dBm) matching Radio Mobile 1:1
+                sig = colormap_discrete(levels, colors, f2)
+                # Radio Mobile pastel blend: 50% signal color + 50% terrain relief
+                sig = 0.50 * sig + 0.50 * t2
                 sig = np.nan_to_num(sig)
                 base = np.where(np.isnan(f2), 0.0, 1.0)
                 if threshold_dbm is not None:
@@ -539,8 +575,9 @@ def render_rm_picture(out_png: str, bbox, *,
             col, row = _range_circle_pts(tx["lat"], tx["lon"], float(r_km),
                                          lats, lons)
             pts = list(zip(col.tolist(), row.tolist()))
-            pts.append(pts[0])
-            draw.line(pts, fill=(20, 20, 20, 255), width=2)
+            for i in range(len(pts) - 1):
+                draw.line([pts[i], pts[i + 1]], fill=(120, 120, 120, 180),
+                          width=1)
 
     # --- site symbols --------------------------------------------------------
     def to_px(lat, lon):
@@ -564,29 +601,17 @@ def render_rm_picture(out_png: str, bbox, *,
             d.ellipse([2, 2, 14, 14], fill=fill, outline=(0, 0, 0, 255))
         _paste_symbol(canvas, sym, cx, cy, height, st.get("label"))
 
-    # --- legend strip ----------------------------------------------------------
-    if legend and coverage_bands:
-        pad = 8
-        lh = 16
-        lw = 74
-        total_h = pad * 2 + lh * len(coverage_bands)
-        strip = Image.new("RGBA", (lw, total_h), (250, 250, 250, 216))
-        sd = ImageDraw.Draw(strip)
-        font = ImageFont.load_default()
-        for i, (level, color) in enumerate(coverage_bands):
-            y0 = pad + i * lh
-            sd.rectangle([4, y0, 26, y0 + lh - 3], fill=tuple(color) + (255,),
-                         outline=(60, 60, 60, 255))
-            sd.text((31, y0 + 1), f"{level} dBm", fill=(20, 20, 20, 255),
-                    font=font)
-        full = Image.new("RGBA", (canvas.width + lw + 6,
-                                  max(canvas.height, total_h)),
-                         (255, 255, 255, 255))
-        full.alpha_composite(canvas, (0, 0))
-        full.alpha_composite(strip, (canvas.width + 6, 0))
-        canvas = full
-    elif canvas.width != W or canvas.height != H:
-        pass
+    # --- legend overlay (Radio Mobile horizontal bar at top-right) -----------
+    if legend:
+        leg_path = os.path.join(os.path.dirname(__file__), "resources", "rm_legend_template.png")
+        if os.path.exists(leg_path):
+            try:
+                leg_img = Image.open(leg_path).convert("RGBA")
+                leg_x = max(5, canvas.width - leg_img.width - 8)
+                leg_y = 6
+                canvas.alpha_composite(leg_img, (leg_x, leg_y))
+            except Exception:
+                pass
 
     if title:
         d = ImageDraw.Draw(canvas)

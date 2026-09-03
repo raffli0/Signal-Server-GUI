@@ -71,11 +71,11 @@ def test_render_grid_png_band_and_transparency(tmp_path):
     img = np.asarray(Image.open(out).convert("RGBA"))
     assert img.shape[:2] == (2, 3)
     # Strongest cell is the exact top-of-ramp colour.
-    assert tuple(img[0, 2]) == (255, 0, 0, 255)
+    assert tuple(img[0, 2]) == (255, 50, 90, 255)
     # Sub-threshold cell fully transparent.
     assert tuple(img[0, 0]) == (0, 0, 0, 0)
-    # Cell on band 2 lands exactly on its ramp colour (yellow).
-    assert tuple(int(v) for v in img[0, 1][:3]) == (255, 255, 0)
+    # Cell on band 2 lands exactly on its ramp colour.
+    assert tuple(int(v) for v in img[0, 1][:3]) == (255, 220, 100)
     assert img[0, 1, 3] == 255
 
 

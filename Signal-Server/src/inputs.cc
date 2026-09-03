@@ -1594,16 +1594,20 @@ int LoadSignalColors(struct site xmtr)
 	char filename[255], string[80], *pointer = NULL, *s;
 	FILE *fd = NULL;
 
-	if (color_file != NULL && color_file[0] != 0)
-		for (x = 0; color_file[x] != '.' && color_file[x] != 0 && x < 250; x++) filename[x] = color_file[x];
-	else
+	if (color_file != NULL && color_file[0] != 0) {
+		strncpy(filename, color_file, 250);
+		filename[250] = 0;
+		if (strstr(filename, ".scf") == NULL) {
+			strncat(filename, ".scf", 254 - strlen(filename));
+		}
+	} else {
 		for (x = 0; xmtr.filename[x] != '.' && xmtr.filename[x] != 0 && x < 250; x++) filename[x] = xmtr.filename[x];
-
-	filename[x] = '.';
-	filename[x + 1] = 's';
-	filename[x + 2] = 'c';
-	filename[x + 3] = 'f';
-	filename[x + 4] = 0;
+		filename[x] = '.';
+		filename[x + 1] = 's';
+		filename[x + 2] = 'c';
+		filename[x + 3] = 'f';
+		filename[x + 4] = 0;
+	}
 
 	/* Default values */
 
@@ -1731,16 +1735,20 @@ int LoadLossColors(struct site xmtr)
 	char filename[255], string[80], *pointer = NULL, *s;
 	FILE *fd = NULL;
 
-	if (color_file != NULL && color_file[0] != 0)
-		for (x = 0; color_file[x] != '.' && color_file[x] != 0 && x < 250; x++) filename[x] = color_file[x];
-	else
+	if (color_file != NULL && color_file[0] != 0) {
+		strncpy(filename, color_file, 250);
+		filename[250] = 0;
+		if (strstr(filename, ".lcf") == NULL) {
+			strncat(filename, ".lcf", 254 - strlen(filename));
+		}
+	} else {
 		for (x = 0; xmtr.filename[x] != '.' && xmtr.filename[x] != 0 && x < 250; x++) filename[x] = xmtr.filename[x];
-
-	filename[x] = '.';
-	filename[x + 1] = 'l';
-	filename[x + 2] = 'c';
-	filename[x + 3] = 'f';
-	filename[x + 4] = 0;
+		filename[x] = '.';
+		filename[x + 1] = 'l';
+		filename[x + 2] = 'c';
+		filename[x + 3] = 'f';
+		filename[x + 4] = 0;
+	}
 
 	/* Default values */
 
@@ -1893,16 +1901,20 @@ int LoadDBMColors(struct site xmtr)
 	char filename[255], string[80], *pointer = NULL, *s;
 	FILE *fd = NULL;
 
-	if (color_file != NULL && color_file[0] != 0)
-		for (x = 0; color_file[x] != '.' && color_file[x] != 0 && x < 250; x++) filename[x] = color_file[x];
-	else
+	if (color_file != NULL && color_file[0] != 0) {
+		strncpy(filename, color_file, 250);
+		filename[250] = 0;
+		if (strstr(filename, ".dcf") == NULL) {
+			strncat(filename, ".dcf", 254 - strlen(filename));
+		}
+	} else {
 		for (x = 0; xmtr.filename[x] != '.' && xmtr.filename[x] != 0 && x < 250; x++) filename[x] = xmtr.filename[x];
-
-	filename[x] = '.';
-	filename[x + 1] = 'd';
-	filename[x + 2] = 'c';
-	filename[x + 3] = 'f';
-	filename[x + 4] = 0;
+		filename[x] = '.';
+		filename[x + 1] = 'd';
+		filename[x + 2] = 'c';
+		filename[x + 3] = 'f';
+		filename[x + 4] = 0;
+	}
 
 	/* Default values */
 

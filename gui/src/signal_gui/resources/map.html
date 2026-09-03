@@ -301,7 +301,6 @@
     .leaflet-image-layer.leaflet-zoom-animated {
       image-rendering: pixelated;
       image-rendering: crisp-edges;
-      mix-blend-mode: multiply;
     }
 
     /* Basemap Style Picker Menu */
@@ -639,17 +638,17 @@
     // parsed from the engine's .dcf colour table) so they always match the
     // rendered coverage; the constants below are only a fallback.
     var PALETTE = [
-      [247, 49, 87],
-      [242, 95, 95],
-      [247, 213, 97],
-      [242, 242, 95],
-      [186, 246, 97],
-      [95, 242, 95],
-      [97, 246, 97],
-      [95, 242, 182],
-      [96, 246, 246],
-      [95, 208, 241],
-      [96, 96, 246]
+      [255, 50, 90],
+      [255, 100, 100],
+      [255, 220, 100],
+      [255, 255, 100],
+      [192, 255, 100],
+      [100, 255, 100],
+      [100, 255, 100],
+      [100, 255, 192],
+      [100, 255, 255],
+      [100, 220, 255],
+      [0, 38, 255]
     ];
     var LEVEL_THRESHOLDS = [-60, -64, -68, -72, -76, -80, -84, -88, -92, -96, -100];
     if (window.__covPalette && Array.isArray(window.__covPalette.colors)
@@ -675,9 +674,23 @@
         var o = p * 4;
         if (px[o + 3] === 0) { map[p] = 255; continue; } // transparent -> no band
         var r = px[o], g = px[o + 1], b = px[o + 2];
+        var maxC = Math.max(r, Math.max(g, b));
+        if (maxC === 0) { map[p] = PALETTE.length - 1; continue; }
+        
+        // Intensity-normalized matching to accurately classify hillshaded pixels
+        var nr = (r / maxC) * 255;
+        var ng = (g / maxC) * 255;
+        var nb = (b / maxC) * 255;
+
         var best = 0, bestD = Infinity;
         for (var k = 0; k < PALETTE.length; k++) {
-          var dr = r - PALETTE[k][0], dg = g - PALETTE[k][1], db = b - PALETTE[k][2];
+          var pr = PALETTE[k][0], pg = PALETTE[k][1], pb = PALETTE[k][2];
+          var maxP = Math.max(pr, Math.max(pg, pb)) || 1;
+          var npr = (pr / maxP) * 255;
+          var npg = (pg / maxP) * 255;
+          var npb = (pb / maxP) * 255;
+
+          var dr = nr - npr, dg = ng - npg, db = nb - npb;
           var d = dr * dr + dg * dg + db * db;
           if (d < bestD) { bestD = d; best = k; }
         }
@@ -754,11 +767,11 @@
             dst[p + 2] = src[p + 2];
             dst[p + 3] = a;
           } else {
-            // Flat Solid Colors (Contour OFF)
+            // Flat Solid Colors (Contour OFF) - Calibrated RM flat tone (0.72x luminance) to prevent blinding glare
             var baseCol = (band >= 0 && band < PALETTE.length) ? PALETTE[band] : [src[p], src[p + 1], src[p + 2]];
-            dst[p] = baseCol[0];
-            dst[p + 1] = baseCol[1];
-            dst[p + 2] = baseCol[2];
+            dst[p] = Math.round(baseCol[0] * 0.72);
+            dst[p + 1] = Math.round(baseCol[1] * 0.72);
+            dst[p + 2] = Math.round(baseCol[2] * 0.72);
             dst[p + 3] = a;
           }
         } else {

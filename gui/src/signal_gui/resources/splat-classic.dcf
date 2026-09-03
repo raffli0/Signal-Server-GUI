@@ -1,25 +1,19 @@
-; Radio Mobile "Rainbow colors" 12-level DBM Signal Palette (splat-classic.dcf)
-; Matches Radio Mobile 12-step scale (-60 to -100 dBm, step 4 dB):
-;   -60 dBm : #FF1E50 (Crimson / Deep Rose Red)
-;   -64 dBm : #FF6464 (Coral Red)
-;   -68 dBm : #FFDC64 (Peach / Gold)
-;   -72 dBm : #FFFF64 (Yellow)
-;   -76 dBm : #C0FF64 (Lime / Chartreuse)
-;   -80 dBm : #64FF64 (Bright Green)
-;   -84 dBm : #64FF64 (Light Green)
-;   -88 dBm : #64FFC0 (Mint / Seafoam)
-;   -92 dBm : #64FFFF (Cyan)
-;   -96 dBm : #64DCFF (Sky Blue)
-;  -100 dBm : #6464FF (Indigo / Blue)
+; SPLAT! Classic 16-level DBM Signal Palette
+; Classic broad rainbow from +0 dBm down to -150 dBm in 10 dB steps
 ; Format: dBm: red, green, blue
- -60: 255,  30,  80
- -64: 255, 100, 100
- -68: 255, 220, 100
- -72: 255, 255, 100
- -76: 192, 255, 100
- -80: 100, 255, 100
- -84: 100, 255, 100
- -88: 100, 255, 192
- -92: 100, 255, 255
- -96: 100, 220, 255
--100: 100, 100, 255
+  +0: 255,   0,   0
+ -10: 255, 128,   0
+ -20: 255, 165,   0
+ -30: 255, 206,   0
+ -40: 255, 255,   0
+ -50: 184, 255,   0
+ -60:   0, 255,   0
+ -70:   0, 208,   0
+ -80:   0, 196, 196
+ -90:   0, 148, 255
+-100:  80,  80, 255
+-110:   0,  38, 255
+-120: 142,  63, 255
+-130: 196,  54, 255
+-140: 255,   0, 255
+-150: 255, 194, 204

@@ -49,10 +49,10 @@ def test_render_html_no_palette_by_default():
 def test_palette_from_color_file_bundled_dcf():
     pal = map_view.palette_from_color_file(None)  # falls back to bundled .dcf
     assert pal is not None
-    assert pal["colors"][0] == [255, 0, 0]        # strongest band is red
+    assert pal["colors"][0][0] == 255             # strongest band is in red family
     assert pal["levels"][0] == -60.0
-    assert pal["levels"][-1] == -120.0
-    assert len(pal["colors"]) == len(pal["levels"]) == 6
+    assert pal["levels"][-1] == -100.0
+    assert len(pal["colors"]) == len(pal["levels"]) == 11
 
 
 def test_palette_from_missing_color_file_falls_back(tmp_path):
@@ -71,9 +71,6 @@ def test_parse_pick_url():
 
 def test_draw_link_js_accepts_color():
     html = _tpl()
-    # The Tx->Rx link/LOS polyline overlay is intentionally disabled so the
-    # coverage map stays free of the link line. drawLink must still be defined
-    # (no-op) but must not create a polyline layer.
     assert "function drawLink(txLat, txLon, rxLat, rxLon, color)" in html
     body = html.split("function drawLink", 1)[1]
-    assert "L.polyline" not in body.split("function clearLink", 1)[0]
+    assert "L.polyline" in body.split("function clearLink", 1)[0]

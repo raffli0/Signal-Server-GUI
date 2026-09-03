@@ -625,6 +625,16 @@ class ParameterForm(QWidget):
             fl_model, "Radio climate", self.climate,
             "Radio climate zone (ITM/ITWOM only)", gate_key="climate")
 
+        self.two_rays = QComboBox()
+        self.two_rays.addItem("Off", 0)
+        self.two_rays.addItem("Normal (Coherent)", 1)
+        self.two_rays.addItem("Average (Power addition)", 2)
+        self._add_row_with_info(
+            fl_model, "Two Rays (LOS)", self.two_rays,
+            "Two-Ray Ground Reflection untuk Line-Of-Sight paths. "
+            "Menghitung pantulan tanah (ground bounce ray) dan interferensi beda fase (multipath fading) "
+            "pada model propagasi apapun saat jalur memiliki LOS.")
+
         self.knife = QCheckBox("Knife-edge diffraction (-ked)")
         self.knife.setVisible(False)
 
@@ -781,11 +791,6 @@ class ParameterForm(QWidget):
         self.dbm_color.setStyleSheet("color: #CBD5E0; font-size: 11px;")
         fl_out.addRow(self.dbm_color)
 
-        self.rm_style = QCheckBox("Palet & render gaya Radio Mobile")
-        self.rm_style.setChecked(False)
-        self.rm_style.setStyleSheet("color: #CBD5E0; font-size: 11px;")
-        fl_out.addRow(self.rm_style)
-
         self.raster_txt = QCheckBox("Save raster data (TXT)")
         self.raster_txt.setChecked(False)
         self.raster_txt.setStyleSheet("color: #CBD5E0; font-size: 11px;")
@@ -938,9 +943,33 @@ class ParameterForm(QWidget):
             self.sdf_path.setText(d)
 
     def _pick_antenna(self) -> None:
-        p = _browse(self, "Select antenna pattern", "Antenna (*.az *.el)")
+        p = _browse(self, "Select antenna pattern", "Antenna (*.az *.el *.ant);;Radio Mobile Antenna (*.ant);;All Files (*)")
         if p:
-            base, _ = os.path.splitext(p)
+            base, ext = os.path.splitext(p)
+            if ext.lower() == ".ant":
+                az_path = base + ".az"
+                el_path = base + ".el"
+                if not (os.path.exists(az_path) and os.path.exists(el_path)):
+                    try:
+                        import math
+                        with open(p, "r") as ant_f:
+                            lines = [float(l.strip()) for l in ant_f if l.strip()]
+                        if len(lines) >= 360:
+                            # Write .az
+                            with open(az_path, "w") as az_f:
+                                az_f.write("0\n")
+                                for i in range(min(360, len(lines))):
+                                    az_f.write(f"{i}\t{10**(lines[i]/20.0):0.4f}\n")
+                            # Write .el
+                            with open(el_path, "w") as el_f:
+                                el_f.write("0.0\t0.0\n")
+                                el_lines = lines[360:] if len(lines) >= 720 else lines
+                                for el in range(-10, 91):
+                                    idx = (el + 360) % 360 if len(el_lines) >= 360 else 0
+                                    val = el_lines[idx] if idx < len(el_lines) else 0.0
+                                    el_f.write(f"{el}\t{10**(val/20.0):0.4f}\n")
+                    except Exception:
+                        pass
             self.ant_path.setText(base)
 
     def _update_demnas_visibility(self) -> None:
@@ -1035,6 +1064,11 @@ class ParameterForm(QWidget):
         dem_res_map = {0: 3, 1: 1, 2: 15}
         units = "metric" if self.units.currentText() == "Metric" else "imperial"
 
+        two_ray_val = self.two_rays.currentData()
+        if two_ray_val is None:
+            two_ray_val = 0
+        two_ray_mode = "normal" if two_ray_val == 1 else ("average" if two_ray_val == 2 else "off")
+
         d = {
             "tx_lat": tx_lat, "tx_lon": tx_lon,
             "tx_name": self.tx_name.text().strip() or None,
@@ -1063,6 +1097,9 @@ class ParameterForm(QWidget):
             "context_pe": context_pe,
             "knife_edge": knife_edge,
             "climate_zone": climate,
+            "tworay": two_ray_val,
+            "two_rays": bool(two_ray_val > 0),
+            "two_ray_mode": two_ray_mode,
             "clutter_file": self.clutter_path.text() or None,
             "ground_clutter": self.gc.value(),
             "obstacles": list(params_mod.iter_obstacles(self.obstacles.toPlainText())),
@@ -1080,7 +1117,6 @@ class ParameterForm(QWidget):
             "color_file_user": getattr(self, "_color_user_chosen", False),
             "dbm_color": self.dbm_color.isChecked(),
             "raster_txt": self.raster_txt.isChecked(),
-            "rm_style": self.rm_style.isChecked(),
             "units": units,
             "dem_resolution": dem_res_map[self.dem_res.currentIndex()],
             "dem_downsample": self._dem_downsample.isChecked(),
@@ -1132,6 +1168,12 @@ class ParameterForm(QWidget):
         ctx_map = {1: "Urban", 2: "Suburban", 3: "Rural"}
         self.context.setCurrentText(ctx_map.get(int(d.get("context_pe", 3)), "Rural"))
         self.diffraction.setCurrentText("Knife-edge (KED)" if d.get("knife_edge") else "Off (LOS)")
+        tw_val = d.get("tworay", 1 if d.get("two_rays") else 0)
+        if isinstance(tw_val, bool):
+            tw_val = 2 if tw_val else 0
+        idx_tw = self.two_rays.findData(tw_val)
+        if idx_tw >= 0:
+            self.two_rays.setCurrentIndex(idx_tw)
         # Environment
         climate = d.get("climate_zone")
         if climate is not None:
@@ -1167,7 +1209,6 @@ class ParameterForm(QWidget):
         self.color_path.setText(d.get("color_file") or "")
         self.dbm_color.setChecked(bool(d.get("dbm_color", True)))
         self.raster_txt.setChecked(bool(d.get("raster_txt", False)))
-        self.rm_style.setChecked(bool(d.get("rm_style", False)))
         if hasattr(self, "_dem_downsample"):
             self._dem_downsample.setChecked(bool(d.get("dem_downsample", False)))
         if hasattr(self, "_dem_fine_step"):

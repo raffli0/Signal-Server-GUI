@@ -30,8 +30,8 @@ def test_run_worker_end_to_end(tmp_path):
     }
     worker = backend.RunWorker(exe, out_base, p, dem_spec=None, srtm2sdf_exe=None)
     state = {}
-    worker.finished.connect(lambda ok, out, res: state.update(ok=ok, res=res))
-    worker.error_occurred.connect(lambda m: state.update(error=m))
+    worker.finished.connect(lambda ok, out, res: (state.update(ok=ok, res=res), app.quit()))
+    worker.error_occurred.connect(lambda m: (state.update(error=m), app.quit()))
     worker.start()
 
     # Run the event loop until the worker finishes (safety timeout).

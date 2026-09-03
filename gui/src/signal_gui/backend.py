@@ -394,20 +394,6 @@ class RunWorker(QThread):
             self._enrich_ground_elevations(p)
             self._prepare_dem(p)
             self._write_manifest(p)
-            # Radio Mobile style: auto-generate the colour table from the
-            # rmwcore colors*.dat palette unless the user picked a custom one.
-            if p.get("rm_style") and not p.get("color_file_user"):
-                try:
-                    from . import rm_style
-                    dcf = os.path.join(os.path.dirname(self.output_basename),
-                                       "rm_palette.dcf")
-                    rm_style.ensure_palette_dcf(dcf, root=None)
-                    p["color_file"] = dcf
-                    p["_rm_color_file"] = dcf
-                    self.progress.emit(f"Palet otomatis Radio Mobile: {dcf}")
-                except Exception as exc:  # noqa: BLE001 - fall back to default
-                    self.progress.emit(
-                        f"PERINGATAN: palet RM gagal ({exc}); pakai palet bawaan.")
             argv = params_mod.build_argv(
                 p, engine_exe=self.engine_exe, output_basename=self.output_basename
             )
@@ -567,18 +553,6 @@ class RunWorker(QThread):
                     )
                     return
                 result["raster_txt"] = raster_txt
-            if p.get("rm_style"):
-                try:
-                    from . import rm_style
-                    rm_png = self.output_basename + "_rm.png"
-                    rm_style.render_for_run(
-                        rm_png, result["bbox"], p,
-                        coverage_png=result["png"])
-                    result["rm_png"] = rm_png
-                    self.progress.emit(f"Gambar RM-style: {rm_png}")
-                except Exception as exc:  # noqa: BLE001 - cosmetic layer
-                    self.progress.emit(
-                        f"PERINGATAN: render RM-style gagal: {exc}")
             self.finished.emit(True, "\n".join(stdout_text), result)
         except DemResolveError as exc:
             # Surface the reason (missing DEM tiles, folder does not cover the

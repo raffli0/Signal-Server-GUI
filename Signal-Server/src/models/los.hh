@@ -36,7 +36,7 @@ struct PropagationRange {
     unsigned char mask_value;
     FILE *fd;
     PropModel prop_model;
-    int knifeedge, pmenv;
+    int knifeedge, pmenv, tworay;
 };
 
 // Angular propagation area
@@ -49,7 +49,7 @@ struct PropagationRadius {
     unsigned char mask_value;
     FILE *fd;
     PropModel prop_model;
-    int knifeedge, pmenv, points;
+    int knifeedge, pmenv, points, tworay;
 };
 
 // Struct for storing thread progress
@@ -62,14 +62,14 @@ struct progress_t {
 void PlotLOSPath(struct site source, struct site destination, char mask_value);
 
 void PlotPropPath(struct site source, struct site destination, unsigned char mask_value, FILE *fd, PropModel propmodel, int knifeedge,
-                  int pmenv);
+                  int pmenv, int tworay = 0);
 
 void PlotLOSMap(struct site source, double altitude, char *plo_filename, bool use_threads, int segments);
 
 void PlotPropagation(struct site source, bbox bounds, 
                      double altitude, char *plo_filename,
 		            PropModel propmodel, int knifeedge, int haf, int pmenv, 
-                     bool use_threads, int segments);
+                     bool use_threads, int segments, int tworay = 0);
 
 /// @brief Plot propagation using a center point and circular radius. This plots around a circle instead of a rectangular bounding box and is theoretically more efficient.
 /// @param source source transmitter
@@ -82,7 +82,7 @@ void PlotPropagation(struct site source, bbox bounds,
 void PlotPropagationRadius(struct site source, double range, 
                              double altitude, char *plot_filename, 
                              PropModel prop_model, int knifeedge, int haf, int pmenv, 
-                             bool use_threads, int segments);
+                             bool use_threads, int segments, int tworay = 0);
 
 void PlotPath(struct site source, struct site destination, char mask_value);
 

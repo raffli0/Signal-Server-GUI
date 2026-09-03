@@ -1164,7 +1164,7 @@ void do_allocs(void)
 
 int main(int argc, char *argv[])
 {
-    int x, y, z = 0, knifeedge = 0, ppa = 0, normalise = 0,
+    int x, y, z = 0, knifeedge = 0, tworay = 0, ppa = 0, normalise = 0,
       haf = 0, pmenv = 1, result, segments = 4, rastertxt = 0;
 
     PropModel prop_model;
@@ -1258,6 +1258,7 @@ int main(int argc, char *argv[])
         fprintf(stdout, "          10: Plane earth, 11: Egli VHF/UHF, 12: Soil\n");
         fprintf(stdout,	"     -pe Propagation model mode: 1=Urban,2=Suburban,3=Rural\n");
         fprintf(stdout,	"     -ked Knife edge diffraction (Already on for ITM)\n");
+        fprintf(stdout, "     -tworay Two-Ray Ground Reflection on LOS paths: 0=Off (default), 1=Normal (Interference), 2=Average (Power)\n");
         fprintf(stdout, "Antenna:\n");
         fprintf(stdout, "     -ant (antenna pattern file basename+path for .az and .el files)\n");
         fprintf(stdout, "     -txh Tx Height (above ground)\n");
@@ -1776,6 +1777,16 @@ int main(int argc, char *argv[])
             knifeedge = 1;
         }
 
+        // Two-Ray Ground Reflection on LOS paths (0=Off, 1=Normal, 2=Interference)
+        if (strcmp(argv[x], "-tworay") == 0) {
+            z = x + 1;
+            if (z <= y && argv[z][0]) {
+                sscanf(argv[z], "%d", &tworay);
+            } else {
+                tworay = 2; // default to Interference mode if flag given without number
+            }
+        }
+
         //Normalise Path Profile chart
         if (strcmp(argv[x], "-ng") == 0) {
             z = x + 1;
@@ -2163,12 +2174,12 @@ int main(int argc, char *argv[])
             // 90% of effort here
             if (use_radial)
             {
-                PlotPropagationRadius(tx_site[0], max_range, altitudeLR, ano_filename, prop_model, knifeedge, haf, pmenv, use_threads, segments);
+                PlotPropagationRadius(tx_site[0], max_range, altitudeLR, ano_filename, prop_model, knifeedge, haf, pmenv, use_threads, segments, tworay);
                 spdlog::debug("Finished PlotPropagationRadius()");
             }
             else
             {
-                PlotPropagation(tx_site[0], plot_bounds, altitudeLR, ano_filename, prop_model, knifeedge, haf, pmenv, use_threads, segments);
+                PlotPropagation(tx_site[0], plot_bounds, altitudeLR, ano_filename, prop_model, knifeedge, haf, pmenv, use_threads, segments, tworay);
                 spdlog::debug("Finished PlotPropagation()");
             }
 
