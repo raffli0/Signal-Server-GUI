@@ -570,7 +570,7 @@ class ParameterForm(QWidget):
         fl_rx.addRow(self.rx_amsl)
         self.rx_height.valueChanged.connect(lambda _: self._refresh_amsl_labels())
         self.rx_gain = FocusWheelSpinBox(); self.rx_gain.setRange(-50, 50); self.rx_gain.setValue(0)
-        self._add_row_with_info(fl_rx, "Rx gain (dBd)", self.rx_gain, "Receiver antenna gain in dBd")
+        self._add_row_with_info(fl_rx, "Rx gain (dBi)", self.rx_gain, "Receiver antenna gain in dBi")
         self.rx_thr, self.rx_thr_uv, rx_thr_w = self._make_threshold_pair(
             -100, (-200, 100), (-100, 250))
         self._add_row_with_info(
@@ -604,7 +604,7 @@ class ParameterForm(QWidget):
             gate_key="context")
 
         self.reliability = QComboBox()
-        self.reliability.addItems(["50%", "80%", "90%", "95%", "99%"])
+        self.reliability.addItems(["50%", "70%", "80%", "90%", "95%", "99%"])
         self._add_gated_row(
             fl_model, "Reliability", self.reliability, "ITM statistical time/location "
             "reliability", gate_key="reliability")
@@ -1089,7 +1089,8 @@ class ParameterForm(QWidget):
             "az_mask_end_deg": self.az_end.value(),
             "rx_lat": rx_lat, "rx_lon": rx_lon,
             "rx_height": self.rx_height.value(),
-            "rx_gain_dbd": self.rx_gain.value(),
+            "rx_gain_dbi": self.rx_gain.value(),
+            "rx_gain_dbd": self.rx_gain.value() - 2.15,
             "rx_threshold_dbm": self.rx_thr.value(),
             "tx_threshold_dbm": self.tx_thr.value(),
             "model_pm": model_val,
@@ -1157,7 +1158,12 @@ class ParameterForm(QWidget):
         self.rx_name.setText(d.get("rx_name") or "")
         self.rx_coord.set(d.get("rx_lat"), d.get("rx_lon"))
         self.rx_height.setValue(float(d.get("rx_height", 1.5)))
-        self.rx_gain.setValue(float(d.get("rx_gain_dbd", 0)))
+        if "rx_gain_dbi" in d:
+            self.rx_gain.setValue(float(d.get("rx_gain_dbi", 0)))
+        elif "rx_gain_dbd" in d:
+            self.rx_gain.setValue(float(d.get("rx_gain_dbd", 0)) + 2.15)
+        else:
+            self.rx_gain.setValue(float(d.get("rx_gain", 0)))
         self.rx_thr.setValue(float(d.get("rx_threshold_dbm", -100)))
         # rx_thr_uv (and tx_thr_uv) are kept in sync via valueChanged.
         # Model

@@ -135,18 +135,37 @@ def find_specular_point(
 
 
 def calculate_two_ray(
-    freq_mhz: float,
-    dists_km: Sequence[float],
-    terrain_m: Sequence[float],
-    tx_amsl_m: float,
-    rx_amsl_m: float,
+    freq_mhz: Optional[float] = None,
+    dists_km: Optional[Sequence[float]] = None,
+    terrain_m: Optional[Sequence[float]] = None,
+    tx_amsl_m: float = 100.0,
+    rx_amsl_m: float = 100.0,
     pol: int = 1,               # 0 = Horizontal, 1 = Vertical
     eps_dielect: float = 15.0,
     sgm_conductivity: float = 0.005,
-    mode: str = "interference", # "interference" (coherent) vs "normal" (incoherent)
+    mode: str = "interference", # "interference" vs "normal"
     surface_roughness_m: float = 0.5,
+    **kwargs,
 ) -> TwoRayDetails:
     """Calculate detailed Two-Ray Ground Reflection metrics along terrain profile."""
+    if freq_mhz is None:
+        freq_mhz = float(kwargs.get("f_mhz", 1200.0))
+
+    if "coherent_interference" in kwargs:
+        mode = "normal" if kwargs["coherent_interference"] else "incoherent"
+
+    if dists_km is None or terrain_m is None:
+        elev = kwargs.get("elev")
+        if elev and len(elev) > 2:
+            n_samples = int(kwargs.get("n_samples", elev[0]))
+            sample_dist_km = float(elev[1]) / 1000.0 if elev[1] > 0 else 0.1
+            dists_km = [i * sample_dist_km for i in range(n_samples + 1)]
+            terrain_m = [float(elev[2 + min(i, len(elev) - 3)]) for i in range(n_samples + 1)]
+        else:
+            d_km = float(kwargs.get("dkm", 1.0))
+            dists_km = [0.0, d_km]
+            terrain_m = [0.0, 0.0]
+
     d_min = dists_km[0] if dists_km else 0.0
     d_max = dists_km[-1] if dists_km else 1.0
     d_km = max(0.01, d_max - d_min)

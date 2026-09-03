@@ -617,8 +617,12 @@ class CloudRFPathProfilePanel(QWidget):
 
         tx_gain_dbi = float(params.get("tx_gain_dbi", 2.15))
         tx_gain_dbd = tx_gain_dbi - 2.15
-        rx_gain_dbd = float(params.get("rx_gain_dbd", 0.0))
-        rx_gain_dbi = rx_gain_dbd + 2.15
+        if "rx_gain_dbi" in params:
+            rx_gain_dbi = float(params["rx_gain_dbi"])
+            rx_gain_dbd = rx_gain_dbi - 2.15
+        else:
+            rx_gain_dbd = float(params.get("rx_gain_dbd", 0.0))
+            rx_gain_dbi = rx_gain_dbd + 2.15
 
         rf_w = float(params.get("rf_power_w", 1.0))
         tx_dbm = 10.0 * math.log10(rf_w * 1000.0) if rf_w > 0 else 0.0
@@ -644,7 +648,7 @@ class CloudRFPathProfilePanel(QWidget):
         self.lbl_line1.setText(f"Distance: <b>{dist_km:.3f} Km</b> &nbsp; Bearing to Rx: <b>{az_deg:.0f}°</b> &nbsp; Downtilt to Rx: <b>{downtilt:+.1f}°</b>")
         self.lbl_line2.setText(f"Frequency: <b>{freq_mhz:.0f}MHz</b> &nbsp; Model: <b>{model}</b> &nbsp; Path loss: <b>{loss_db:.1f}dB</b> &nbsp; Received power: <b>{rx_dbm:.1f}dBm</b> &nbsp; Field strength: <b>{field_str:.1f}dBuV/m</b>")
         self.lbl_line3.setText(f"Tx antenna gain: <b>{tx_gain_dbd:.0f}dBd / {tx_gain_dbi:.2f}dBi</b> &nbsp; ERP: <b>{erp_w:.2f}W / {erp_dbm:.1f}dBm</b> &nbsp; EIRP: <b>{eirp_w:.2f}W / {eirp_dbm:.2f}dBm</b>")
-        self.lbl_line4.setText(f"Rx antenna gain: <b>{rx_gain_dbd:.0f}dBd / {rx_gain_dbi:.2f}dBi</b>")
+        self.lbl_line4.setText(f"Rx antenna gain: <b>{rx_gain_dbi:.2f}dBi / {rx_gain_dbd:.2f}dBd</b>")
 
         # Update Big Signal Callout
         self._set_signal_badge(rx_dbm)

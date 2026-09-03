@@ -275,7 +275,10 @@ def build_argv(
         _opt(args, "-rla", params.get("rx_lat"))
         _opt(args, "-rlo", params.get("rx_lon"))
     _opt(args, "-rxh", params.get("rx_height"))
-    _opt(args, "-rxg", params.get("rx_gain_dbd"))
+    rx_gain = params.get("rx_gain_dbi")
+    if rx_gain is None:
+        rx_gain = params.get("rx_gain_dbd")
+    _opt(args, "-rxg", rx_gain)
     _opt(args, "-rt", params.get("rx_threshold_dbm"))
 
     # --- Model ---
@@ -413,7 +416,8 @@ def format_run_summary(params: dict, argv: list[str], engine_exe: str) -> list[s
         f"[run] Tx        : ({params.get('tx_lat')}, {params.get('tx_lon')})"
         f" tinggi {amsl_txt('tx')}",
         f"[run] Rx        : tinggi {amsl_txt('rx')}"
-        f" | gain {params.get('rx_gain_dbd')} dBd"
+        f" | gain {params.get('rx_gain_dbi') if params.get('rx_gain_dbi') is not None else params.get('rx_gain_dbd')} "
+        f"{'dBi' if params.get('rx_gain_dbi') is not None else 'dBd'}"
         f" | threshold {params.get('rx_threshold_dbm')} dBm"
         + (f" ({dbm_to_dbuv(float(params.get('rx_threshold_dbm', 0)))}\u00b5V)"
            if params.get('rx_threshold_dbm') is not None else ""),
