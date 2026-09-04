@@ -132,12 +132,25 @@ _ICONS: dict[str, str] = {
         '<path d="M12 11v5"/>'
         '<path d="M12 8h.01" stroke-linecap="round"/>'
     ),
+    "image": (
+        '<rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>'
+        '<circle cx="8.5" cy="8.5" r="1.5" fill="{C}"/>'
+        '<polyline points="21 15 16 10 5 21"/>'
+    ),
+    "picture": (
+        '<rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>'
+        '<circle cx="8.5" cy="8.5" r="1.5" fill="{C}"/>'
+        '<polyline points="21 15 16 10 5 21"/>'
+    ),
 }
 
 
 def svg_str(name: str, color: str = "#CBD5E0", size: int = 24) -> str:
     """Return a standalone SVG document for ``name`` coloured with ``color``."""
-    inner = _ICONS[name]
+    inner = _ICONS.get(
+        name,
+        '<circle cx="12" cy="12" r="9"/><path d="M12 8v4"/><path d="M12 16h.01"/>',
+    )
     return (
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{size}" height="{size}" '
         f'viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="2" '

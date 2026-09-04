@@ -74,3 +74,20 @@ def test_draw_link_js_accepts_color():
     assert "function drawLink(txLat, txLon, rxLat, rxLon, color)" in html
     body = html.split("function drawLink", 1)[1]
     assert "L.polyline" in body.split("function clearLink", 1)[0]
+
+
+def test_map_html_has_dynamic_legend_and_contour_modes():
+    html = _tpl()
+    assert "function updateDbmLegend()" in html
+    assert "function setContourMode(mode)" in html
+    assert "window.setContourMode = setContourMode;" in html
+
+
+def test_palette_from_splat_classic_dcf():
+    splat = os.path.join(os.path.dirname(map_view.__file__), "resources", "splat-classic.dcf")
+    pal = map_view.palette_from_color_file(splat)
+    assert pal is not None
+    assert len(pal["levels"]) == 16
+    assert pal["levels"][0] == 0.0
+    assert pal["levels"][-1] == -150.0
+

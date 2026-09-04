@@ -557,12 +557,8 @@
     <span id="contour-toggle" class="pill-toggle active"
       title="Kontur / 3D Relief Propagasi: ON (Klik untuk OFF / Flat)" onclick="toggleContour()">Kontur</span>
     <span id="hole-toggle" class="pill-toggle active"
-      title="Area Bolong Putih / Bayangan Medan: Transparan ON (Klik untuk Solid OFF)" onclick="toggleHoles()">Transparan</span>
-    <span title="Draw Polygon / Area" style="cursor:pointer"><svg class="ic" viewBox="0 0 24 24" fill="none"
-        stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M12 20h9" />
-        <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" />
-      </svg></span>
+      title="Area Bolong Putih / Bayangan Medan: Transparan ON (Klik untuk Solid OFF)"
+      onclick="toggleHoles()">Transparan</span>
     <span id="palette-btn" title="Layer Warna (toggle per dBm)" style="cursor:pointer" onclick="openLayerMenu()"><svg
         class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
         stroke-linejoin="round">
@@ -572,7 +568,6 @@
         <circle cx="11" cy="7.5" r="1" fill="currentColor" />
         <circle cx="16" cy="8.5" r="1" fill="currentColor" />
       </svg></span>
-    <span title="Code / API" style="cursor:pointer"><code>&lt;/&gt;</code></span>
   </div>
 
   <!-- Bottom Left Attribution -->
@@ -712,7 +707,7 @@
         if (isHolePixel(r, g, b)) { map[p] = 255; continue; } // hole / terrain shadow -> no band
         var maxC = Math.max(r, Math.max(g, b));
         if (maxC === 0) { map[p] = PALETTE.length - 1; continue; }
-        
+
         // Intensity-normalized matching to accurately classify hillshaded pixels
         var nr = (r / maxC) * 255;
         var ng = (g / maxC) * 255;
@@ -756,34 +751,80 @@
       });
     }
 
-    var contourRelief = true;
+    var contourMode = 0; // 0: subtle (kontur halus), 1: flat (tanpa kontur), 2: full (kontur tebal 3D)
 
-    function toggleContour() {
-      contourRelief = !contourRelief;
+    function updateDbmLegend() {
+      var ticksContainer = document.querySelector('#dbm-legend .ticks');
+      var gradientBar = document.querySelector('#dbm-legend .gradient-bar');
+      if (!ticksContainer || !gradientBar || !LEVEL_THRESHOLDS || !PALETTE) return;
+
+      ticksContainer.innerHTML = '';
+      var n = LEVEL_THRESHOLDS.length;
+      if (n <= 12) {
+        for (var i = 0; i < n; i++) {
+          var sp = document.createElement('span');
+          sp.innerText = LEVEL_THRESHOLDS[i];
+          ticksContainer.appendChild(sp);
+        }
+      } else {
+        // Nicely spaced ticks for large palettes (e.g. 16 bands from 0 to -150 dBm)
+        var step = Math.ceil((n - 1) / 8);
+        for (var i = 0; i < n; i += step) {
+          var sp = document.createElement('span');
+          sp.innerText = LEVEL_THRESHOLDS[i];
+          ticksContainer.appendChild(sp);
+        }
+        if ((n - 1) % step !== 0) {
+          var spLast = document.createElement('span');
+          spLast.innerText = LEVEL_THRESHOLDS[n - 1];
+          ticksContainer.appendChild(spLast);
+        }
+      }
+
+      var stops = [];
+      for (var j = 0; j < PALETTE.length; j++) {
+        var pct = (PALETTE.length > 1) ? Math.round((j / (PALETTE.length - 1)) * 100) : 0;
+        var col = 'rgb(' + PALETTE[j][0] + ',' + PALETTE[j][1] + ',' + PALETTE[j][2] + ')';
+        stops.push(col + ' ' + pct + '%');
+      }
+      gradientBar.style.background = 'linear-gradient(to bottom, ' + stops.join(', ') + ')';
+    }
+
+    function setContourMode(mode) {
+      if (typeof mode === 'string') {
+        if (mode === 'flat' || mode === '1') contourMode = 1;
+        else if (mode === 'full' || mode === '2') contourMode = 2;
+        else contourMode = 0;
+      } else {
+        contourMode = parseInt(mode, 10);
+        if (isNaN(contourMode) || contourMode < 0 || contourMode > 2) contourMode = 0;
+      }
       var btn = document.getElementById('contour-toggle');
       if (btn) {
-        btn.classList.toggle('active', contourRelief);
-        btn.title = 'Kontur / 3D Relief Propagasi: ' + (contourRelief ? 'ON' : 'OFF');
+        btn.classList.toggle('active', contourMode !== 1);
+        btn.title = 'Kontur: ' + (contourMode === 0 ? 'Halus' : (contourMode === 2 ? 'Tebal 3D' : 'OFF (Flat)'));
       }
       var btnTop = document.getElementById('btn-contour-tool');
       if (btnTop) {
-        btnTop.style.background = contourRelief ? '#3182CE' : 'rgba(27, 30, 34, 0.9)';
+        btnTop.style.background = (contourMode !== 1) ? '#3182CE' : 'rgba(27, 30, 34, 0.9)';
       }
       renderOverlay();
     }
+    window.setContourMode = setContourMode;
+
+    function toggleContour() {
+      // Cycle: subtle (0) -> full (2) -> flat (1) -> subtle (0)
+      if (contourMode === 0) setContourMode(2);
+      else if (contourMode === 2) setContourMode(1);
+      else setContourMode(0);
+    }
 
     function setContour(on) {
-      contourRelief = !!on;
-      var btn = document.getElementById('contour-toggle');
-      if (btn) {
-        btn.classList.toggle('active', contourRelief);
-        btn.title = 'Kontur / 3D Relief Propagasi: ' + (contourRelief ? 'ON' : 'OFF');
+      if (typeof on === 'boolean') {
+        setContourMode(on ? 0 : 1);
+      } else {
+        setContourMode(on);
       }
-      var btnTop = document.getElementById('btn-contour-tool');
-      if (btnTop) {
-        btnTop.style.background = contourRelief ? '#3182CE' : 'rgba(27, 30, 34, 0.9)';
-      }
-      renderOverlay();
     }
 
     function renderOverlay() {
@@ -806,18 +847,31 @@
         }
         var band = bandMap ? bandMap[o] : 0;
         if (visibleBands && visibleBands.has(band)) {
-          if (contourRelief) {
-            // 3D Terrain Relief & Contour shading ON
-            dst[p] = r;
-            dst[p + 1] = g;
-            dst[p + 2] = b;
+          var baseCol = (band >= 0 && band < PALETTE.length) ? PALETTE[band] : [r, g, b];
+          if (contourMode === 0) {
+            // Kontur 3D halus & lembut (tidak terlalu tebal / gelap)
+            var maxP = Math.max(baseCol[0], Math.max(baseCol[1], baseCol[2])) || 1;
+            var maxSrc = Math.max(r, Math.max(g, b));
+            var origShade = Math.min(1.0, Math.max(0.15, maxSrc / maxP));
+            var subtleShade = 0.68 + 0.32 * origShade;
+            dst[p] = Math.round(baseCol[0] * subtleShade);
+            dst[p + 1] = Math.round(baseCol[1] * subtleShade);
+            dst[p + 2] = Math.round(baseCol[2] * subtleShade);
+            dst[p + 3] = a;
+          } else if (contourMode === 2) {
+            // Kontur Penuh / Tebal (Original 3D Hillshade)
+            var maxP = Math.max(baseCol[0], Math.max(baseCol[1], baseCol[2])) || 1;
+            var maxSrc = Math.max(r, Math.max(g, b));
+            var origShade = Math.min(1.0, Math.max(0.15, maxSrc / maxP));
+            dst[p] = Math.round(baseCol[0] * origShade);
+            dst[p + 1] = Math.round(baseCol[1] * origShade);
+            dst[p + 2] = Math.round(baseCol[2] * origShade);
             dst[p + 3] = a;
           } else {
-            // Flat Solid Colors (Contour OFF) - Calibrated RM flat tone (0.72x luminance) to prevent blinding glare
-            var baseCol = (band >= 0 && band < PALETTE.length) ? PALETTE[band] : [r, g, b];
-            dst[p] = Math.round(baseCol[0] * 0.72);
-            dst[p + 1] = Math.round(baseCol[1] * 0.72);
-            dst[p + 2] = Math.round(baseCol[2] * 0.72);
+            // Flat Solid Colors (Contour OFF) - Calibrated clean solid color
+            dst[p] = Math.round(baseCol[0] * 0.85);
+            dst[p + 1] = Math.round(baseCol[1] * 0.85);
+            dst[p + 2] = Math.round(baseCol[2] * 0.85);
             dst[p + 3] = a;
           }
         } else {
@@ -878,6 +932,8 @@
           visibleBands = new Set();
           for (var i = 0; i < PALETTE.length; i++) visibleBands.add(i);
           buildLayerMenu();
+          updateDbmLegend();
+          renderOverlay();
         } catch (e) {
           // ignore canvas inspection failure
         }
@@ -925,7 +981,7 @@
       return JSON.stringify({
         basemap: activeStyle,
         adaptive: adaptiveOpacity,
-        contour: contourRelief,
+        contour: contourMode,
         opacity: parseInt(document.getElementById('opacitySlider').value, 10),
         center: { lat: c.lat, lng: c.lng },
         zoom: map.getZoom()
@@ -941,7 +997,7 @@
       if (!s) return;
       if (s.basemap) { setBasemap(s.basemap); }
       if (typeof s.adaptive === 'boolean') { setAdaptive(s.adaptive); }
-      if (typeof s.contour === 'boolean') { setContour(s.contour); }
+      if (typeof s.contour !== 'undefined') { setContour(s.contour); }
       if (typeof s.opacity === 'number') {
         var ov = Math.max(0, Math.min(100, Math.round(s.opacity)));
         document.getElementById('opacitySlider').value = ov;

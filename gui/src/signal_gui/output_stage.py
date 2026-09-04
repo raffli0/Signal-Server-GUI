@@ -319,17 +319,145 @@ def raster_txt_contains(
     return (s - tol) <= lat <= (n + tol) and (w - tol) <= lon <= (e + tol)
 
 
-def build_kml(png_name: str, bbox, title: str = "Coverage") -> str:
+def make_flat_transparent_png(src_png_path_or_arr,
+                              out_png_path: Optional[str] = None,
+                              color_file: Optional[str] = None,
+                              opacity: float = 0.75,
+                              relief_weight: float = 0.30) -> str:
+    """Convert a coverage image to a clean, transparent PNG for Google Earth KMZ/KML export.
+
+    - When ``relief_weight > 0`` (default 0.30), retains a subtle, smooth 3D terrain
+      contour texture without heavy or dark harsh shadows (kontur tidak terlalu tebal).
+    - When ``relief_weight == 0``, outputs completely flat solid palette colors.
+    - Sets background and terrain holes to 100% transparent (alpha = 0).
+    - Sets coverage signal pixels to semi-transparent (default 75% opacity,
+      alpha = 191) so underlying satellite imagery, terrain, and roads
+      show cleanly in Google Earth.
+    """
+    if isinstance(src_png_path_or_arr, np.ndarray):
+        arr = src_png_path_or_arr.copy()
+        if out_png_path is None:
+            raise ValueError("out_png_path required when passing numpy array")
+    else:
+        if out_png_path is None:
+            out_png_path = os.path.splitext(src_png_path_or_arr)[0] + "_flat_trans.png"
+        img = Image.open(src_png_path_or_arr).convert("RGBA")
+        arr = np.asarray(img).copy()
+
+    h, w = arr.shape[:2]
+    alpha = arr[..., 3]
+    vis_mask = alpha > 0
+    if not np.any(vis_mask):
+        Image.fromarray(arr, "RGBA").save(out_png_path)
+        return out_png_path
+
+    # Parse palette bands from color_file or fallback to radiomobile.dcf
+    pal_colors = None
+    if color_file and os.path.exists(color_file):
+        try:
+            from . import rm_style
+            with open(color_file, "r", encoding="utf-8", errors="replace") as fh:
+                bands = rm_style.parse_dcf_levels(fh.read())
+            if bands:
+                pal_colors = np.array([c for _, c in bands], dtype=np.float32)
+        except Exception:
+            pass
+
+    if pal_colors is None:
+        try:
+            from . import rm_style
+            dcf_default = os.path.join(os.path.dirname(__file__), "resources", "radiomobile.dcf")
+            if os.path.exists(dcf_default):
+                with open(dcf_default, "r", encoding="utf-8", errors="replace") as fh:
+                    bands = rm_style.parse_dcf_levels(fh.read())
+                if bands:
+                    pal_colors = np.array([c for _, c in bands], dtype=np.float32)
+        except Exception:
+            pass
+
+    if pal_colors is None:
+        # Fallback to standard 11-level RM palette
+        pal_colors = np.array([
+            (255, 50, 90),   # Red / Hot Pink (-60 dBm)
+            (255, 100, 100), # Light Red
+            (255, 220, 100), # Orange / Yellow
+            (255, 255, 100), # Yellow
+            (192, 255, 100), # Lime Green
+            (100, 255, 100), # Green
+            (100, 255, 192), # Mint / Seafoam
+            (100, 255, 255), # Cyan
+            (100, 220, 255), # Sky Blue
+            (0, 38, 255),    # Deep Blue
+            (128, 0, 128),   # Purple
+        ], dtype=np.float32)
+
+    vis_rgb = arr[vis_mask, :3].astype(np.float32)
+
+    # Protect transmitter center site from being treated as hole
+    cy, cx = h // 2, w // 2
+    yy, xx = np.ogrid[:h, :w]
+    is_center = ((yy - cy)**2 + (xx - cx)**2) <= 36
+    center_flat_vis = is_center[vis_mask]
+
+    # Filter out unshaded grey background or white holes outside center
+    is_grey = (vis_rgb[:, 0] == vis_rgb[:, 1]) & (vis_rgb[:, 1] == vis_rgb[:, 2])
+    is_white = np.all(vis_rgb >= 240, axis=1)
+    is_sea = (vis_rgb[:, 0] == 0) & (vis_rgb[:, 1] == 0) & (vis_rgb[:, 2] == 170)
+    hole_submask = (is_grey | is_white | is_sea) & ~center_flat_vis
+
+    # Chromaticity normalization to cancel out terrain multiplier (TerrainHillshade)
+    max_c = np.maximum(np.max(vis_rgb, axis=1, keepdims=True), 1e-5)
+    norm_rgb = (vis_rgb / max_c) * 255.0
+
+    pal_max = np.maximum(np.max(pal_colors, axis=1, keepdims=True), 1.0)
+    norm_pal = (pal_colors / pal_max) * 255.0
+
+    dists = np.sum((norm_rgb[:, None, :] - norm_pal[None, :, :]) ** 2, axis=2)
+    best_band = np.argmin(dists, axis=1)
+
+    target_alpha = int(np.clip(opacity * 255.0, 1, 255))
+
+    out_arr = np.zeros((h, w, 4), dtype=np.uint8)
+    vis_indices = np.flatnonzero(vis_mask)
+    valid_submask = ~hole_submask
+    valid_indices = vis_indices[valid_submask]
+
+    flat_rgb = pal_colors[best_band[valid_submask]]
+
+    if relief_weight > 0:
+        # Subtle 3D contour: soften hillshade so shadows are never too dark/thick
+        flat_max = np.maximum(np.max(flat_rgb, axis=1, keepdims=True), 1.0)
+        orig_shade = np.clip(max_c[valid_submask] / flat_max, 0.15, 1.0)
+        subtle_shade = (1.0 - relief_weight) + relief_weight * orig_shade
+        final_rgb = np.clip(flat_rgb * subtle_shade, 0, 255).astype(np.uint8)
+    else:
+        final_rgb = flat_rgb.astype(np.uint8)
+
+    out_flat = out_arr.reshape(-1, 4)
+    out_flat[valid_indices, :3] = final_rgb
+    out_flat[valid_indices, 3] = target_alpha
+
+    out_img = Image.fromarray(out_flat.reshape((h, w, 4)), "RGBA")
+    out_img.save(out_png_path)
+    return out_png_path
+
+
+def build_kml(png_name: str, bbox, title: str = "Coverage", opacity: Optional[float] = 0.75) -> str:
     """Build a doc.kml string with a GroundOverlay over ``bbox`` = (N, E, S, W)."""
     n, e, s, w = bbox
+    color_tag = ""
+    if opacity is not None:
+        alpha_hex = format(int(np.clip(opacity * 255.0, 0, 255)), "02x")
+        color_tag = f"\n      <color>{alpha_hex}ffffff</color>"
     return f"""<?xml version="1.0" encoding="UTF-8"?>
 <kml xmlns="http://www.opengis.net/kml/2.2">
   <Folder>
     <name>{title}</name>
     <GroundOverlay>
-      <name>{title}</name>
+      <name>{title}</name>{color_tag}
       <Icon>
         <href>{png_name}</href>
+        <viewBoundScale>0.75</viewBoundScale>
       </Icon>
       <LatLonBox>
         <north>{n}</north>
@@ -344,6 +472,49 @@ def build_kml(png_name: str, bbox, title: str = "Coverage") -> str:
 """
 
 
+def export_kmz(path: str, png: str, bbox, base: str,
+               result: Optional[dict] = None,
+               flat: bool = True,
+               color_file: Optional[str] = None,
+               opacity: float = 0.75,
+               relief_weight: float = 0.30) -> str:
+    """Build a KMZ (zipped KML GroundOverlay + PNG image).
+
+    - When ``flat=True`` and ``relief_weight > 0`` (default 0.30), generates a
+      subtle 3D terrain relief contour that is gentle and not too thick/dark.
+    - When ``relief_weight == 0``, generates completely flat solid palette colors.
+    - Transparent background (alpha = 0) and semi-transparent signal (default 75%).
+    """
+    import zipfile
+
+    if flat:
+        flat_png_name = base + "_flat.png"
+        flat_png_path = os.path.join(os.path.dirname(png), flat_png_name)
+        make_flat_transparent_png(
+            png, flat_png_path, color_file=color_file, opacity=opacity,
+            relief_weight=relief_weight,
+        )
+        export_png_path = flat_png_path if os.path.exists(flat_png_path) else png
+        export_png_name = os.path.basename(export_png_path)
+        kml_text = build_kml(export_png_name, bbox, base, opacity=opacity)
+    else:
+        export_png_path = png
+        export_png_name = os.path.basename(png)
+        kml_path = result.get("kml") if isinstance(result, dict) else None
+        if kml_path and os.path.exists(kml_path):
+            with open(kml_path, "r", encoding="utf-8") as fh:
+                kml_text = fh.read()
+        elif bbox is not None:
+            kml_text = build_kml(export_png_name, bbox, base, opacity=opacity)
+        else:
+            raise ValueError("No bounding box available for KML.")
+
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
+        z.write(export_png_path, arcname=export_png_name)
+        z.writestr("doc.kml", kml_text)
+    return path
+
+
 def stage_output(ppm_path: str, stdout_text: str, title: str = "Coverage",
                  tx_coords: Optional[tuple[float, float]] = None,
                  color_file: Optional[str] = None,
@@ -356,7 +527,28 @@ def stage_output(ppm_path: str, stdout_text: str, title: str = "Coverage",
         png_name = os.path.basename(png_path)
         with open(kml_path, "w", encoding="utf-8") as fh:
             fh.write(build_kml(png_name, bbox, title))
-    return {"ppm": ppm_path, "png": png_path, "kml": kml_path, "bbox": bbox}
+
+    res = {
+        "ppm": ppm_path,
+        "png": png_path,
+        "kml": kml_path,
+        "bbox": bbox,
+        "color_file": color_file,
+        "params": params,
+    }
+
+    # Render Radio Mobile-style 3D hillshade composite picture
+    if bbox is not None and params and (params.get("sdf_dir") or params.get("lidar_file")):
+        try:
+            from . import rm_style
+            rm_out = os.path.splitext(ppm_path)[0] + "_rm.png"
+            rm_style.render_for_run(rm_out, bbox, params, png_path)
+            if os.path.exists(rm_out):
+                res["rm_png"] = rm_out
+        except Exception:
+            pass
+
+    return res
 
 
 def analyze_coverage_shape(png_path: str, bbox,

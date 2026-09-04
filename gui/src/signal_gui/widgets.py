@@ -267,6 +267,7 @@ class ParameterForm(QWidget):
     export_dem_requested = Signal()
     demnas_dir_picked = Signal()    # DEMNAS folder (re)selected, even if unchanged
     transparent_holes_toggled = Signal(bool)
+    contour_mode_changed = Signal(int)
 
     def __init__(self, signal_server_root: str = "", parent=None):
         super().__init__(parent)
@@ -668,11 +669,15 @@ class ParameterForm(QWidget):
         # =========================================================================
         fl_dem = self._section("env", _SECTION_ICON["env"], "Terrain & DEM Source", expanded=False)
         self.dem_source = QComboBox()
-        self.dem_source.addItems(["Online – Viewfinder SRTM", "Offline – DEMNAS (.tif)"])
+        self.dem_source.addItems([
+            "Online – Viewfinder SRTM",
+            "Offline – DEMNAS (.tif)",
+            "Offline – SRTM3 / HGT (.hgt)",
+        ])
         self.dem_source.setCurrentIndex(1)
         self._add_row_with_info(
             fl_dem, "DEM source", self.dem_source,
-            "Sumber elevasi: Online (unduh Viewfinder SRTM) atau Offline (file DEMNAS .tif lokal, tanpa internet)")
+            "Sumber elevasi: Online (unduh Viewfinder SRTM) atau Offline (folder DEMNAS .tif / SRTM3 .hgt lokal, tanpa internet)")
 
         demnas_row = QWidget()
         dv = QVBoxLayout(demnas_row)
@@ -698,9 +703,9 @@ class ParameterForm(QWidget):
         self.demnas_status = QLabel("DEMNAS: –")
         self.demnas_status.setStyleSheet("color: #718096; font-size: 10px; padding: 2px 0;")
         dv.addWidget(self.demnas_status)
-        demnas_lbl = QLabel("DEMNAS folder")
-        demnas_lbl.setStyleSheet("color: #CBD5E0; font-size: 11px; font-weight: 500;")
-        fl_dem.addRow(demnas_lbl, demnas_row)
+        self.demnas_lbl = QLabel("DEMNAS folder")
+        self.demnas_lbl.setStyleSheet("color: #CBD5E0; font-size: 11px; font-weight: 500;")
+        fl_dem.addRow(self.demnas_lbl, demnas_row)
         self.dem_source.currentTextChanged.connect(self._update_demnas_visibility)
         self._update_demnas_visibility()
 
@@ -821,6 +826,31 @@ class ParameterForm(QWidget):
         self.transparent_holes.setStyleSheet("color: #CBD5E0; font-size: 11px;")
         self.transparent_holes.toggled.connect(self.transparent_holes_toggled.emit)
         fl_out.addRow(self.transparent_holes)
+
+        self.kmz_contour_mode = QComboBox()
+        self.kmz_contour_mode.addItems([
+            "Kontur Halus / Tipis (Subtle, Tidak Tebal)",
+            "Flat Murni (Tanpa Kontur)",
+            "Kontur Penuh / Tebal (Original 3D)",
+        ])
+        self.kmz_contour_mode.setCurrentIndex(0)
+        self.kmz_contour_mode.currentIndexChanged.connect(self.contour_mode_changed.emit)
+        self.kmz_contour_mode.setStyleSheet("""
+            QComboBox {
+                background: #1E2226;
+                color: #E2E8F0;
+                border: 1px solid #374151;
+                border-radius: 4px;
+                padding: 3px 6px;
+                font-size: 11px;
+            }
+        """)
+        self._add_row_with_info(
+            fl_out, "Mode Kontur (Peta & Export)", self.kmz_contour_mode,
+            "Gaya kontur relief 3D pada tampilan peta (berganti seketika secara realtime) dan ekspor KMZ/KML: "
+            "Kontur Halus / Tipis (rekomendasi, kontur tetap terlihat lembut dan tidak terlalu tebal/gelap), "
+            "Flat Murni (warna solid seragam tanpa kontur), atau Kontur Penuh/Tebal (Original 3D)."
+        )
 
         self.raster_txt = QCheckBox("Save raster data (TXT)")
         self.raster_txt.setChecked(False)
@@ -961,13 +991,30 @@ class ParameterForm(QWidget):
             label.setText(p)
 
     def _pick_color(self) -> None:
-        p = _browse(
-            self, "Select color table", "Color (*.dcf *.scf *.dat)",
-            os.path.join(self.ss_root, "color") if self.ss_root else None)
+        start_dir = None
+        if self.ss_root and os.path.isdir(os.path.join(self.ss_root, "color")):
+            start_dir = os.path.join(self.ss_root, "color")
+        else:
+            bundled = os.path.join(os.path.dirname(__file__), "resources")
+            if os.path.isdir(bundled):
+                start_dir = bundled
+        p = _browse(self, "Select color table", "Color (*.dcf *.scf *.dat)", start_dir)
         if p:
             self.color_path.setText(p)
             if not p.lower().endswith(".dat"):
                 self._color_user_chosen = True
+            # Auto-align RX threshold if palette minimum level is lower than current threshold
+            if os.path.exists(p):
+                try:
+                    from . import rm_style
+                    with open(p, "r", encoding="utf-8", errors="replace") as fh:
+                        bands = rm_style.parse_dcf_levels(fh.read())
+                    if bands:
+                        min_lvl = min(lvl for lvl, _ in bands)
+                        if self.rx_thr.value() > min_lvl:
+                            self.rx_thr.setValue(float(min_lvl))
+                except Exception:
+                    pass
 
     def _pick_dir(self) -> None:
         d = QFileDialog.getExistingDirectory(self, "Select SDF directory")
@@ -1005,17 +1052,29 @@ class ParameterForm(QWidget):
             self.ant_path.setText(base)
 
     def _update_demnas_visibility(self) -> None:
-        offline = self.dem_source.currentIndex() == 1
+        idx = self.dem_source.currentIndex()
+        offline = idx in (1, 2)
         self.demnas_btn.setVisible(offline)
         self.demnas_dir.setVisible(offline)
         self.demnas_live.setVisible(offline)
         self.demnas_status.setVisible(offline)
-        if not offline:
-            self.set_demnas_status("idle", "DEMNAS: online aktif")
+        if idx == 2:
+            self.demnas_lbl.setText("SRTM folder")
+            self.demnas_btn.setText("SRTM folder...")
+            self.demnas_dir.setPlaceholderText("Pilih folder SRTM (.hgt)")
+        elif idx == 1:
+            self.demnas_lbl.setText("DEMNAS folder")
+            self.demnas_btn.setText("DEMNAS folder...")
+            self.demnas_dir.setPlaceholderText("Pilih folder DEMNAS (.tif)")
+        else:
+            self.demnas_lbl.setText("DEM folder")
+            self.set_demnas_status("idle", "DEM: online aktif")
 
     def _pick_demnas_folder(self) -> None:
+        idx = self.dem_source.currentIndex()
+        title = "Pilih folder SRTM (.hgt)" if idx == 2 else "Pilih folder DEMNAS (.tif)"
         folder = QFileDialog.getExistingDirectory(
-            self, "Pilih folder DEMNAS", self.demnas_dir.text() or os.path.expanduser("~")
+            self, title, self.demnas_dir.text() or os.path.expanduser("~")
         )
         if folder:
             self.demnas_dir.setText(folder)
@@ -1158,7 +1217,8 @@ class ParameterForm(QWidget):
             "ground_clutter": self.gc.value(),
             "obstacles": list(params_mod.iter_obstacles(self.obstacles.toPlainText())),
             "engine": self.engine.currentText(),
-            "dem_source": "offline" if self.dem_source.currentIndex() == 1 else "online",
+            "dem_source": "offline" if self.dem_source.currentIndex() in (1, 2) else "online",
+            "dem_kind": "srtm" if self.dem_source.currentIndex() == 2 else ("demnas" if self.dem_source.currentIndex() == 1 else "online"),
             "demnas_dir": self.demnas_dir.text().strip() or None,
             "terrain_source": "lidar" if self.terrain.currentText().startswith("LIDAR") else "sdf",
             "sdf_dir": self.sdf_path.text() or None,
@@ -1171,6 +1231,8 @@ class ParameterForm(QWidget):
             "color_file_user": getattr(self, "_color_user_chosen", False),
             "dbm_color": self.dbm_color.isChecked(),
             "transparent_holes": self.transparent_holes.isChecked(),
+            "kmz_contour_mode": self.kmz_contour_mode.currentIndex(),
+            "kmz_flat": bool(self.kmz_contour_mode.currentIndex() == 1),
             "raster_txt": self.raster_txt.isChecked(),
             "units": units,
             "dem_resolution": dem_res_map[self.dem_res.currentIndex()],
@@ -1249,7 +1311,12 @@ class ParameterForm(QWidget):
         self.obstacles.setPlainText("\n".join(str(o) for o in d.get("obstacles", [])))
         # Output / Engine
         self.engine.setCurrentText(d.get("engine", "LIDAR"))
-        self.dem_source.setCurrentIndex(1 if d.get("dem_source", "offline") == "offline" else 0)
+        if d.get("dem_kind") == "srtm" or d.get("dem_source") == "srtm":
+            self.dem_source.setCurrentIndex(2)
+        elif d.get("dem_source") == "offline":
+            self.dem_source.setCurrentIndex(1)
+        else:
+            self.dem_source.setCurrentIndex(0)
         self.demnas_dir.setText(d.get("demnas_dir") or "")
         self._update_demnas_visibility()
         self.terrain.setCurrentIndex(1 if d.get("terrain_source", "lidar") == "lidar" else 0)
@@ -1272,6 +1339,11 @@ class ParameterForm(QWidget):
         self.color_path.setText(d.get("color_file") or "")
         self.dbm_color.setChecked(bool(d.get("dbm_color", True)))
         self.transparent_holes.setChecked(bool(d.get("transparent_holes", True)))
+        if hasattr(self, "kmz_contour_mode"):
+            if "kmz_contour_mode" in d:
+                self.kmz_contour_mode.setCurrentIndex(int(d["kmz_contour_mode"]))
+            elif "kmz_flat" in d:
+                self.kmz_contour_mode.setCurrentIndex(1 if d["kmz_flat"] else 0)
         self.raster_txt.setChecked(bool(d.get("raster_txt", False)))
         if hasattr(self, "_dem_downsample"):
             self._dem_downsample.setChecked(bool(d.get("dem_downsample", False)))

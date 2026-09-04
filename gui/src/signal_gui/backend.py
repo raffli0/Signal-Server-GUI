@@ -7,6 +7,7 @@ conversion) happens inside the same worker before launching the engine.
 
 from __future__ import annotations
 
+import logging
 import math
 import os
 import re
@@ -21,6 +22,8 @@ from . import dem_convert
 from . import link_parse
 from .dem_convert import DemResolveError
 from ._bundle import app_root, exe as _exe
+
+logger = logging.getLogger("signal_gui.backend")
 
 
 def find_engines(root: Optional[str] = None) -> dict:
@@ -504,8 +507,8 @@ class RunWorker(QThread):
                                     " dan laporkan.")
                                 self.progress.emit(warn)
                                 self.output_line.emit(warn)
-                    except Exception:  # noqa: BLE001 - diagnostics only
-                        pass
+                    except Exception as exc:  # noqa: BLE001 - diagnostics only
+                        logger.debug("Coverage diagnostic evaluation exception: %s", exc)
                     break
                 if attempt < attempts:
                     old_seg = p.get("plot_segments")

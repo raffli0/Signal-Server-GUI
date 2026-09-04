@@ -18,3 +18,14 @@ def test_mgrs_roundtrip():
     assert isinstance(lat, float) and isinstance(lon, float)
     assert 45.0 < lat < 56.0
     assert -7.0 < lon < 3.0
+
+
+def test_to_decimal_and_parse_site():
+    assert coords.to_decimal("-6.834056", "dd") == -6.834056
+    assert abs(coords.to_decimal("51 50 56 N", "dms") - 51.8489) < 1e-3
+    lat, lon = coords.parse_site("-6.834056", "107.738457", "dd")
+    assert lat == -6.834056 and lon == 107.738457
+    lat_dms, lon_dms = coords.parse_site("51 50 56 N", "2 13 47 W", "dms")
+    assert abs(lat_dms - 51.8489) < 1e-3
+    assert abs(lon_dms - (-2.2297)) < 1e-3
+

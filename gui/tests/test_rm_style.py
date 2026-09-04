@@ -275,3 +275,15 @@ def test_render_rm_picture_shaded_bands(tmp_path):
     yy, xx = np.mgrid[0:h, 0:w]
     disk = (xx - w / 2) ** 2 + (yy - h / 2) ** 2 <= (min(h, w) / 4) ** 2
     assert blue[disk].std() > 5
+
+
+def test_calc_range_rings():
+    rings_10 = rm_style._calc_range_rings(10.0)
+    assert rings_10 == [5.0, 10.0]
+
+    rings_35 = rm_style._calc_range_rings(35.0)
+    assert rings_35 == [10.0, 20.0, 30.0, 35.0]
+
+    rings_110 = rm_style._calc_range_rings(110.0)
+    assert rings_110 == [25.0, 50.0, 75.0, 100.0, 110.0]
+

@@ -15,6 +15,14 @@ def test_compute_erp_gain_and_loss():
     assert abs(erp - 100 * 10 / (10 ** 0.3)) < 1e-6
 
 
+def test_compute_erp_rm_compat():
+    # Base: 41.1 W, 8 dBi Tx gain, 0.5 dB cable loss
+    # EIRP = 41.1 * 10^((8 - 0.5) / 10) = 41.1 * 10^0.75 = 231.14 W
+    # RM ERP = 231.14 / 1.64 = 140.94 W (~141 W, 51.49 dBm)
+    erp = params.compute_erp(41.1, 8.0, 0.5, rm_compat=True)
+    assert 140.5 < erp < 141.5
+
+
 def test_eirp_dbm():
     assert abs(params.eirp_dbm(100) - (10 * math.log10(100000) + 2.14)) < 1e-6
 

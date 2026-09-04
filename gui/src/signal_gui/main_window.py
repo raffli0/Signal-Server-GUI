@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import math
 import os
 import shutil
@@ -21,6 +22,8 @@ from PySide6.QtGui import QShortcut, QKeySequence
 
 from . import backend, params as params_mod, output_stage, rm_import
 from .widgets import ParameterForm
+
+logger = logging.getLogger("signal_gui.main_window")
 
 
 def _dir_size(path: str) -> int:
@@ -77,7 +80,6 @@ class _MouseWheelGuard(QObject):
 from .map_view import MapView
 from .profile_view import ProfileView
 from .header import CloudRFHeader
-from .radio_link_window import RadioLinkWindow
 from .cloudrf_profile_panel import CloudRFPathProfilePanel
 
 
@@ -99,7 +101,6 @@ class MainWindow(QMainWindow):
         self.engines = backend.find_engines(self.root)
         self.cache_dir = os.path.join(self.root, "gui", "cache", "dem")
         os.makedirs(self.cache_dir, exist_ok=True)
-        self.radio_link_win: Optional[RadioLinkWindow] = None
         self._pending = None
         self._worker = None
         self._last_result = None
@@ -432,12 +433,12 @@ class MainWindow(QMainWindow):
         self.form.demnas_dir_picked.connect(self._update_demnas_live)
         self.form.demnas_live.toggled.connect(self._update_demnas_live)
         self.form.transparent_holes_toggled.connect(self.map.set_transparent_holes)
+        self.form.contour_mode_changed.connect(self.map.set_contour_mode)
         # DEM source changes affect where elevations are sampled from.
         self.form.demnas_dir_picked.connect(self._schedule_amsl)
-        self.form.dem_source.currentIndexChanged.connect(lambda _: self._schedule_amsl())
-        # Default DEMNAS folder (always wins on startup): first subdir of
-        # <root>/gui/data named "demnas" in any letter case, else create one.
         self.demnas_default_dir = self._find_demnas_default()
+        self.srtm_default_dir = self._find_srtm_default()
+        self.form.dem_source.currentIndexChanged.connect(self._on_dem_source_changed)
         self.form.demnas_dir.setText(self.demnas_default_dir)
         self._update_demnas_live()
 
@@ -492,7 +493,8 @@ class MainWindow(QMainWindow):
                         lat, lon,
                         demnas_folder=demnas_folder, cache_dir=self.cache_dir,
                     )
-                except Exception:  # noqa: BLE001 - hint only
+                except Exception as exc:  # noqa: BLE001 - hint only
+                    logger.debug("Ground elevation hint lookup exception: %s", exc)
                     elev = None
                 self.amsl_ready.emit(role, elev)
 
@@ -516,23 +518,55 @@ class MainWindow(QMainWindow):
         os.makedirs(fallback, exist_ok=True)
         return fallback
 
-    # ------------------------------------------------------------------ DEMNAS config
+    def _find_srtm_default(self) -> str:
+        """Return the default SRTM folder: ``<root>/gui/data/<name>`` matching
+        "srtm3" or "srtm" case-insensitively; created if missing."""
+        base = os.path.join(self.root, "gui", "data")
+        os.makedirs(base, exist_ok=True)
+        for preferred in ("SRTM3", "srtm3", "SRTM", "srtm"):
+            p = os.path.join(base, preferred)
+            if os.path.isdir(p):
+                return p
+        try:
+            for entry in os.scandir(base):
+                if entry.is_dir() and "srtm" in entry.name.lower():
+                    return entry.path
+        except OSError:
+            pass
+        fallback = os.path.join(base, "SRTM3")
+        os.makedirs(fallback, exist_ok=True)
+        return fallback
+
+    def _on_dem_source_changed(self, idx: int) -> None:
+        cur_dir = self.form.demnas_dir.text().strip()
+        if idx == 2:  # Offline SRTM
+            if not cur_dir or cur_dir == self.demnas_default_dir:
+                self.form.demnas_dir.setText(self.srtm_default_dir)
+        elif idx == 1:  # Offline DEMNAS
+            if not cur_dir or cur_dir == self.srtm_default_dir:
+                self.form.demnas_dir.setText(self.demnas_default_dir)
+        self._schedule_amsl()
+        self._update_demnas_live()
+
+    # ------------------------------------------------------------------ DEMNAS/SRTM config
     def _update_demnas_live(self) -> None:
-        """Live (toggleable) coverage indicator for the selected DEMNAS folder."""
+        """Live (toggleable) coverage indicator for the selected DEMNAS/SRTM folder."""
         form = self.form
-        if form.dem_source.currentIndex() != 1:
-            form.set_demnas_status("idle", "DEMNAS: online aktif")
+        idx = form.dem_source.currentIndex()
+        if idx not in (1, 2):
+            form.set_demnas_status("idle", "DEM: online aktif")
             return
+        tag = "SRTM" if idx == 2 else "DEMNAS"
         if not form.demnas_live.isChecked():
-            form.set_demnas_status("idle", "DEMNAS: live check OFF")
+            form.set_demnas_status("idle", f"{tag}: live check OFF")
             return
         folder = form.demnas_dir.text().strip()
         if not folder or not os.path.isdir(folder):
-            form.set_demnas_status("idle", "DEMNAS: pilih folder")
+            form.set_demnas_status("idle", f"{tag}: pilih folder")
             return
         tx = form.tx_coord.get()
         if not tx:
-            form.set_demnas_status("idle", "DEMNAS: tunggu koordinat Tx")
+            form.set_demnas_status("idle", f"{tag}: tunggu koordinat Tx")
             return
         try:
             from . import dem_convert as dc
@@ -542,14 +576,14 @@ class MainWindow(QMainWindow):
             elev = dc._sample_elevation(vrt, lat, lon)
             if elev is None:
                 form.set_demnas_status(
-                    "bad", f"DEMNAS: ✗ void di Tx ({lat:.3f}, {lon:.3f})"
+                    "bad", f"{tag}: ✗ void di Tx ({lat:.3f}, {lon:.3f})"
                 )
             else:
                 form.set_demnas_status(
-                    "ok", f"DEMNAS: ✓ Tx ({lat:.3f}, {lon:.3f}) elev {elev:.0f} m"
+                    "ok", f"{tag}: ✓ Tx ({lat:.3f}, {lon:.3f}) elev {elev:.0f} m"
                 )
         except Exception as exc:  # noqa: BLE001 - surface any gdal/IO issue as red
-            form.set_demnas_status("bad", f"DEMNAS: ✗ {exc}")
+            form.set_demnas_status("bad", f"{tag}: ✗ {exc}")
 
     def _on_header_section_clicked(self, key: str):
         if key == "clear":
@@ -630,13 +664,14 @@ class MainWindow(QMainWindow):
         return 6371.0 * 2 * asin(sqrt(a))
 
     def _dem_spec(self, p: dict) -> dict | None:
-        # ---- Offline: local DEMNAS folder (no network) ----
+        # ---- Offline: local DEMNAS / SRTM folder (no network) ----
         if p.get("dem_source") == "offline":
             folder = p.get("demnas_dir")
             if not folder or not os.path.isdir(folder):
+                kind = "SRTM (.hgt)" if p.get("dem_kind") == "srtm" else "DEMNAS (.tif)"
                 raise RuntimeError(
-                    "Mode Offline membutuhkan folder DEMNAS (.tif). "
-                    "Pilih folder di baris 'DEMNAS folder' (bagian Output)."
+                    f"Mode Offline membutuhkan folder {kind}. "
+                    "Pilih folder di baris 'DEMNAS / SRTM folder' (bagian Terrain & DEM Source)."
                 )
             # Target terrain cell size for the offline conversion, derived
             # from the DEM resolution setting (arc-seconds / metres -> degrees).
@@ -852,18 +887,18 @@ class MainWindow(QMainWindow):
                         start_deg, end_deg,
                         max_dist_km=max_r)
                 except Exception as exc:  # noqa: BLE001 - cosmetic layer
+                    logger.warning("Mask sector failed: %s", exc)
                     self._set_status(f"Peringatan: mask radius/azimuth gagal ({exc})")
             # show_coverage embeds the PNG as base64; after this the file is
             # consumed and the cache around it is fair game.
-            self.map.show_coverage(result["png"], bbox, self.form.color_path.text())
+            c_mode = self.form.kmz_contour_mode.currentIndex() if hasattr(self.form, "kmz_contour_mode") else 0
+            self.map.show_coverage(result["png"], bbox, self.form.color_path.text(), contour_mode=c_mode)
             if p.get("tx_lat") is not None and p.get("tx_lon") is not None:
                 self.map.mark_tx_saved(float(p["tx_lat"]), float(p["tx_lon"]))
             self._last_result = result
             self._set_status("Done. Coverage shown on map.")
             if result.get("kml"):
                 self._set_status(f"Done. KML: {result['kml']}")
-            if result.get("rm_png"):
-                self._show_rm_preview(result["rm_png"])
             # Render selesai -> paksa bersihkan semua sisa render lama
             # (run dir aktif dipertahankan agar export tetap berfungsi).
             self._purge_render_cache(keep=run_dir)
@@ -898,88 +933,18 @@ class MainWindow(QMainWindow):
         self.map.clear_link()
 
     def _export_link_png(self) -> None:
-        path, _ = QFileDialog.getSaveFileName(
-            self, "Export Path Profile PNG", "path_profile.png", "PNG Image (*.png)"
-        )
-        if not path:
-            return
-        pix = self.path_profile_panel.canvas.grab()
-        pix.save(path)
-        self._set_status(f"Path profile image saved: {path}")
+        from . import export_controller
+        export_controller.export_link_png(self, self.path_profile_panel.canvas, self._set_status)
 
     def _export_link_kml(self) -> None:
-        result = self._last_result or {}
-        link = result.get("link")
-        if not link:
-            QMessageBox.warning(self, "No Link Data", "No Radio Link data available to export.")
-            return
-
-        p = result.get("params") or (self._pending[0] if getattr(self, "_pending", None) else self.form.collect())
-        tx_name = str(p.get("tx_site_name") or p.get("tx_name") or "Base")
-        rx_name = str(p.get("rx_site_name") or p.get("rx_name") or "Mobile")
-        default_fn = f"{tx_name}_{rx_name}_link.kml".replace(" ", "_")
-
-        fn, _ = QFileDialog.getSaveFileName(
-            self,
-            "Export Radio Link KML (Radio Mobile Format)",
-            default_fn,
-            "KML Files (*.kml);;KMZ Files (*.kmz);;All Files (*)",
-        )
-        if not fn:
-            return
-
-        try:
-            from .link_kml import export_radio_link_kmz, export_radio_link_kml
-            if fn.lower().endswith(".kmz"):
-                export_radio_link_kmz(fn, p, link, num_points=501)
-                self._set_status(f"Exported Radio Link KMZ: {fn}")
-                QMessageBox.information(self, "KMZ Exported", f"Successfully exported Radio Link KMZ to:\n{fn}")
-            else:
-                if not fn.lower().endswith(".kml"):
-                    fn += ".kml"
-                export_radio_link_kml(fn, p, link, num_points=501, copy_icon=True)
-                self._set_status(f"Exported Radio Link KML: {fn}")
-                QMessageBox.information(self, "KML Exported", f"Successfully exported Radio Link KML to:\n{fn}")
-        except Exception as exc:
-            self._set_status(f"Export error: {exc}")
-            QMessageBox.critical(self, "Export Error", f"Failed to export Radio Link:\n{exc}")
+        from . import export_controller
+        p = self._pending[0] if getattr(self, "_pending", None) else (self.form.collect() if hasattr(self, "form") else {})
+        export_controller.export_link_kml(self, self._last_result, p, self._set_status)
 
     def _export_link_kmz(self) -> None:
-        result = self._last_result or {}
-        link = result.get("link")
-        if not link:
-            QMessageBox.warning(self, "No Link Data", "No Radio Link data available to export.")
-            return
-
-        p = result.get("params") or (self._pending[0] if getattr(self, "_pending", None) else self.form.collect())
-        tx_name = str(p.get("tx_site_name") or p.get("tx_name") or "Base")
-        rx_name = str(p.get("rx_site_name") or p.get("rx_name") or "Mobile")
-        default_fn = f"{tx_name}_{rx_name}_link.kmz".replace(" ", "_")
-
-        fn, _ = QFileDialog.getSaveFileName(
-            self,
-            "Export Radio Link (Google Earth)",
-            default_fn,
-            "KMZ Files (*.kmz);;KML Files (*.kml);;All Files (*)",
-        )
-        if not fn:
-            return
-
-        try:
-            from .link_kml import export_radio_link_kmz, export_radio_link_kml
-            if fn.lower().endswith(".kml"):
-                export_radio_link_kml(fn, p, link, num_points=501, copy_icon=True)
-                self._set_status(f"Exported Radio Link KML: {fn}")
-                QMessageBox.information(self, "KML Exported", f"Successfully exported Radio Link KML to:\n{fn}")
-            else:
-                if not fn.lower().endswith(".kmz"):
-                    fn += ".kmz"
-                export_radio_link_kmz(fn, p, link, num_points=501)
-                self._set_status(f"Exported Radio Link KMZ: {fn}")
-                QMessageBox.information(self, "KMZ Exported", f"Successfully exported Radio Link KMZ to:\n{fn}")
-        except Exception as exc:
-            self._set_status(f"Export error: {exc}")
-            QMessageBox.critical(self, "Export Error", f"Failed to export Radio Link:\n{exc}")
+        from . import export_controller
+        p = self._pending[0] if getattr(self, "_pending", None) else (self.form.collect() if hasattr(self, "form") else {})
+        export_controller.export_link_kmz(self, self._last_result, p, self._set_status)
 
     def _on_link_point_tracked(self, lat: float, lon: float, dist_km: float, amsl_m: float, agl_m: float, ground_m: float) -> None:
         """Update interactive tracking marker on the map as the user moves cursor on profile (2D drone altitude)."""
@@ -1021,32 +986,6 @@ class MainWindow(QMainWindow):
             self.start(link=True)
         except Exception as exc:
             self._set_status(f"Recompute error: {exc}")
-
-    def _show_rm_preview(self, rm_png: str) -> None:
-        """Non-modal preview of the Radio Mobile-style picture."""
-        from PySide6.QtGui import QPixmap
-
-        dlg = QDialog(self)
-        dlg.setWindowTitle("Gambar gaya Radio Mobile")
-        v = QVBoxLayout(dlg)
-        img = QLabel()
-        pix = QPixmap(rm_png)
-        if not pix.isNull():
-            avail = int(QApplication.primaryScreen().availableGeometry()
-                        .height() * 0.7) if QApplication.primaryScreen() else 700
-            img.setPixmap(pix.scaledToHeight(avail, Qt.TransformationMode.SmoothTransformation))
-        img.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        v.addWidget(img)
-        row = QHBoxLayout()
-        hint = QLabel(os.path.basename(rm_png))
-        hint.setStyleSheet("color:#718096; font-size:10px;")
-        row.addWidget(hint, 1)
-        btn_close = QPushButton("Tutup")
-        btn_close.clicked.connect(dlg.accept)
-        row.addWidget(btn_close)
-        v.addLayout(row)
-        self._set_status(f"PNG RM-style siap: {rm_png}")
-        dlg.show()
 
     def _on_error(self, msg: str) -> None:
         self.progress.setVisible(False)
@@ -1121,6 +1060,7 @@ class MainWindow(QMainWindow):
         try:
             data = rm_import.parse_rm_export(path)
         except Exception as exc:  # noqa: BLE001 - surface any parse problem
+            logger.warning("Import Radio Mobile parse failed: %s", exc)
             QMessageBox.warning(
                 self, "Import Radio Mobile", f"Gagal memuat file:\n{exc}")
             return
@@ -1131,6 +1071,7 @@ class MainWindow(QMainWindow):
         try:
             rm_import.render_grid_png(data["points"], vmin, vmax, png)
         except Exception as exc:  # noqa: BLE001
+            logger.warning("Import Radio Mobile render grid failed: %s", exc)
             QMessageBox.warning(
                 self, "Import Radio Mobile", f"Gagal merender grid:\n{exc}")
             return
@@ -1295,149 +1236,47 @@ class MainWindow(QMainWindow):
 
     def export_model(self, fmt: str) -> None:
         """Export the last propagation result in the chosen format."""
-        result = getattr(self, "_last_result", None)
-        fmt = (fmt or "").strip()
+        from . import export_controller
 
-        if result and result.get("link") and (not result.get("png") or fmt in ("KML", "KMZ")):
-            if fmt == "KML":
-                self._export_link_kml()
-            else:
-                self._export_link_kmz()
-            return
+        color_file = None
+        if self._last_result and isinstance(self._last_result.get("params"), dict):
+            color_file = self._last_result["params"].get("color_file")
+        if not color_file and hasattr(self, "form") and hasattr(self.form, "color_path"):
+            color_file = self.form.color_path.text().strip() or None
 
-        if not result or not result.get("png") or not os.path.exists(result["png"]):
-            QMessageBox.warning(self, "Export", "Run a propagation calculation first.")
-            return
-        png = result["png"]
-        bbox = result.get("bbox")
-        base = os.path.splitext(os.path.basename(png))[0]
+        mode_idx = 0
+        if hasattr(self, "form") and hasattr(self.form, "kmz_contour_mode"):
+            mode_idx = self.form.kmz_contour_mode.currentIndex()
 
-        if fmt in ("KMZ", "KMZ (3D)"):
-            path, _ = QFileDialog.getSaveFileName(
-                self, "Export KMZ", base + ".kmz", "KMZ (*.kmz)")
-            if not path:
-                return
-            self._export_kmz(result, png, bbox, path, base)
-        elif fmt == "KML":
-            path, _ = QFileDialog.getSaveFileName(
-                self, "Export KML", base + ".kml", "KML (*.kml)")
-            if not path:
-                return
-            kml_path = result.get("kml")
-            if kml_path and os.path.exists(kml_path):
-                with open(kml_path, "r", encoding="utf-8") as fh:
-                    kml_text = fh.read()
-            elif bbox is not None:
-                from . import output_stage
-                kml_text = output_stage.build_kml(os.path.basename(png), bbox, base)
-            else:
-                QMessageBox.warning(self, "Export", "No bounding box available for KML.")
-                return
-            with open(path, "w", encoding="utf-8") as fh:
-                fh.write(kml_text)
-            self._set_status(f"Exported KML: {path}")
-        elif fmt == "TXT (Raster)":
-            raster = result.get("raster_txt")
-            if not raster or not os.path.exists(raster):
-                QMessageBox.warning(
-                    self, "Export",
-                    "Raster TXT tidak tersedia. Aktifkan 'Save raster data "
-                    "(TXT)' di bagian Output lalu jalankan ulang propagasi.")
-                return
-            path, _ = QFileDialog.getSaveFileName(
-                self, "Export Raster TXT", base + "_raster.txt", "TXT (*.txt)")
-            if not path:
-                return
-            self._export_raster_txt(result, path)
-            self._set_status(f"Exported TXT: {path}")
-        elif fmt == "PNG":
-            path, _ = QFileDialog.getSaveFileName(
-                self, "Export PNG", base + ".png", "PNG (*.png)")
-            if not path:
-                return
-            shutil.copyfile(png, path)
-            self._set_status(f"Exported PNG: {path}")
-        elif fmt == "PNG (RM-style)":
-            self._export_rm_png(result, base)
-        else:
-            QMessageBox.information(
-                self, "Export",
-                f"'{fmt}' export is not available from the current engine output.\n"
-                "Use KMZ or PNG.")
-            return
-        if fmt in ("KMZ", "KMZ (3D)"):
-            self._set_status(f"Exported {fmt}: {path}")
+        params = self._pending[0] if getattr(self, "_pending", None) else None
+        if not params and hasattr(self, "form"):
+            try:
+                params = self.form.collect()
+            except Exception:
+                params = {}
+
+        export_controller.export_model(
+            self,
+            fmt=fmt,
+            result=self._last_result,
+            params=params,
+            cache_dir=self.cache_dir,
+            color_file=color_file,
+            contour_mode_idx=mode_idx,
+            status_callback=self._set_status,
+        )
 
     def _export_rm_png(self, result: dict, base: str) -> None:
         """Export a full Radio Mobile-style picture + automatic KML sidecar."""
-        bbox = result.get("bbox")
-        if bbox is None:
-            QMessageBox.warning(self, "Export", "No bounding box available for RM-style PNG.")
-            return
-        path, _ = QFileDialog.getSaveFileName(
-            self, "Export PNG (RM-style)", base + "_rm.png", "PNG (*.png)")
-        if not path:
-            return
-        from . import rm_style
-
+        from . import export_controller
         p = (self._pending[0] if self._pending else {}) or {}
-        try:
-            rm_style.render_for_run(
-                path, bbox, p, coverage_png=result["png"])
-        except Exception as exc:  # noqa: BLE001 - surface to the user
-            QMessageBox.warning(self, "Export", f"Render RM-style gagal:\n{exc}")
-            return
-        sidecar = os.path.splitext(path)[0] + ".kml"
-        with open(sidecar, "w", encoding="utf-8") as fh:
-            fh.write(output_stage.build_kml(
-                os.path.basename(path), bbox, base))
-        self._set_status(f"Exported PNG (RM-style): {path} (+ {os.path.basename(sidecar)})")
+        export_controller.export_coverage_rm_png(self, result, p, base, self._set_status)
 
     def _export_raster_txt(self, result: dict, path: str) -> None:
-        """Wrap the engine's raw raster dump in a Radio-Mobile-compatible file.
-
-        Formatting lives in :func:`rm_import.write_rm_export`.  Antenna heights
-        are AMSL (ground elevation + AGL input), matching how Radio Mobile
-        reports site heights, and the ``Rx(dB)`` column stores the margin above
-        the run threshold -- the same convention RM itself exports.
-        """
-        from . import dem_convert as dc
-
+        """Wrap the engine's raw raster dump in a Radio-Mobile-compatible file."""
+        from . import export_controller
         p = (self._pending[0] if self._pending else {}) or {}
-
-        def _f(v, default=0.0):
-            try:
-                return float(v)
-            except (TypeError, ValueError):
-                return default
-
-        tx_name = p.get("tx_name") or "Tx"
-        rx_name = p.get("rx_name") or "Rx"
-        rx_lat = p.get("rx_lat")
-        rx_lon = p.get("rx_lon")
-
-        # Ground elevation (AMSL) lookup: local DEMNAS folder when offline mode
-        # is active, otherwise the web fallback inside ground_elevation().
-        demnas_folder = None
-        if p.get("dem_source") == "offline":
-            folder = p.get("demnas_dir")
-            if folder and os.path.isdir(folder):
-                demnas_folder = folder
-
-        def amsl(lat, lon, agl):
-            elev = dc.ground_elevation(
-                _f(lat), _f(lon),
-                demnas_folder=demnas_folder, cache_dir=self.cache_dir,
-            )
-            return _f(agl) + (elev if elev is not None else 0.0)
-
-        thr = _f(p.get("rx_threshold_dbm"), -100)
-        rm_import.write_rm_export(
-            path, result["raster_txt"], threshold_dbm=thr,
-            tx_name=tx_name, tx_lat=_f(p.get("tx_lat")), tx_lon=_f(p.get("tx_lon")),
-            tx_amsl=amsl(p.get("tx_lat"), p.get("tx_lon"), p.get("tx_height")),
-            rx_name=rx_name, rx_lat=_f(rx_lat), rx_lon=_f(rx_lon),
-            rx_amsl=amsl(rx_lat, rx_lon, p.get("rx_height")))
+        export_controller.export_raster_txt(result, p, path, self.cache_dir)
 
     def export_dem_tif(self) -> None:
         """Export DEM clip ter-potong untuk QGIS + validasi lubang hitam di Tx."""
@@ -1446,62 +1285,22 @@ class MainWindow(QMainWindow):
         except Exception as exc:
             QMessageBox.warning(self, "Input error", str(exc))
             return
-        folder = p.get("demnas_dir")
-        if not folder or not os.path.isdir(folder):
-            QMessageBox.warning(self, "Export DEM", "Pilih folder DEMNAS (.tif) dulu.")
-            return
-        tx_lat, tx_lon = p.get("tx_lat"), p.get("tx_lon")
-        if tx_lat is None or tx_lon is None:
-            QMessageBox.warning(self, "Export DEM", "Koordinat Tx belum valid.")
-            return
-        path, _ = QFileDialog.getSaveFileName(self, "Export DEM .tif (QGIS)", "dem_clip.tif", "GeoTIFF (*.tif)")
-        if not path:
-            return
-        try:
-            from . import dem_convert as dc
-            vrt = dc._demnas_vrt(folder, self.cache_dir)
-            dc._assert_covers(vrt, float(tx_lat), float(tx_lon))
-            elev = dc._sample_elevation(vrt, float(tx_lat), float(tx_lon))
-            # export clip sekitar Tx ± radius (atau 2km default untuk cek lubang)
-            radius_km = float(p.get("radius", 2) or 2)
-            lat_deg = min(0.05, radius_km / 111.0)
-            lon_deg = radius_km / (111.32 * max(0.01, math.cos(math.radians(float(tx_lat)))))
-            import shutil, subprocess
-            cmd = ["gdalwarp", "-t_srs", "EPSG:4326",
-                   "-te", str(float(tx_lon)-lon_deg), str(float(tx_lat)-lat_deg),
-                   str(float(tx_lon)+lon_deg), str(float(tx_lat)+lat_deg),
-                   "-tr", "0.00027", "0.00027", "-r", "bilinear", vrt, path]
-            subprocess.run(cmd, check=True)
-            msg = f"DEM diekspor ke {path}\nElevasi Tx: {elev} m"
-            if elev is None or elev == 0:
-                msg += "\n⚠️ LUBANG HITAM: elev 0/void di Tx → 100% masalah preprocessing! Cek QGIS."
-                self.terminal.appendPlainText(f"[DEM] Tx void/0 di ({tx_lat},{tx_lon}) → {path}")
-            else:
-                msg += "\n✅ Tidak ada lubang di Tx → cek engine step/azimuth."
-            QMessageBox.information(self, "Export DEM", msg)
-            self._set_status(f"DEM exported: {path}")
-        except Exception as exc:
-            QMessageBox.warning(self, "Export DEM", f"Gagal: {exc}")
+        from . import export_controller
+        export_controller.export_dem_tif(self, p, self.cache_dir, self._set_status, self.terminal)
 
-    def _export_kmz(self, result: dict, png: str, bbox, path: str, base: str) -> None:
+    def _export_kmz(self, result: dict, png: str, bbox, path: str, base: str,
+                    flat: bool = True, relief_weight: float = 0.30) -> None:
         """Build a KMZ (zipped KML GroundOverlay + PNG image)."""
-        import zipfile
+        from . import export_controller
+        color_file = None
+        if result and isinstance(result.get("params"), dict):
+            color_file = result["params"].get("color_file")
+        if not color_file and hasattr(self, "form") and hasattr(self.form, "color_path"):
+            color_file = self.form.color_path.text().strip() or None
 
-        from . import output_stage
-
-        kml_path = result.get("kml")
-        png_name = os.path.basename(png)
-        if kml_path and os.path.exists(kml_path):
-            with open(kml_path, "r", encoding="utf-8") as fh:
-                kml_text = fh.read()
-        elif bbox is not None:
-            kml_text = output_stage.build_kml(png_name, bbox, base)
-        else:
-            QMessageBox.warning(self, "Export", "No bounding box available for KML.")
-            return
-
-        with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
-            z.write(png, arcname=png_name)
-            z.writestr("doc.kml", kml_text)
+        export_controller.export_coverage_kmz(
+            self, result, png, bbox, path, base,
+            color_file=color_file, relief_weight=relief_weight,
+        )
 
 

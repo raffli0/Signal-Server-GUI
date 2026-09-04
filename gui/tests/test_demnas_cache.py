@@ -83,7 +83,7 @@ def test_vrt_rebuilds_and_covers_new_tile(tmp_path, demnas_folder):
     cache = str(tmp_path / "cache")
     # Before adding B: only tile A exists -> B's area is NOT covered.
     vrt1 = dc._demnas_vrt(str(demnas_folder), cache)
-    assert dc._sample_elevation(vrt1, -6.95, 107.55) is not None  # inside A
+    assert dc._sample_elevation(vrt1, -6.95, 107.55) == pytest.approx(500.0)  # inside A
     with pytest.raises(DemResolveError):
         dc._assert_covers(vrt1, -6.85, 107.65)  # inside B-only area
 
@@ -93,7 +93,7 @@ def test_vrt_rebuilds_and_covers_new_tile(tmp_path, demnas_folder):
     assert vrt2 != vrt1
     # Now the new area is covered and samples real elevation.
     dc._assert_covers(vrt2, -6.85, 107.65)
-    assert dc._sample_elevation(vrt2, -6.85, 107.65) is not None
+    assert dc._sample_elevation(vrt2, -6.85, 107.65) == pytest.approx(800.0)
 
 
 def test_demnas_folder_to_asc_returns_path_and_stats(tmp_path, demnas_gradient_folder):
@@ -144,4 +144,20 @@ def test_demnas_folder_to_asc_cellsize_clamp_for_large_radius():
     )
     assert cellsize > 3.0 / 3600.0  # clamped coarser than requested
     assert round(1.0 / cellsize) < 1200  # effective ppd dropped
+
+
+def test_hgt_bounds_hemispheres():
+    assert dc._hgt_bounds("S07E106.hgt") == (-7.0, -6.0, 106.0, 107.0)
+    assert dc._hgt_bounds("S06E105.HGT") == (-6.0, -5.0, 105.0, 106.0)
+    assert dc._hgt_bounds("N52W002.hgt") == (52.0, 53.0, -2.0, -1.0)
+
+
+def test_offline_srtm3_folder_lookup(tmp_path):
+    repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    srtm3_dir = os.path.join(repo_root, "gui", "data", "SRTM3")
+    if not os.path.isdir(srtm3_dir):
+        pytest.skip("gui/data/SRTM3 not found")
+    vrt = dc._demnas_vrt(srtm3_dir, str(tmp_path))
+    elev = dc._sample_elevation(vrt, -7.144055, 106.541397)
+    assert elev is not None and 400 < elev < 600
 

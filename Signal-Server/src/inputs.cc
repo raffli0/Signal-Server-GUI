@@ -1597,7 +1597,7 @@ int LoadSignalColors(struct site xmtr)
 	if (color_file != NULL && color_file[0] != 0) {
 		strncpy(filename, color_file, 250);
 		filename[250] = 0;
-		if (strstr(filename, ".scf") == NULL) {
+		if (access(filename, R_OK) != 0 && strstr(filename, ".scf") == NULL) {
 			strncat(filename, ".scf", 254 - strlen(filename));
 		}
 	} else {
@@ -1738,7 +1738,7 @@ int LoadLossColors(struct site xmtr)
 	if (color_file != NULL && color_file[0] != 0) {
 		strncpy(filename, color_file, 250);
 		filename[250] = 0;
-		if (strstr(filename, ".lcf") == NULL) {
+		if (access(filename, R_OK) != 0 && strstr(filename, ".lcf") == NULL) {
 			strncat(filename, ".lcf", 254 - strlen(filename));
 		}
 	} else {
@@ -1904,7 +1904,7 @@ int LoadDBMColors(struct site xmtr)
 	if (color_file != NULL && color_file[0] != 0) {
 		strncpy(filename, color_file, 250);
 		filename[250] = 0;
-		if (strstr(filename, ".dcf") == NULL) {
+		if (access(filename, R_OK) != 0 && strstr(filename, ".dcf") == NULL) {
 			strncat(filename, ".dcf", 254 - strlen(filename));
 		}
 	} else {

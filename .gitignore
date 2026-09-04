@@ -19,7 +19,7 @@ CMakeFiles/
 compile_commands.json
 
 # ===== System dependency (AddressSanitizer runtime, not source) =====
-asanlib/libasan*.so*
+asanlib/
 
 # ===== Generated analysis output =====
 graphify-out/
@@ -27,13 +27,19 @@ graphify-out/
 # OS / editor
 .DS_Store
 *.swp
+*.bak
 
 # ===== Scratch & temporary test artifacts =====
 scratch/
 compare_splsvsgui/
 .dem_cache/
 *.ppm
+_curvature*
+_fresnel*
+_profile*
+_reference*
 gui/coverage_raster.txt
 gui/path_profile.png
 gui/Radio mobile.txt
+
 

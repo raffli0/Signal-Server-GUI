@@ -369,7 +369,6 @@ int DoSigStr(char *filename, unsigned char geo, unsigned char kml,
 
 	if( (success = LoadSignalColors(xmtr[0])) != 0 ){
 		spdlog::error("Error loading signal colors");
-		//exit(success);
 	}
 
 	if( filename != NULL ) {

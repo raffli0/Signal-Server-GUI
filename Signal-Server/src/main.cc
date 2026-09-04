@@ -272,11 +272,9 @@ void PutSignal(double lat, double lon, unsigned char signal)
 
     if (found) {		// Write values to file
         dem[indx].signal[x][y] = signal;
-        // return (dem[indx].signal[x][y]);
         return;
     }
     else
-      // return 0;
       return;
 }
 

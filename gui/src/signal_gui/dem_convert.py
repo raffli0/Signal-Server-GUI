@@ -17,17 +17,21 @@ import math
 import os
 import re
 import json
+import logging
 import hashlib
 import shutil
+import struct
 import subprocess
 import tempfile
 import urllib.request
 import urllib.error
 import zipfile
 from contextlib import contextmanager
-from typing import Optional
+from typing import Optional, Any
 
 import numpy as np
+
+logger = logging.getLogger("signal_gui.dem_convert")
 
 
 VIEWFINDER_BASE = {
@@ -374,11 +378,11 @@ def _hgt_bounds(name: str) -> Optional[tuple[float, float, float, float]]:
     lat = int(lat_s)
     lon = int(lon_s)
     if ns.upper() == "S":
-        lat_lo, lat_hi = -lat - 1, -lat
+        lat_lo, lat_hi = -lat, -lat + 1
     else:
         lat_lo, lat_hi = lat, lat + 1
     if ew.upper() == "W":
-        lon_lo, lon_hi = -lon - 1, -lon
+        lon_lo, lon_hi = -lon, -lon + 1
     else:
         lon_lo, lon_hi = lon, lon + 1
     return lat_lo, lat_hi, lon_lo, lon_hi
@@ -501,13 +505,13 @@ def _collect_demnas_tifs(folder: str) -> list[str]:
     for root, _dirs, files in os.walk(folder):
         for f in files:
             low = f.lower()
-            if low.endswith(".tif") or low.endswith(".tiff"):
+            if low.endswith((".tif", ".tiff", ".hgt")):
                 found.append(os.path.join(root, f))
     return sorted(found)
 
 
 def _demnas_folder_signature(folder: str) -> str:
-    """Stable hash of a DEMNAS folder's ``.tif`` contents (recursive).
+    """Stable hash of an offline DEM folder's ``.tif``/``.hgt`` contents (recursive).
 
     Keyed by the folder's absolute location plus the sorted list of tiles and
     their size and mtime, so adding, removing, or replacing a tile — or moving
@@ -519,7 +523,7 @@ def _demnas_folder_signature(folder: str) -> str:
     for root, _dirs, files in os.walk(folder):
         for f in files:
             low = f.lower()
-            if low.endswith(".tif") or low.endswith(".tiff"):
+            if low.endswith((".tif", ".tiff", ".hgt")):
                 p = os.path.join(root, f)
                 rel = os.path.relpath(p, folder)
                 try:
@@ -529,17 +533,17 @@ def _demnas_folder_signature(folder: str) -> str:
                     parts.append(rel)
     if len(parts) < 2:
         raise DemResolveError(
-            f"Folder DEMNAS '{folder}' tidak berisi file .tif/.tiff."
+            f"Folder DEM '{folder}' tidak berisi file .tif/.tiff atau .hgt."
         )
     parts.sort()
     return hashlib.md5("|".join(parts).encode("utf-8")).hexdigest()[:10]
 
 
 def _demnas_vrt(folder: str, cache_dir: str) -> str:
-    """Merge all DEMNAS ``.tif`` tiles in ``folder`` into one cached VRT.
+    """Merge all DEMNAS ``.tif`` or SRTM ``.hgt`` tiles in ``folder`` into one cached VRT.
 
     The VRT is keyed by the folder's location plus its contents (tile list +
-    size + mtime) so adding, removing, or replacing a ``.tif`` — or moving the
+    size + mtime) so adding, removing, or replacing a tile — or moving the
     folder — invalidates the stale virtual mosaic. ``gdalwarp`` only reads the
     tiles covering the requested clip window, so the VRT itself stays cheap to
     rebuild.
@@ -558,7 +562,7 @@ def _demnas_vrt(folder: str, cache_dir: str) -> str:
     tifs = _collect_demnas_tifs(folder)
     if not tifs:
         raise DemResolveError(
-            f"Folder DEMNAS '{folder}' tidak berisi file .tif/.tiff."
+            f"Folder DEM '{folder}' tidak berisi file .tif/.tiff atau .hgt."
         )
     lst = os.path.join(vrt_dir, f"{key}.txt")
     with open(lst, "w") as fh:
@@ -584,8 +588,61 @@ def _vrt_sources_exist(vrt: str) -> bool:
     return True
 
 
+_GDAL_DATASET_CACHE: dict[str, tuple[float, Any, Any]] = {}
+
+
+def _get_vrt_dataset(vrt: str):
+    """Open and cache GDAL dataset for VRT with mtime invalidation."""
+    try:
+        from osgeo import gdal
+    except Exception:
+        return None, None
+    if not os.path.exists(vrt):
+        return None, None
+    mtime = os.path.getmtime(vrt)
+    cached = _GDAL_DATASET_CACHE.get(vrt)
+    if cached and cached[0] == mtime:
+        return cached[1], cached[2]
+    try:
+        ds = gdal.Open(vrt, gdal.GA_ReadOnly)
+        if not ds:
+            return None, None
+        gt = ds.GetGeoTransform()
+        inv_gt = gdal.InvGeoTransform(gt)
+        if not inv_gt:
+            return None, None
+        _GDAL_DATASET_CACHE[vrt] = (mtime, ds, inv_gt)
+        if len(_GDAL_DATASET_CACHE) > 8:
+            oldest = min(_GDAL_DATASET_CACHE.keys(), key=lambda k: _GDAL_DATASET_CACHE[k][0])
+            _GDAL_DATASET_CACHE.pop(oldest, None)
+        return ds, inv_gt
+    except Exception:
+        return None, None
+
+
 def _sample_elevation(vrt: str, lat: float, lon: float) -> Optional[float]:
     """Sample the DEMNAS elevation (m) at (lat, lon); None if void/nodata."""
+    # Fast path: in-process GDAL read (~2 microseconds, no subprocess fork overhead)
+    ds, inv_gt = _get_vrt_dataset(vrt)
+    if ds is not None and inv_gt is not None:
+        try:
+            from osgeo import gdal
+            px = int(inv_gt[0] + inv_gt[1] * lon + inv_gt[2] * lat)
+            py = int(inv_gt[3] + inv_gt[4] * lon + inv_gt[5] * lat)
+            if 0 <= px < ds.RasterXSize and 0 <= py < ds.RasterYSize:
+                band = ds.GetRasterBand(1)
+                raw = band.ReadRaster(px, py, 1, 1, buf_type=gdal.GDT_Float32)
+                if raw:
+                    val = struct.unpack("f", raw)[0]
+                    nodata = band.GetNoDataValue()
+                    if nodata is not None and math.isclose(val, nodata):
+                        return None
+                    if not math.isnan(val) and val > -1000.0:
+                        return float(val)
+        except Exception:
+            pass
+
+    # Fallback to gdallocationinfo CLI
     out = subprocess.run(
         ["gdallocationinfo", "-valonly", "-wgs84", vrt, str(lon), str(lat)],
         capture_output=True, text=True,
@@ -777,8 +834,8 @@ def ground_elevation(
                 val = _sample_elevation(vrt, lat, lon)
                 if val is not None:
                     return val
-        except Exception:  # noqa: BLE001 - elevation lookup must never break a run
-            pass
+        except Exception as exc:  # noqa: BLE001 - elevation lookup must never break a run
+            logger.debug("DEMNAS elevation lookup exception: %s", exc)
     return _openmeteo_elevation(lat, lon, timeout=timeout)
 
 

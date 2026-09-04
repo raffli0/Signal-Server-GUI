@@ -234,7 +234,8 @@ class MapView(QWebEngineView):
         self._cov_palette = None
         self._render()
 
-    def show_coverage(self, png_path: str, bbox, color_file: Optional[str] = None) -> None:
+    def show_coverage(self, png_path: str, bbox, color_file: Optional[str] = None,
+                      contour_mode: Optional[int] = None) -> None:
         """Display a coverage PNG over the map; ``bbox`` is (N, E, S, W).
 
         The PNG is shown as-is so every palette band keeps its exact colour
@@ -243,6 +244,9 @@ class MapView(QWebEngineView):
         table is also parsed so the hover tooltip can report the dBm band at
         the cursor position.
         """
+        if contour_mode is not None:
+            self._contour_mode = int(contour_mode)
+        cur_mode = getattr(self, "_contour_mode", 0)
         n, e, s, w = bbox
         with open(png_path, "rb") as fh:
             raw = fh.read()
@@ -252,7 +256,8 @@ class MapView(QWebEngineView):
         self._cov_palette = palette_from_color_file(color_file)
         if self._ready:
             pal_js = f"window.__covPalette = {json.dumps(self._cov_palette)};" if self._cov_palette else ""
-            js = f"{pal_js} loadCoverage('{data_uri}', [[{s}, {w}], [{n}, {e}]]);"
+            mode_js = f"if (typeof setContourMode === 'function') setContourMode({cur_mode});"
+            js = f"{pal_js} {mode_js} loadCoverage('{data_uri}', [[{s}, {w}], [{n}, {e}]]);"
             self.page().runJavaScript(js)
         else:
             self._render()
@@ -341,13 +346,20 @@ class MapView(QWebEngineView):
         """Remove the Radio Link polyline and tracking cursor from the map."""
         self.page().runJavaScript("clearLink();")
 
+    def set_contour_mode(self, mode: int) -> None:
+        """Switch contour relief mode on the live map: 0=subtle, 1=flat, 2=full."""
+        self._contour_mode = int(mode)
+        if self._ready:
+            self.page().runJavaScript(f"if (typeof setContourMode === 'function') setContourMode({int(mode)});")
+
     def toggle_contour(self) -> None:
         """Toggle the 3D terrain relief / contour texture of the coverage overlay in real time."""
         self.page().runJavaScript("if (typeof toggleContour === 'function') toggleContour();")
 
     def set_contour(self, enabled: bool) -> None:
         """Set whether 3D terrain relief / contour is shown on the coverage overlay."""
-        self.page().runJavaScript(f"if (typeof setContour === 'function') setContour({str(enabled).lower()});")
+        mode = 0 if enabled else 1
+        self.set_contour_mode(mode)
 
     def toggle_transparent_holes(self) -> None:
         """Toggle whether unpainted / blocked terrain shadow holes are transparent in real time."""

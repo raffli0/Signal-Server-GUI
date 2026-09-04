@@ -648,6 +648,28 @@ def rm_sites_from_params(p: dict) -> list[dict]:
     return sites
 
 
+def _calc_range_rings(radius_km: float) -> list[float]:
+    """Compute Radio Mobile style concentric range rings up to radius_km."""
+    if radius_km <= 0:
+        return []
+    if radius_km <= 15:
+        step = 5.0
+    elif radius_km <= 35:
+        step = 10.0
+    elif radius_km <= 80:
+        step = 20.0
+    else:
+        step = 25.0
+    rings = []
+    r = step
+    while r <= radius_km:
+        rings.append(round(r, 1))
+        r += step
+    if not rings or abs(rings[-1] - radius_km) >= (step * 0.35):
+        rings.append(round(radius_km, 1))
+    return rings
+
+
 def render_for_run(out_png: str, bbox, params: dict, coverage_png: str,
                    palette: Optional[RmPalette] = None) -> str:
     """Render the RM-style picture for a finished engine run."""
@@ -659,6 +681,18 @@ def render_for_run(out_png: str, bbox, params: dict, coverage_png: str,
                 bands = parse_dcf_levels(fh.read())
         except OSError:
             bands = None
+    if not bands:
+        dcf_default = os.path.join(os.path.dirname(__file__), "resources", "radiomobile.dcf")
+        if os.path.exists(dcf_default):
+            try:
+                with open(dcf_default, "r", encoding="utf-8", errors="replace") as fh:
+                    bands = parse_dcf_levels(fh.read())
+            except OSError:
+                bands = None
+
+    radius = float(params["radius"]) if params.get("radius") else 0.0
+    ranges = _calc_range_rings(radius) if radius > 0 else ()
+
     return render_rm_picture(
         out_png, bbox,
         coverage_png=coverage_png,
@@ -668,7 +702,7 @@ def render_for_run(out_png: str, bbox, params: dict, coverage_png: str,
         hd=params.get("engine") == "HD",
         asc_file=params.get("lidar_file"),
         sites=rm_sites_from_params(params),
-        ranges_km=[params["radius"]] if params.get("radius") else (),
+        ranges_km=ranges,
         title=f"{params.get('tx_name') or 'Tx'} -> "
               f"{params.get('frequency_mhz', '')} MHz".strip(),
         threshold_dbm=params.get("rx_threshold_dbm"),

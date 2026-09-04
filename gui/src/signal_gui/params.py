@@ -262,10 +262,12 @@ def build_argv(
     # --- ERP (Watts) ---
     erp = params.get("erp_w")
     if erp is None:
+        rm_compat = bool(params.get("rm_compat", True))
         erp = compute_erp(
             float(params.get("rf_power_w", 0) or 0),
             float(params.get("tx_gain_dbi", 0) or 0),
             float(params.get("cable_loss_db", 0) or 0),
+            rm_compat=rm_compat,
         )
     if erp and erp > 0:
         args += ["-erp", str(erp)]
@@ -395,10 +397,12 @@ def format_run_summary(params: dict, argv: list[str], engine_exe: str) -> list[s
 
     erp = params.get("erp_w")
     if erp is None:
+        rm_compat = bool(params.get("rm_compat", True))
         erp = compute_erp(
             float(params.get("rf_power_w", 0) or 0),
             float(params.get("tx_gain_dbi", 0) or 0),
             float(params.get("cable_loss_db", 0) or 0),
+            rm_compat=rm_compat,
         )
     eirp_w = compute_eirp_w(
         float(params.get("rf_power_w", 0) or 0),

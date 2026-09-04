@@ -166,3 +166,102 @@ def test_extract_hgt(tmp_path):
         zf.writestr("B48/S05E102.hgt", b"\x00\x01\x02\x03")
     hgts = dem_convert.extract_hgt(str(zpath), str(tmp_path / "raw"))
     assert any(f.endswith("S05E102.hgt") for f in hgts)
+
+
+def test_make_flat_transparent_png(tmp_path):
+    # Create an image with hillshade variations (contour) and transparent background
+    w, h = 20, 20
+    arr = np.zeros((h, w, 4), dtype=np.uint8)
+    
+    # Palette green: (100, 255, 100)
+    # Simulate hillshaded variations:
+    # slope 1: (70, 180, 70)
+    # slope 2: (50, 128, 50)
+    # slope 3: (90, 230, 90)
+    arr[2:8, 2:8, :3] = (70, 180, 70)
+    arr[2:8, 2:8, 3] = 255
+    arr[8:14, 2:8, :3] = (50, 128, 50)
+    arr[8:14, 2:8, 3] = 255
+    arr[14:18, 2:8, :3] = (90, 230, 90)
+    arr[14:18, 2:8, 3] = 255
+
+    src_png = tmp_path / "shaded_cov.png"
+    Image.fromarray(arr, "RGBA").save(src_png)
+
+    out_png = tmp_path / "flat_trans_cov.png"
+    res = output_stage.make_flat_transparent_png(str(src_png), str(out_png), opacity=0.75, relief_weight=0.0)
+    assert os.path.exists(res)
+
+    res_img = Image.open(out_png)
+    res_arr = np.array(res_img)
+
+    # 1. Background must stay 100% transparent
+    assert (res_arr[0, :, 3] == 0).all()
+    assert (res_arr[:, 0, 3] == 0).all()
+
+    # 2. Pure flat color (relief_weight = 0.0) -> exactly single palette green
+    cov_pixels = res_arr[2:18, 2:8]
+    unique_colors = np.unique(cov_pixels[..., :3].reshape(-1, 3), axis=0)
+    assert len(unique_colors) == 1, f"Expected 1 flat color, got {len(unique_colors)}"
+    assert tuple(unique_colors[0]) == (100, 255, 100)
+
+    # 3. Alpha must be transparent at 75% (191)
+    assert (cov_pixels[..., 3] == 191).all()
+
+    # 4. Subtle contour test (relief_weight = 0.30)
+    out_subtle = tmp_path / "subtle_cov.png"
+    output_stage.make_flat_transparent_png(str(src_png), str(out_subtle), opacity=0.75, relief_weight=0.30)
+    subtle_img = Image.open(out_subtle)
+    subtle_arr = np.array(subtle_img)
+    subtle_cov = subtle_arr[2:18, 2:8]
+    # In subtle contour, min green should NOT drop below 180 (soft, gentle shadow, not dark)
+    assert subtle_cov[..., 1].min() >= 180
+    assert subtle_cov[..., 1].max() <= 255
+    assert (subtle_cov[..., 3] == 191).all()
+
+
+def test_build_kml_opacity():
+    kml_trans = output_stage.build_kml("cov.png", (52.1, -1.7, 51.5, -2.6), "Test", opacity=0.75)
+    assert "<color>bfffffff</color>" in kml_trans
+    assert "<viewBoundScale>0.75</viewBoundScale>" in kml_trans
+
+    kml_none = output_stage.build_kml("cov.png", (52.1, -1.7, 51.5, -2.6), "Test", opacity=None)
+    assert "<color>" not in kml_none
+
+
+def test_export_kmz_flat_transparent(tmp_path):
+    import zipfile
+
+    w, h = 10, 10
+    arr = np.zeros((h, w, 4), dtype=np.uint8)
+    arr[2:8, 2:8, :3] = (50, 128, 50)  # Shaded green
+    arr[2:8, 2:8, 3] = 255
+
+    src_png = str(tmp_path / "coverage.png")
+    Image.fromarray(arr, "RGBA").save(src_png)
+
+    kmz_path = str(tmp_path / "test_out.kmz")
+    bbox = (-6.0, 107.0, -7.0, 106.0)
+
+    output_stage.export_kmz(kmz_path, src_png, bbox, "test_out", flat=True, opacity=0.75, relief_weight=0.30)
+
+    assert os.path.exists(kmz_path)
+    with zipfile.ZipFile(kmz_path) as z:
+        names = z.namelist()
+        assert "doc.kml" in names
+        assert any(n.endswith(".png") for n in names)
+        with z.open("doc.kml") as f:
+            kml_content = f.read().decode("utf-8")
+            assert "<GroundOverlay>" in kml_content
+            assert "<color>bfffffff</color>" in kml_content
+        
+        png_arc = [n for n in names if n.endswith(".png")][0]
+        with z.open(png_arc) as pf:
+            im = Image.open(pf)
+            im_arr = np.array(im)
+            assert (im_arr[0, 0, 3] == 0)  # transparent background
+            assert (im_arr[4, 4, 3] == 191)  # 75% transparent coverage
+            # Subtle contour: green component stays bright (>180) and not harsh
+            assert im_arr[4, 4, 1] >= 180
+
+
