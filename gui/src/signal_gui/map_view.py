@@ -349,3 +349,12 @@ class MapView(QWebEngineView):
         """Set whether 3D terrain relief / contour is shown on the coverage overlay."""
         self.page().runJavaScript(f"if (typeof setContour === 'function') setContour({str(enabled).lower()});")
 
+    def toggle_transparent_holes(self) -> None:
+        """Toggle whether unpainted / blocked terrain shadow holes are transparent in real time."""
+        self.page().runJavaScript("if (typeof toggleHoles === 'function') toggleHoles();")
+
+    def set_transparent_holes(self, enabled: bool) -> None:
+        """Set whether unpainted / blocked terrain shadow holes are transparent."""
+        self.page().runJavaScript(f"if (typeof setTransparentHoles === 'function') setTransparentHoles({str(enabled).lower()});")
+
+

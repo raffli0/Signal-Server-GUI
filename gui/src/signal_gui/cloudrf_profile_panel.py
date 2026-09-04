@@ -482,6 +482,7 @@ class CloudRFPathProfilePanel(QWidget):
     map_point_tracked = Signal(float, float, float, float, float, float)
     # (lat, lon, dist_km, amsl_m, agl_m, ground_m)
     export_kmz_requested = Signal()
+    export_kml_requested = Signal()
     export_png_requested = Signal()
 
     def __init__(self, parent=None):
@@ -549,11 +550,18 @@ class CloudRFPathProfilePanel(QWidget):
         actions_row.setSpacing(10)
         actions_row.setAlignment(Qt.AlignmentFlag.AlignRight)
 
+        btn_kml = QPushButton("KML")
+        btn_kml.setToolTip("Export Radio Link 3D KML (Radio Mobile format)")
+        btn_kml.setStyleSheet("QPushButton { background: transparent; color: #3182CE; font-weight: 700; font-size: 11px; border: none; } QPushButton:hover { color: #63B3ED; }")
+        btn_kml.clicked.connect(lambda: self.export_kml_requested.emit())
+
         btn_kmz = QPushButton("KMZ")
+        btn_kmz.setToolTip("Export Radio Link 3D KMZ (Google Earth package)")
         btn_kmz.setStyleSheet("QPushButton { background: transparent; color: #3182CE; font-weight: 700; font-size: 11px; border: none; } QPushButton:hover { color: #63B3ED; }")
         btn_kmz.clicked.connect(lambda: self.export_kmz_requested.emit())
 
         btn_png = QPushButton("PNG")
+        btn_png.setToolTip("Export Path Profile PNG Image")
         btn_png.setStyleSheet("QPushButton { background: transparent; color: #3182CE; font-weight: 700; font-size: 11px; border: none; } QPushButton:hover { color: #63B3ED; }")
         btn_png.clicked.connect(lambda: self.export_png_requested.emit())
 
@@ -563,6 +571,7 @@ class CloudRFPathProfilePanel(QWidget):
         btn_close.setStyleSheet("QPushButton { background: transparent; color: #A0AEC0; font-size: 12px; font-weight: bold; border: none; } QPushButton:hover { color: #FC8181; }")
         btn_close.clicked.connect(lambda: self.close_requested.emit())
 
+        actions_row.addWidget(btn_kml)
         actions_row.addWidget(btn_kmz)
         actions_row.addWidget(btn_png)
         actions_row.addWidget(btn_close)
@@ -648,7 +657,10 @@ class CloudRFPathProfilePanel(QWidget):
         self.lbl_line1.setText(f"Distance: <b>{dist_km:.3f} Km</b> &nbsp; Bearing to Rx: <b>{az_deg:.0f}°</b> &nbsp; Downtilt to Rx: <b>{downtilt:+.1f}°</b>")
         self.lbl_line2.setText(f"Frequency: <b>{freq_mhz:.0f}MHz</b> &nbsp; Model: <b>{model}</b> &nbsp; Path loss: <b>{loss_db:.1f}dB</b> &nbsp; Received power: <b>{rx_dbm:.1f}dBm</b> &nbsp; Field strength: <b>{field_str:.1f}dBuV/m</b>")
         self.lbl_line3.setText(f"Tx antenna gain: <b>{tx_gain_dbd:.0f}dBd / {tx_gain_dbi:.2f}dBi</b> &nbsp; ERP: <b>{erp_w:.2f}W / {erp_dbm:.1f}dBm</b> &nbsp; EIRP: <b>{eirp_w:.2f}W / {eirp_dbm:.2f}dBm</b>")
-        self.lbl_line4.setText(f"Rx antenna gain: <b>{rx_gain_dbi:.2f}dBi / {rx_gain_dbd:.2f}dBd</b>")
+        rx_cable_loss = float(params.get("rx_cable_loss_db", 0.0))
+        rx_net_dbi = rx_gain_dbi - rx_cable_loss
+        rx_loss_str = f" &nbsp; Rx cable loss: <b>{rx_cable_loss:.1f}dB</b> (net: <b>{rx_net_dbi:.2f}dBi</b>)" if rx_cable_loss > 0 else ""
+        self.lbl_line4.setText(f"Rx antenna gain: <b>{rx_gain_dbi:.2f}dBi / {rx_gain_dbd:.2f}dBd</b>{rx_loss_str}")
 
         # Update Big Signal Callout
         self._set_signal_badge(rx_dbm)

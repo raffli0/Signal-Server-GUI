@@ -90,7 +90,8 @@ def parse_strongest_color(color_file: Optional[str]) -> tuple[int, int, int]:
 
 
 def ppm_to_png(ppm_path: str, png_path: Optional[str] = None,
-               color_file: Optional[str] = None) -> str:
+               color_file: Optional[str] = None,
+               transparent_holes: bool = True) -> str:
     """Convert a PPM coverage image to a transparent PNG.
 
     Background removal must NOT be a global colour key (the old ImageMagick
@@ -111,17 +112,25 @@ def ppm_to_png(ppm_path: str, png_path: Optional[str] = None,
        so the core shows the strongest colour (red) textured by the terrain,
        not one flat solid fill and not a white hole over a light OSM basemap.
 
-    Every covered pixel (palette bands AND the recoloured core) is modulated
-    by that same formula; alpha is NOT touched beyond background keying.
+    3. When ``transparent_holes=True`` (default), any unpainted terrain shadow /
+       obstruction holes enclosed inside the coverage are made fully transparent
+       so the map/satellite basemap is cleanly visible underneath without
+       white or grey blinding blotches.
     """
     if png_path is None:
         png_path = os.path.splitext(ppm_path)[0] + ".png"
     rgb = np.asarray(Image.open(ppm_path).convert("RGB")).copy()
+    strongest = parse_strongest_color(color_file)
+    lum = 0.299 * strongest[0] + 0.587 * strongest[1] + 0.114 * strongest[2]
+
     # Background pixels in Signal-Server are either greyscale terrain (R=G=B)
     # or sea-level water (0, 0, 170).
     grey = (rgb[..., 0] == rgb[..., 1]) & (rgb[..., 1] == rgb[..., 2])
+    # White holes (unshaded terrain / tebing) are uncovered only if white is NOT
+    # the top coverage band in the palette.
+    white_hole = ((rgb[..., 0] >= 240) & (rgb[..., 1] >= 240) & (rgb[..., 2] >= 240)) if (lum < 200) else np.zeros(rgb.shape[:2], dtype=bool)
     sea = (rgb[..., 0] == 0) & (rgb[..., 1] == 0) & (rgb[..., 2] == 170)
-    uncovered = grey | sea
+    uncovered = grey | white_hole | sea
 
     labels, _n = ndimage.label(uncovered)
     border = np.unique(np.concatenate((
@@ -134,23 +143,37 @@ def ppm_to_png(ppm_path: str, png_path: Optional[str] = None,
     else:
         background = np.zeros(rgb.shape[:2], dtype=bool)
 
-    strongest = parse_strongest_color(color_file)
     enclosed_grey = grey & ~background
-    lum = 0.299 * strongest[0] + 0.587 * strongest[1] + 0.114 * strongest[2]
+
+    # Restrict Tx core recolouring strictly to the transmitter site center (within <= 6 pixels).
+    # Mountain shadows, crevices, and valleys distant from Tx are genuine terrain obstructions,
+    # NOT the Tx core, and must NEVER be painted red!
+    h, w = rgb.shape[:2]
+    cy, cx = h // 2, w // 2
+    yy, xx = np.ogrid[:h, :w]
+    is_center = ((yy - cy)**2 + (xx - cx)**2) <= 36
+    tx_core_hole = enclosed_grey & is_center
 
     # For saturated Tx core (drawn grey by engine when signal exceeds top band):
     # recolour using the strongest palette color times the local DEM relief.
-    if lum < 200 and np.any(enclosed_grey):
+    is_recoloured = np.zeros(rgb.shape[:2], dtype=bool)
+    if lum < 200 and np.any(tx_core_hole):
         dem_local = rgb[..., 0].astype(np.float64) / 255.0
         dem_local = np.clip(dem_local, 0.15, 1.0)
         for ch in range(3):
             chan = strongest[ch] * dem_local
-            rgb[..., ch][enclosed_grey] = chan[enclosed_grey].astype(np.uint8)
+            rgb[..., ch][tx_core_hole] = chan[tx_core_hole].astype(np.uint8)
+        is_recoloured = tx_core_hole
+    elif lum >= 200:
+        # White is the top band in this palette: center white/grey is valid coverage!
+        is_recoloured = tx_core_hole
 
     # rgb in PPM ALREADY contains the true per-pixel 3D terrain hillshade
     # from TerrainHillshade(). Keep it directly without flat border inpainting.
-    # Alpha is background keying only.
-    alpha = np.where(background, 0, 255).astype(np.uint8)
+    if transparent_holes:
+        alpha = np.where(uncovered & ~is_recoloured, 0, 255).astype(np.uint8)
+    else:
+        alpha = np.where(background, 0, 255).astype(np.uint8)
     rgba = np.dstack((rgb.astype(np.uint8), alpha)).astype(np.uint8)
     Image.fromarray(rgba, "RGBA").save(png_path)
     return png_path
@@ -325,8 +348,8 @@ def stage_output(ppm_path: str, stdout_text: str, title: str = "Coverage",
                  tx_coords: Optional[tuple[float, float]] = None,
                  color_file: Optional[str] = None,
                  params: Optional[dict] = None) -> dict:
-    """Convert PPM and write sidecar PNG + KML. Returns paths/bbox."""
-    png_path = ppm_to_png(ppm_path, color_file=color_file)
+    trans_holes = bool(params.get("transparent_holes", True)) if isinstance(params, dict) else True
+    png_path = ppm_to_png(ppm_path, color_file=color_file, transparent_holes=trans_holes)
     bbox = parse_bbox(stdout_text, params=params)
     kml_path = os.path.splitext(ppm_path)[0] + ".kml"
     if bbox is not None:

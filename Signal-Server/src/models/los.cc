@@ -79,18 +79,30 @@ namespace {
 		the mask based on the latitude and longitude of the area
 		pointed to. */
 
-		int x, y, indx;
-		char found;
+		int x = 0, y = 0, indx = 0;
+		char found = 0;
 		bool rtn = false;
 
-		for (indx = 0, found = 0; indx < MAXPAGES && found == 0;) {
-			x = (int)rint(ppd * (lat - dem[indx].min_north));
-			y = mpi - (int)rint(yppd * (LonDiff(dem[indx].max_west, lon)));
-
-			if (x >= 0 && x <= mpi && y >= 0 && y <= mpi)
+		static thread_local int last_can_indx = 0;
+		if (last_can_indx >= 0 && last_can_indx < MAXPAGES) {
+			x = (int)rint(ppd * (lat - dem[last_can_indx].min_north));
+			y = mpi - (int)rint(yppd * (LonDiff(dem[last_can_indx].max_west, lon)));
+			if (x >= 0 && x <= mpi && y >= 0 && y <= mpi) {
+				indx = last_can_indx;
 				found = 1;
-			else
-				indx++;
+			}
+		}
+		if (!found) {
+			for (indx = 0; indx < MAXPAGES && found == 0;) {
+				x = (int)rint(ppd * (lat - dem[indx].min_north));
+				y = mpi - (int)rint(yppd * (LonDiff(dem[indx].max_west, lon)));
+
+				if (x >= 0 && x <= mpi && y >= 0 && y <= mpi) {
+					found = 1;
+					last_can_indx = indx;
+				} else
+					indx++;
+			}
 		}
 
 		if (found) {
@@ -229,6 +241,7 @@ namespace {
 
             // Increment
             rad += rps;
+            progress.count++;
         }
 
         // Double check we covered the whole range
@@ -433,7 +446,7 @@ void PlotLOSPath(struct site source, struct site destination, char mask_value)
     tx_alt = earthradius + source.alt + path.elevation[0];
     tx_alt2 = tx_alt * tx_alt;
 
-    for (x = 0; (bStop == false) && (x < (path.length - 1)) && (path.distance[x] <= max_range); x++) {
+    for (x = 0; (bStop == false) && (x < (path.length - 1)) && (path.distance[x] <= max_range); x += 4) {
 
         if (x > 0) {
             distance = FEET_PER_MILE * path.distance[x];
@@ -540,6 +553,12 @@ void PlotPropPath(
 
 	ReadPath(source, destination);
 
+	// Ensure transmitter site itself and immediate near-field is painted (prevents center hole)
+	PutSignal(source.lat, source.lon, 255);
+	if (path.length > 1) {
+		PutSignal(path.lat[1], path.lon[1], 255);
+	}
+
 	four_thirds_earth = FOUR_THIRDS * EARTHRADIUS;
 
 	for (x = 1; x < path.length - 1; x++)
@@ -569,8 +588,25 @@ void PlotPropPath(
 	   calculation for overall path loss. */
 	//if(debug)
 	//	fprintf(stderr,"four_thirds_earth %.1f source.alt %.1f path.elevation[0] %.1f\n",four_thirds_earth,source.alt,path.elevation[0]);
+	xmtr_alt = four_thirds_earth + source.alt + path.elevation[0];
+	xmtr_alt2 = xmtr_alt * xmtr_alt;
+
+	static thread_local std::vector<double> pre_cos_test;
+	if (got_elevation_pattern || fd != NULL || tworay > 0) {
+		if ((int)pre_cos_test.size() < path.length)
+			pre_cos_test.resize(path.length + 32);
+		for (int x = 2; x < path.length; x++) {
+			double dist = FEET_PER_MILE * path.distance[x];
+			double t_alt = four_thirds_earth + (path.elevation[x] == 0.0 ? path.elevation[x] : path.elevation[x] + clutter);
+			double c_test = (xmtr_alt2 + (dist * dist) - (t_alt * t_alt)) / (2.0 * xmtr_alt * dist);
+			if (c_test > 1.0) c_test = 1.0;
+			if (c_test < -1.0) c_test = -1.0;
+			pre_cos_test[x] = c_test;
+		}
+	}
+
 	for (y = 2; (y < (path.length - 1) && path.distance[y] <= max_range);
-	     y++) {
+	     y += 4) {
 		/* Process this point only if it
 		   has not already been processed. */
 
@@ -581,13 +617,10 @@ void PlotPropPath(
 			int buffer_offset = 0;
 
 			distance = FEET_PER_MILE * path.distance[y];
-			xmtr_alt =
-			    four_thirds_earth + source.alt + path.elevation[0];
 			dest_alt =
 			    four_thirds_earth + destination.alt +
 			    path.elevation[y];
 			dest_alt2 = dest_alt * dest_alt;
-			xmtr_alt2 = xmtr_alt * xmtr_alt;
 
 			/* Calculate the cosine of the elevation of
 			   the receiver as seen by the transmitter. */
@@ -602,54 +635,23 @@ void PlotPropPath(
 			if (cos_rcvr_angle < -1.0)
 				cos_rcvr_angle = -1.0;
 
+			block = 0;
 			if (got_elevation_pattern || fd != NULL || tworay > 0) {
 				/* Determine the elevation angle to the first obstruction
 				   along the path IF elevation pattern data is available,
 				   an output (.ano) file has been designated, or Two-Ray is active. */
 
-				for (x = 2, block = 0; (x < y && block == 0);
-				     x++) {
-					distance = FEET_PER_MILE * path.distance[x];
-
-					test_alt =
-					    four_thirds_earth +
-					    (path.elevation[x] ==
-					     0.0 ? path.elevation[x] : path.
-					     elevation[x] + clutter);
-
-					/* Calculate the cosine of the elevation
-					   angle of the terrain (test point)
-					   as seen by the transmitter. */
-
-					cos_test_angle =
-					    ((xmtr_alt2) +
-					     (distance * distance) -
-					     (test_alt * test_alt)) / (2.0 *
-								       xmtr_alt
-								       *
-								       distance);
-
-					if (cos_test_angle > 1.0)
-						cos_test_angle = 1.0;
-
-					if (cos_test_angle < -1.0)
-						cos_test_angle = -1.0;
-
-					/* Compare these two angles to determine if
-					   an obstruction exists.  Since we're comparing
-					   the cosines of these angles rather than
-					   the angles themselves, the sense of the
-					   following "if" statement is reversed from
-					   what it would be if the angles themselves
-					   were compared. */
-
-					if (cos_rcvr_angle >= cos_test_angle)
+				double first_cos_test = 0.0;
+				for (int x = 2; (x < y && block == 0); x++) {
+					if (cos_rcvr_angle >= pre_cos_test[x]) {
 						block = 1;
+						first_cos_test = pre_cos_test[x];
+					}
 				}
 
 				if (block)
 					elevation =
-					    ((acos(cos_test_angle)) / DEG2RAD) -
+					    ((acos(first_cos_test)) / DEG2RAD) -
 					    90.0;
 				else
 					elevation =
@@ -847,7 +849,8 @@ void PlotPropPath(
 					dkm, LR.pol, LR.eps_dielect, LR.sgm_conductivity,
 					elev, y, coherent, 0.0
 				);
-				loss = tr.path_loss_db;
+				double delta_tworay = tr.path_loss_db - tr.fspl_db;
+				loss += delta_tworay;
 			}
 
 			if (knifeedge == 1 && prop_model > 1) {
@@ -990,13 +993,15 @@ void PlotPropPath(
 		}
 	}
 
-	{
+	int last_y = y - 4;
+	if (last_y >= 2 && last_y < path.length) {
 		std::lock_guard<std::mutex> lock(maskMutex);
-		if(path.lat[y]>cropLat)
-			cropLat=path.lat[y];
+		if(path.lat[last_y] > cropLat)
+			cropLat = path.lat[last_y];
 
-		if(y>cropLon)
-			cropLon=y;
+		double dlon_px = fabs(LonDiff(source.lon, path.lon[last_y])) * ppd;
+		if(dlon_px > cropLon)
+			cropLon = dlon_px;
 	}
 
 	//if(cropLon>180)
@@ -1253,7 +1258,6 @@ void PlotPropagation(struct site source, bbox bounds,
 
     // Iterate over the final list of ranges
     for (size_t i = 0; i < ranges.size(); i++) {
-        // Set common variables
         ranges[i].use_threads = use_threads;
         ranges[i].altitude = altitude;
         ranges[i].source = source;
@@ -1263,15 +1267,26 @@ void PlotPropagation(struct site source, bbox bounds,
         ranges[i].knifeedge = knifeedge;
         ranges[i].pmenv = pmenv;
         ranges[i].tworay = tworay;
-        // Set the segment id
         thread_progress[i].id = i;
-        // Start a thread if we're using threads
-        if (use_threads) {
-            spdlog::debug("Starting calc thread for edge segment {:.6f}N {:.6f}W to {:.6f}N {:.6f}W", ranges[i].min_north, ranges[i].min_west, ranges[i].max_north, ranges[i].max_west);
-            futures.push_back( std::async( std::launch::async, rangePropagation, std::ref(thread_progress[i]), &ranges[i] ) );
+    }
+
+    if (use_threads) {
+        unsigned int num_workers = std::thread::hardware_concurrency();
+        if (num_workers == 0) num_workers = 4;
+        if (num_workers > 16) num_workers = 16;
+        if (num_workers > ranges.size()) num_workers = ranges.size();
+
+        for (unsigned int w = 0; w < num_workers; w++) {
+            futures.push_back(std::async(std::launch::async, [w, num_workers, &ranges]() -> void* {
+                for (size_t i = w; i < ranges.size(); i += num_workers) {
+                    rangePropagation(thread_progress[i], &ranges[i]);
+                }
+                return NULL;
+            }));
         }
-        else {
-            spdlog::debug("Starting single-thread calc for edge segment {:.6f}N {:.6f}W to {:.6f}N {:.6f}W", ranges[i].min_north, ranges[i].min_west, ranges[i].max_north, ranges[i].max_west);
+    }
+    else {
+        for (size_t i = 0; i < ranges.size(); i++) {
             rangePropagation(thread_progress[i], &ranges[i]);
         }
     }
@@ -1336,8 +1351,11 @@ void PlotPropagationRadius(struct site source, double range,
     // TX site location print
     spdlog::debug("TX site location: {:.6f}N {:.6f}W at {:.2f} ft AGL", source.lat, source.lon, source.alt);
 
+    // Convert range to km if metric
+    double range_km = metric ? range * KM_PER_MILE : range;
+
     // Get bounding box of plot
-    bbox bounds = getCircularBoundingBox( {source.lat, source.lon}, range);
+    bbox bounds = getCircularBoundingBox( {source.lat, source.lon}, range_km);
 
     // Open file and ensure it opened
 	if (plot_filename[0] != 0)
@@ -1376,7 +1394,7 @@ void PlotPropagationRadius(struct site source, double range,
         PropagationRadius propRadius;
         // Populate static data
         propRadius.source = source;
-        propRadius.radius = range;
+        propRadius.radius = range_km;
         propRadius.points = section_pixels;
         propRadius.use_threads = use_threads;
         propRadius.altitude = altitude;
@@ -1411,17 +1429,27 @@ void PlotPropagationRadius(struct site source, double range,
     // Init our vector for storing processing progress
     init_processed();
 
-    // Iterate over the final list of ranges
     for (size_t i = 0; i < radii.size(); i++) {
-        // Set the segment id
         thread_progress[i].id = i;
-        // Start a thread if we're using threads
-        if (use_threads) {
-            spdlog::debug("Starting calc thread for radius segment {:.2f} to {:.2f}", radii[i].start_angle_rad / DEG2RAD, radii[i].stop_angle_rad / DEG2RAD);
-            futures.push_back( std::async( std::launch::async, radiusPropagation, std::ref(thread_progress[i]), &radii[i] ) );
+    }
+
+    if (use_threads) {
+        unsigned int num_workers = std::thread::hardware_concurrency();
+        if (num_workers == 0) num_workers = 4;
+        if (num_workers > 16) num_workers = 16;
+        if (num_workers > radii.size()) num_workers = radii.size();
+
+        for (unsigned int w = 0; w < num_workers; w++) {
+            futures.push_back(std::async(std::launch::async, [w, num_workers, &radii]() -> void* {
+                for (size_t i = w; i < radii.size(); i += num_workers) {
+                    radiusPropagation(thread_progress[i], &radii[i]);
+                }
+                return NULL;
+            }));
         }
-        else {
-            spdlog::debug("Starting single-thread calc for radius segment {:.2f} to {:.2f}", radii[i].start_angle_rad / DEG2RAD, radii[i].stop_angle_rad / DEG2RAD);
+    }
+    else {
+        for (size_t i = 0; i < radii.size(); i++) {
             radiusPropagation(thread_progress[i], &radii[i]);
         }
     }

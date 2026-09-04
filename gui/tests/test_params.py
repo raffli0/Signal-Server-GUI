@@ -146,3 +146,13 @@ def test_build_argv_rx_gain_dbi():
     argv = params.build_argv(p, engine_exe="signalserver", output_basename="/tmp/o")
     assert "-rxg" in argv
     assert argv[argv.index("-rxg") + 1] == "6.0"
+
+
+def test_build_argv_rx_cable_loss():
+    p = {
+        "tx_lat": 1, "tx_lon": 1, "tx_height": 30, "frequency_mhz": 900,
+        "erp_w": 10.0, "rx_gain_dbi": 6.0, "rx_cable_loss_db": 0.5, "rx_height": 1500.0,
+    }
+    argv = params.build_argv(p, engine_exe="signalserver", output_basename="/tmp/o")
+    assert "-rxg" in argv
+    assert argv[argv.index("-rxg") + 1] == "5.5"

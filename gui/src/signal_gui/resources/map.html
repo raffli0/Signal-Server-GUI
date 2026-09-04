@@ -556,6 +556,8 @@
       title="Opasitas Adaptif (Zoom): turunkan otomatis saat zoom dekat" onclick="toggleAdaptive()">Auto</span>
     <span id="contour-toggle" class="pill-toggle active"
       title="Kontur / 3D Relief Propagasi: ON (Klik untuk OFF / Flat)" onclick="toggleContour()">Kontur</span>
+    <span id="hole-toggle" class="pill-toggle active"
+      title="Area Bolong Putih / Bayangan Medan: Transparan ON (Klik untuk Solid OFF)" onclick="toggleHoles()">Transparan</span>
     <span title="Draw Polygon / Area" style="cursor:pointer"><svg class="ic" viewBox="0 0 24 24" fill="none"
         stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <path d="M12 20h9" />
@@ -666,6 +668,39 @@
     var covCtx = covCanvas.getContext('2d');
     var srcPixels = null, bandMap = null, covBounds = null, visibleBands = null;
 
+    var transparentHoles = true;
+
+    function isHolePixel(r, g, b) {
+      // Uncovered greyscale terrain hillshade, near-white unpainted holes, or sea backdrop
+      var diff = Math.max(Math.abs(r - g), Math.max(Math.abs(g - b), Math.abs(r - b)));
+      if (diff <= 12) return true; // greyscale terrain relief
+      if (r >= 240 && g >= 240 && b >= 240) return true; // pure white / near-white hole
+      if (r === 0 && g === 0 && b === 170) return true; // sea level backdrop
+      return false;
+    }
+
+    function toggleHoles() {
+      transparentHoles = !transparentHoles;
+      var btn = document.getElementById('hole-toggle');
+      if (btn) {
+        btn.classList.toggle('active', transparentHoles);
+        btn.title = 'Area Bolong Putih / Bayangan Medan: ' + (transparentHoles ? 'Transparan ON (Klik untuk Solid OFF)' : 'Solid OFF (Klik untuk Transparan ON)');
+        btn.innerText = transparentHoles ? 'Transparan' : 'Solid';
+      }
+      renderOverlay();
+    }
+
+    function setTransparentHoles(on) {
+      transparentHoles = !!on;
+      var btn = document.getElementById('hole-toggle');
+      if (btn) {
+        btn.classList.toggle('active', transparentHoles);
+        btn.title = 'Area Bolong Putih / Bayangan Medan: ' + (transparentHoles ? 'Transparan ON (Klik untuk Solid OFF)' : 'Solid OFF (Klik untuk Transparan ON)');
+        btn.innerText = transparentHoles ? 'Transparan' : 'Solid';
+      }
+      renderOverlay();
+    }
+
     function computeBands(px, w, h) {
       // Assign every non-transparent pixel to its nearest legend colour (band).
       var n = w * h;
@@ -674,6 +709,7 @@
         var o = p * 4;
         if (px[o + 3] === 0) { map[p] = 255; continue; } // transparent -> no band
         var r = px[o], g = px[o + 1], b = px[o + 2];
+        if (isHolePixel(r, g, b)) { map[p] = 255; continue; } // hole / terrain shadow -> no band
         var maxC = Math.max(r, Math.max(g, b));
         if (maxC === 0) { map[p] = PALETTE.length - 1; continue; }
         
@@ -758,17 +794,27 @@
       for (var p = 0, o = 0; p < src.length; p += 4, o++) {
         var a = src[p + 3];
         if (a === 0) { dst[p + 3] = 0; continue; }
+        var r = src[p], g = src[p + 1], b = src[p + 2];
+        if (isHolePixel(r, g, b)) {
+          if (transparentHoles) {
+            dst[p + 3] = 0; // Transparan 100%
+            continue;
+          } else {
+            dst[p] = r; dst[p + 1] = g; dst[p + 2] = b; dst[p + 3] = a;
+            continue;
+          }
+        }
         var band = bandMap ? bandMap[o] : 0;
         if (visibleBands && visibleBands.has(band)) {
           if (contourRelief) {
             // 3D Terrain Relief & Contour shading ON
-            dst[p] = src[p];
-            dst[p + 1] = src[p + 1];
-            dst[p + 2] = src[p + 2];
+            dst[p] = r;
+            dst[p + 1] = g;
+            dst[p + 2] = b;
             dst[p + 3] = a;
           } else {
             // Flat Solid Colors (Contour OFF) - Calibrated RM flat tone (0.72x luminance) to prevent blinding glare
-            var baseCol = (band >= 0 && band < PALETTE.length) ? PALETTE[band] : [src[p], src[p + 1], src[p + 2]];
+            var baseCol = (band >= 0 && band < PALETTE.length) ? PALETTE[band] : [r, g, b];
             dst[p] = Math.round(baseCol[0] * 0.72);
             dst[p + 1] = Math.round(baseCol[1] * 0.72);
             dst[p + 2] = Math.round(baseCol[2] * 0.72);

@@ -266,6 +266,7 @@ class ParameterForm(QWidget):
     export_requested = Signal(str)  # selected export format (e.g. "KMZ")
     export_dem_requested = Signal()
     demnas_dir_picked = Signal()    # DEMNAS folder (re)selected, even if unchanged
+    transparent_holes_toggled = Signal(bool)
 
     def __init__(self, signal_server_root: str = "", parent=None):
         super().__init__(parent)
@@ -500,7 +501,7 @@ class ParameterForm(QWidget):
         self.cable_loss = FocusWheelSpinBox(); self.cable_loss.setRange(0, 50); self.cable_loss.setValue(0)
         self._add_row_with_info(fl_tx, "Line loss (dB)", self.cable_loss, "Transmission line / cable loss")
         self.erp_label = QLabel("ERP: - W"); self.erp_label.setStyleSheet("color: #319795; font-size: 11px; font-weight: bold;")
-        self.eirp_label = QLabel("EIRP: - dBm"); self.eirp_label.setStyleSheet("color: #319795; font-size: 11px; font-weight: bold;")
+        self.eirp_label = QLabel("EIRP: - W (- dBm)"); self.eirp_label.setStyleSheet("color: #319795; font-size: 11px; font-weight: bold;")
         fl_tx.addRow(self.erp_label); fl_tx.addRow(self.eirp_label)
         self.tx_thr, self.tx_thr_uv, tx_thr_w = self._make_threshold_pair(
             -100, (-200, 100), (-100, 250))
@@ -569,8 +570,32 @@ class ParameterForm(QWidget):
         self._style_amsl_label(self.rx_amsl)
         fl_rx.addRow(self.rx_amsl)
         self.rx_height.valueChanged.connect(lambda _: self._refresh_amsl_labels())
+        # Rx Signal & Feeder
+        fl_rx.addRow(self._sub_label("RF Power & Feeder"))
+        self.rx_power = FocusWheelSpinBox(); self.rx_power.setRange(0, 1e7); self.rx_power.setValue(1)
+        self.rx_dbm_label = QLabel("≈ 30.0 dBm")
+        self.rx_dbm_label.setStyleSheet("color: #319795; font-size: 11px; font-weight: bold;")
+        rx_pw_row = QWidget()
+        rx_pw_hl = QHBoxLayout(rx_pw_row)
+        rx_pw_hl.setContentsMargins(0, 0, 0, 0)
+        rx_pw_hl.setSpacing(8)
+        rx_pw_hl.addWidget(self.rx_power, 1)
+        rx_pw_hl.addWidget(self.rx_dbm_label)
+        self._add_row_with_info(fl_rx, "Transmit power (Watt)", rx_pw_row, "Receiver / talkback transmitter power output in Watts")
+
         self.rx_gain = FocusWheelSpinBox(); self.rx_gain.setRange(-50, 50); self.rx_gain.setValue(0)
-        self._add_row_with_info(fl_rx, "Rx gain (dBi)", self.rx_gain, "Receiver antenna gain in dBi")
+        self._add_row_with_info(fl_rx, "Antenna gain (dBi)", self.rx_gain, "Receiver antenna gain in dBi")
+
+        self.rx_cable_loss = FocusWheelSpinBox(); self.rx_cable_loss.setRange(0.0, 50.0); self.rx_cable_loss.setValue(0.5); self.rx_cable_loss.setSingleStep(0.1)
+        self._add_row_with_info(fl_rx, "Line loss (dB)", self.rx_cable_loss, "Receiver transmission line / cable loss in dB (Radio Mobile: 0.5 dB)")
+
+        self.rx_erp_label = QLabel("ERP: - W"); self.rx_erp_label.setStyleSheet("color: #319795; font-size: 11px; font-weight: bold;")
+        self.rx_eirp_label = QLabel("EIRP: - W (- dBm)"); self.rx_eirp_label.setStyleSheet("color: #319795; font-size: 11px; font-weight: bold;")
+        fl_rx.addRow(self.rx_erp_label); fl_rx.addRow(self.rx_eirp_label)
+
+        for w in (self.rx_power, self.rx_gain, self.rx_cable_loss):
+            w.valueChanged.connect(self._update_rx_erp)
+
         self.rx_thr, self.rx_thr_uv, rx_thr_w = self._make_threshold_pair(
             -100, (-200, 100), (-100, 250))
         self._add_row_with_info(
@@ -604,7 +629,7 @@ class ParameterForm(QWidget):
             gate_key="context")
 
         self.reliability = QComboBox()
-        self.reliability.addItems(["50%", "70%", "80%", "90%", "95%", "99%"])
+        self.reliability.addItems(["50%", "70%", "75%", "80%", "90%", "95%", "99%"])
         self._add_gated_row(
             fl_model, "Reliability", self.reliability, "ITM statistical time/location "
             "reliability", gate_key="reliability")
@@ -791,12 +816,19 @@ class ParameterForm(QWidget):
         self.dbm_color.setStyleSheet("color: #CBD5E0; font-size: 11px;")
         fl_out.addRow(self.dbm_color)
 
+        self.transparent_holes = QCheckBox("Transparankan area bolong putih (Transparent holes)")
+        self.transparent_holes.setChecked(True)
+        self.transparent_holes.setStyleSheet("color: #CBD5E0; font-size: 11px;")
+        self.transparent_holes.toggled.connect(self.transparent_holes_toggled.emit)
+        fl_out.addRow(self.transparent_holes)
+
         self.raster_txt = QCheckBox("Save raster data (TXT)")
         self.raster_txt.setChecked(False)
         self.raster_txt.setStyleSheet("color: #CBD5E0; font-size: 11px;")
         fl_out.addRow(self.raster_txt)
 
         self._update_erp()
+        self._update_rx_erp()
 
         # Build Sticky Action Footer widget
         self.action_footer = self._build_action_footer()
@@ -1027,19 +1059,37 @@ class ParameterForm(QWidget):
         return dict(self._ground_elev)
 
     def _update_erp(self) -> None:
-        erp = params_mod.compute_erp(
-            self.rf_power.value(), self.tx_gain.value(), self.cable_loss.value()
-        )
-        eirp = params_mod.eirp_dbm(erp)
-        self.erp_label.setText(f"ERP: {erp:.3f} W")
-        self.eirp_label.setText(f"EIRP: {eirp:.2f} dBm")
         p_w = self.rf_power.value()
+        gain = self.tx_gain.value()
+        loss = self.cable_loss.value()
+        erp = params_mod.compute_erp(p_w, gain, loss)
+        eirp_w = params_mod.compute_eirp_w(p_w, gain, loss)
+        eirp_dbm_val = 10 * math.log10(eirp_w * 1000.0) if eirp_w > 0 else float("-inf")
+        erp_rm = eirp_w / 1.64 if eirp_w > 0 else 0.0
+        self.erp_label.setText(f"ERP: {erp_rm:.2f} W ({erp:.3f} W)")
+        self.eirp_label.setText(f"EIRP: {eirp_w:.2f} W ({eirp_dbm_val:.2f} dBm)")
         if p_w > 0:
             self.tx_dbm_label.setText(
                 f"≈ {10 * math.log10(p_w * 1000):.1f} dBm")
         else:
             self.tx_dbm_label.setText("≈ — dBm")
         self.erp_changed.emit(erp)
+
+    def _update_rx_erp(self) -> None:
+        p_w = self.rx_power.value()
+        gain = self.rx_gain.value()
+        loss = self.rx_cable_loss.value()
+        erp = params_mod.compute_erp(p_w, gain, loss)
+        eirp_w = params_mod.compute_eirp_w(p_w, gain, loss)
+        eirp_dbm_val = 10 * math.log10(eirp_w * 1000.0) if eirp_w > 0 else float("-inf")
+        erp_rm = eirp_w / 1.64 if eirp_w > 0 else 0.0
+        self.rx_erp_label.setText(f"ERP: {erp_rm:.2f} W ({erp:.3f} W)")
+        self.rx_eirp_label.setText(f"EIRP: {eirp_w:.2f} W ({eirp_dbm_val:.2f} dBm)")
+        if p_w > 0:
+            self.rx_dbm_label.setText(
+                f"≈ {10 * math.log10(p_w * 1000):.1f} dBm")
+        else:
+            self.rx_dbm_label.setText("≈ — dBm")
 
     # ------------------------------------------------------------------ data
     def collect(self) -> dict:
@@ -1089,8 +1139,11 @@ class ParameterForm(QWidget):
             "az_mask_end_deg": self.az_end.value(),
             "rx_lat": rx_lat, "rx_lon": rx_lon,
             "rx_height": self.rx_height.value(),
+            "rx_power_w": self.rx_power.value(),
             "rx_gain_dbi": self.rx_gain.value(),
             "rx_gain_dbd": self.rx_gain.value() - 2.15,
+            "rx_cable_loss_db": self.rx_cable_loss.value(),
+            "rx_line_loss_db": self.rx_cable_loss.value(),
             "rx_threshold_dbm": self.rx_thr.value(),
             "tx_threshold_dbm": self.tx_thr.value(),
             "model_pm": model_val,
@@ -1117,6 +1170,7 @@ class ParameterForm(QWidget):
             "color_file": self.color_path.text() or None,
             "color_file_user": getattr(self, "_color_user_chosen", False),
             "dbm_color": self.dbm_color.isChecked(),
+            "transparent_holes": self.transparent_holes.isChecked(),
             "raster_txt": self.raster_txt.isChecked(),
             "units": units,
             "dem_resolution": dem_res_map[self.dem_res.currentIndex()],
@@ -1158,6 +1212,7 @@ class ParameterForm(QWidget):
         self.rx_name.setText(d.get("rx_name") or "")
         self.rx_coord.set(d.get("rx_lat"), d.get("rx_lon"))
         self.rx_height.setValue(float(d.get("rx_height", 1.5)))
+        self.rx_power.setValue(float(d.get("rx_power_w", 1.0)))
         if "rx_gain_dbi" in d:
             self.rx_gain.setValue(float(d.get("rx_gain_dbi", 0)))
         elif "rx_gain_dbd" in d:
@@ -1165,6 +1220,8 @@ class ParameterForm(QWidget):
         else:
             self.rx_gain.setValue(float(d.get("rx_gain", 0)))
         self.rx_thr.setValue(float(d.get("rx_threshold_dbm", -100)))
+        self.rx_cable_loss.setValue(float(d.get("rx_cable_loss_db", d.get("rx_line_loss_db", 0.5))))
+        self._update_rx_erp()
         # rx_thr_uv (and tx_thr_uv) are kept in sync via valueChanged.
         # Model
         model_idx = self.model.findData(int(d.get("model_pm", 3)))
@@ -1214,6 +1271,7 @@ class ParameterForm(QWidget):
             self.plot_quality.setCurrentIndex(qi)
         self.color_path.setText(d.get("color_file") or "")
         self.dbm_color.setChecked(bool(d.get("dbm_color", True)))
+        self.transparent_holes.setChecked(bool(d.get("transparent_holes", True)))
         self.raster_txt.setChecked(bool(d.get("raster_txt", False)))
         if hasattr(self, "_dem_downsample"):
             self._dem_downsample.setChecked(bool(d.get("dem_downsample", False)))

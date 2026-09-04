@@ -234,8 +234,8 @@ int GetMask(double lat, double lon)
 
 void PutSignal(double lat, double lon, unsigned char signal)
 {
-    int x = 0, y = 0, indx;
-    char found, dotfile[260], basename[255];
+    int x = 0, y = 0, indx = 0;
+    char found = 0, dotfile[260], basename[255];
 
     /* This function writes a signal level (0-255)
        at the specified location for later recall. */
@@ -248,14 +248,26 @@ void PutSignal(double lat, double lon, unsigned char signal)
         hottest = signal;
 
     //lookup x/y for this co-ord
-    for (indx = 0, found = 0; indx < MAXPAGES && found == 0;) {
-        x = (int)rint(ppd * (lat - dem[indx].min_north));
-        y = mpi - (int)rint(yppd * (LonDiff(dem[indx].max_west, lon)));
-
-        if (x >= 0 && x <= mpi && y >= 0 && y <= mpi)
+    static thread_local int last_put_indx = 0;
+    if (last_put_indx >= 0 && last_put_indx < MAXPAGES) {
+        x = (int)rint(ppd * (lat - dem[last_put_indx].min_north));
+        y = mpi - (int)rint(yppd * (LonDiff(dem[last_put_indx].max_west, lon)));
+        if (x >= 0 && x <= mpi && y >= 0 && y <= mpi) {
+            indx = last_put_indx;
             found = 1;
-        else
-            indx++;
+        }
+    }
+    if (!found) {
+        for (indx = 0; indx < MAXPAGES && found == 0;) {
+            x = (int)rint(ppd * (lat - dem[indx].min_north));
+            y = mpi - (int)rint(yppd * (LonDiff(dem[indx].max_west, lon)));
+
+            if (x >= 0 && x <= mpi && y >= 0 && y <= mpi) {
+                found = 1;
+                last_put_indx = indx;
+            } else
+                indx++;
+        }
     }
 
     if (found) {		// Write values to file
@@ -274,17 +286,29 @@ unsigned char GetSignal(double lat, double lon)
        specified location that was previously written by the
        complimentary PutSignal() function. */
 
-    int x = 0, y = 0, indx;
-    char found;
+    int x = 0, y = 0, indx = 0;
+    char found = 0;
 
-    for (indx = 0, found = 0; indx < MAXPAGES && found == 0;) {
-        x = (int)rint(ppd * (lat - dem[indx].min_north));
-        y = mpi - (int)rint(yppd * (LonDiff(dem[indx].max_west, lon)));
-
-        if (x >= 0 && x <= mpi && y >= 0 && y <= mpi)
+    static thread_local int last_get_indx = 0;
+    if (last_get_indx >= 0 && last_get_indx < MAXPAGES) {
+        x = (int)rint(ppd * (lat - dem[last_get_indx].min_north));
+        y = mpi - (int)rint(yppd * (LonDiff(dem[last_get_indx].max_west, lon)));
+        if (x >= 0 && x <= mpi && y >= 0 && y <= mpi) {
+            indx = last_get_indx;
             found = 1;
-        else
-            indx++;
+        }
+    }
+    if (!found) {
+        for (indx = 0; indx < MAXPAGES && found == 0;) {
+            x = (int)rint(ppd * (lat - dem[indx].min_north));
+            y = mpi - (int)rint(yppd * (LonDiff(dem[indx].max_west, lon)));
+
+            if (x >= 0 && x <= mpi && y >= 0 && y <= mpi) {
+                found = 1;
+                last_get_indx = indx;
+            } else
+                indx++;
+        }
     }
 
     if (found)
@@ -308,6 +332,31 @@ void FillSignalHoles(unsigned char strongest_is_max)
     int best, v;
     static const int dx[4] = { -1, 1, 0, 0 };
     static const int dy[4] = { 0, 0, -1, 1 };
+
+    /* Ensure the transmitter site itself and its immediate core (within 4 pixels)
+       is saturated with the strongest signal, preventing any center hole. */
+    for (indx = 0; indx < MAXPAGES; indx++) {
+        if (dem[indx].min_north >= dem[indx].max_north || dem[indx].max_west < 0)
+            continue;
+        int tx_x = (int)rint(ppd * (tx_site[0].lat - dem[indx].min_north));
+        int tx_y = mpi - (int)rint(yppd * (LonDiff(dem[indx].max_west, tx_site[0].lon)));
+        if (tx_x >= 0 && tx_x <= mpi && tx_y >= 0 && tx_y <= mpi) {
+            int core_val = hottest > 0 ? hottest : 255;
+            for (int dx_c = -4; dx_c <= 4; dx_c++) {
+                for (int dy_c = -4; dy_c <= 4; dy_c++) {
+                    if (dx_c * dx_c + dy_c * dy_c <= 16) {
+                        int cx = tx_x + dx_c;
+                        int cy = tx_y + dy_c;
+                        if (cx >= 0 && cx <= mpi && cy >= 0 && cy <= mpi) {
+                            if (dem[indx].signal[cx][cy] == 0) {
+                                dem[indx].signal[cx][cy] = core_val;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     for (indx = 0; indx < MAXPAGES; indx++) {
         /* Skip unused pages (sentinel bounds set at init). */
@@ -617,6 +666,12 @@ void ReadPath(struct site source, struct site destination)
         dx = samples_per_radian * acos(cos(lon1 - lon2));
         dy = samples_per_radian * acos(cos(lat1 - lat2));
         path_length = sqrt((dx * dx) + (dy * dy));
+        
+        // Peningkatan resolusi (Step Size): Mengalikan jumlah sampel per path
+        // sehingga step_size menjadi lebih kecil (mis. ~7.5 meter / 12x oversampling).
+        // Ini memungkinkan ITM mendeteksi tebing curam dan menghasilkan KED shadow lebih akurat.
+        path_length *= 4.0;
+        
         miles_per_sample = total_distance / path_length;
     }
 

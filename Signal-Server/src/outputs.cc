@@ -126,6 +126,11 @@ void DoPathLoss(char *filename, unsigned char geo, unsigned char kml,
 		}
 
 		fd = fopen(mapfile,"wb");
+		if (fd == NULL) {
+			spdlog::error("Error opening output file {}: {}", mapfile, strerror(errno));
+			image_free(&ctx);
+			return;
+		}
 
 	} else {
 
@@ -380,6 +385,11 @@ int DoSigStr(char *filename, unsigned char geo, unsigned char kml,
 		}
 
 		fd = fopen(mapfile,"wb");
+		if (fd == NULL) {
+			spdlog::error("Error opening output file {}: {}", mapfile, strerror(errno));
+			image_free(&ctx);
+			return 1;
+		}
 
 	} else {
 
@@ -648,6 +658,11 @@ void DoRxdPwr(char *filename, unsigned char geo, unsigned char kml,
 		}
 
 		fd = fopen(mapfile,"wb");
+		if (fd == NULL) {
+			spdlog::error("Error opening output file {}: {}", mapfile, strerror(errno));
+			image_free(&ctx);
+			return;
+		}
 
 	} else {
 
@@ -906,6 +921,11 @@ void DoLOS(char *filename, unsigned char geo, unsigned char kml,
 		}
 
 		fd = fopen(mapfile,"wb");
+		if (fd == NULL) {
+			spdlog::error("Error opening output file {}: {}", mapfile, strerror(errno));
+			image_free(&ctx);
+			return;
+		}
 
 	} else {
 		

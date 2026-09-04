@@ -2493,7 +2493,7 @@ Note that point_to_point has become point_to_point_ITM for use as the old ITM
 		q = eno;
 	}
 
-	propv.mdvar = 12;
+	propv.mdvar = 3;
 	qlrps(frq_mhz, zsys, q, pol, eps_dielect, sgm_conductivity, prop);
 	qlrpfl(elev, propv.klim, propv.mdvar, prop, propa, propv);
 	fs = 32.45 + 20.0 * log10(frq_mhz) + 20.0 * log10(prop.dist / 1000.0);
@@ -2515,7 +2515,7 @@ Note that point_to_point has become point_to_point_ITM for use as the old ITM
 			strcat(strmode, ", Troposcatter Dominant");
 	}
 
-	dbloss = avar(zr, 0.0, zc, prop, propv) + fs;
+	dbloss = avar(zr, zr, zc, prop, propv) + fs;
 	errnum = prop.kwx;
 }
 

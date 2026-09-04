@@ -180,14 +180,27 @@ VIEWFINDER_BASE = {
 # Helpers
 # ---------------------------------------------------------------------------
 
-def compute_erp(rf_power_w: float, tx_gain_dbi: float, cable_loss_db: float) -> float:
+def compute_eirp_w(rf_power_w: float, tx_gain_dbi: float, cable_loss_db: float) -> float:
+    """Effective Isotropic Radiated Power in Watts.
+
+    EIRP_W = P_W * 10^((gain_dBi - loss_dB) / 10)
+    """
+    if rf_power_w <= 0:
+        return 0.0
+    return rf_power_w * (10 ** ((tx_gain_dbi - cable_loss_db) / 10.0))
+
+
+def compute_erp(rf_power_w: float, tx_gain_dbi: float, cable_loss_db: float, *, rm_compat: bool = False) -> float:
     """Effective Radiated Power in Watts.
 
     ERP_W = P_W * 10^((gain_dBi - 2.15) / 10) / 10^(loss_dB / 10)
     Signal-Server's ``-erp`` expects Watts (see src/main.cc:1826 log line).
+    If rm_compat is True, uses Radio Mobile's exact 1.64 dipole divider (EIRP / 1.64).
     """
     if rf_power_w <= 0:
         return 0.0
+    if rm_compat:
+        return compute_eirp_w(rf_power_w, tx_gain_dbi, cable_loss_db) / 1.64
     gain_factor = 10 ** ((tx_gain_dbi - 2.15) / 10.0)
     loss_factor = 10 ** (cable_loss_db / 10.0)
     return rf_power_w * gain_factor / loss_factor
@@ -278,7 +291,12 @@ def build_argv(
     rx_gain = params.get("rx_gain_dbi")
     if rx_gain is None:
         rx_gain = params.get("rx_gain_dbd")
-    _opt(args, "-rxg", rx_gain)
+    rx_loss = float(params.get("rx_cable_loss_db", 0.0) or 0.0)
+    if rx_gain is not None:
+        rx_gain_net = round(float(rx_gain) - rx_loss, 2)
+    else:
+        rx_gain_net = None
+    _opt(args, "-rxg", rx_gain_net)
     _opt(args, "-rt", params.get("rx_threshold_dbm"))
 
     # --- Model ---
@@ -309,6 +327,12 @@ def build_argv(
             args += ["-tworay", "1"]
         else:
             args += ["-tworay", "2"]
+
+    # Radial sweep mode: process propagation like Radio Mobile — 360° clockwise
+    # sweep from North (0°) back to North, one radial beam per sub-segment.
+    # This produces a proper circular coverage map instead of the bounding-box
+    # edge-based scan (PlotPropagation) which creates a cross/L-shaped artefact.
+    args.append("-rp")
 
     # Processing parallelism (optimisation; engine defaults to 4 segments).
     # Always pass an explicit segment count so wide runs use all cores instead
@@ -376,6 +400,11 @@ def format_run_summary(params: dict, argv: list[str], engine_exe: str) -> list[s
             float(params.get("tx_gain_dbi", 0) or 0),
             float(params.get("cable_loss_db", 0) or 0),
         )
+    eirp_w = compute_eirp_w(
+        float(params.get("rf_power_w", 0) or 0),
+        float(params.get("tx_gain_dbi", 0) or 0),
+        float(params.get("cable_loss_db", 0) or 0),
+    )
 
     engine_name = os.path.basename(engine_exe or "signalserver")
 
@@ -418,14 +447,16 @@ def format_run_summary(params: dict, argv: list[str], engine_exe: str) -> list[s
         f"[run] Rx        : tinggi {amsl_txt('rx')}"
         f" | gain {params.get('rx_gain_dbi') if params.get('rx_gain_dbi') is not None else params.get('rx_gain_dbd')} "
         f"{'dBi' if params.get('rx_gain_dbi') is not None else 'dBd'}"
-        f" | threshold {params.get('rx_threshold_dbm')} dBm"
+        + (f" (loss {float(params.get('rx_cable_loss_db', 0.0)):.1f} dB -> net {round(float(params.get('rx_gain_dbi') if params.get('rx_gain_dbi') is not None else params.get('rx_gain_dbd', 0.0)) - float(params.get('rx_cable_loss_db', 0.0)), 2):.1f} dBi)"
+           if params.get('rx_cable_loss_db') else "")
+        + f" | threshold {params.get('rx_threshold_dbm')} dBm"
         + (f" ({dbm_to_dbuv(float(params.get('rx_threshold_dbm', 0)))}\u00b5V)"
            if params.get('rx_threshold_dbm') is not None else ""),
         f"[run] Tx Thr    : {params.get('tx_threshold_dbm')} dBm"
         + (f" ({dbm_to_dbuv(float(params.get('tx_threshold_dbm', 0)))}\u00b5V)"
            if params.get('tx_threshold_dbm') is not None else "")
         + " (metadata; -rt engine tetap pakai sisi Rx)",
-        f"[run] ERP       : {erp:.2f} W"
+        f"[run] ERP       : {erp:.2f} W | EIRP {eirp_w:.2f} W ({10 * math.log10(eirp_w * 1000) if eirp_w > 0 else 0.0:.2f} dBm)"
         f" (power {params.get('rf_power_w')} W,"
         f" gain {params.get('tx_gain_dbi')} dBi,"
         f" loss {params.get('cable_loss_db')} dB)",

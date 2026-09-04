@@ -368,6 +368,7 @@ class MainWindow(QMainWindow):
         self.path_profile_panel.setVisible(False)
         self.path_profile_panel.close_requested.connect(self._hide_link_panel)
         self.path_profile_panel.map_point_tracked.connect(self._on_link_point_tracked)
+        self.path_profile_panel.export_kml_requested.connect(self._export_link_kml)
         self.path_profile_panel.export_kmz_requested.connect(self._export_link_kmz)
         self.path_profile_panel.export_png_requested.connect(self._export_link_png)
         self.right_splitter.addWidget(self.path_profile_panel)
@@ -430,6 +431,7 @@ class MainWindow(QMainWindow):
         self.form.export_dem_requested.connect(self.export_dem_tif)
         self.form.demnas_dir_picked.connect(self._update_demnas_live)
         self.form.demnas_live.toggled.connect(self._update_demnas_live)
+        self.form.transparent_holes_toggled.connect(self.map.set_transparent_holes)
         # DEM source changes affect where elevations are sampled from.
         self.form.demnas_dir_picked.connect(self._schedule_amsl)
         self.form.dem_source.currentIndexChanged.connect(lambda _: self._schedule_amsl())
@@ -839,17 +841,18 @@ class MainWindow(QMainWindow):
         if ok and result.get("bbox"):
             p = self._pending[0] if self._pending else {}
             bbox = result["bbox"]
-            if p.get("az_mask_enabled") and \
-                    p.get("tx_lat") is not None and p.get("tx_lon") is not None:
+            if p.get("tx_lat") is not None and p.get("tx_lon") is not None:
                 try:
+                    max_r = float(p.get("radius") or 100.0)
+                    start_deg = float(p.get("az_mask_start_deg", 0.0)) if p.get("az_mask_enabled") else 0.0
+                    end_deg = float(p.get("az_mask_end_deg", 360.0)) if p.get("az_mask_enabled") else 360.0
                     output_stage.mask_png_sector(
                         result["png"], bbox,
                         float(p["tx_lat"]), float(p["tx_lon"]),
-                        float(p.get("az_mask_start_deg", 0.1)),
-                        float(p.get("az_mask_end_deg", 360.0)),
-                        max_dist_km=p.get("max_dist_km"))
+                        start_deg, end_deg,
+                        max_dist_km=max_r)
                 except Exception as exc:  # noqa: BLE001 - cosmetic layer
-                    self._set_status(f"Peringatan: mask azimuth gagal ({exc})")
+                    self._set_status(f"Peringatan: mask radius/azimuth gagal ({exc})")
             # show_coverage embeds the PNG as base64; after this the file is
             # consumed and the cache around it is fair game.
             self.map.show_coverage(result["png"], bbox, self.form.color_path.text())
@@ -880,7 +883,7 @@ class MainWindow(QMainWindow):
         else:
             link_color = "#00E600"
         self.map.draw_link(tx[0], tx[1], rx[0], rx[1], color=link_color)
-        self._last_result = {"link": link}
+        self._last_result = {"link": link, "params": p}
         self._set_status("Done. Radio link computed.")
 
         # Show Integrated Cloud-RF Path Profile Panel directly on the right pane!
@@ -904,8 +907,79 @@ class MainWindow(QMainWindow):
         pix.save(path)
         self._set_status(f"Path profile image saved: {path}")
 
+    def _export_link_kml(self) -> None:
+        result = self._last_result or {}
+        link = result.get("link")
+        if not link:
+            QMessageBox.warning(self, "No Link Data", "No Radio Link data available to export.")
+            return
+
+        p = result.get("params") or (self._pending[0] if getattr(self, "_pending", None) else self.form.collect())
+        tx_name = str(p.get("tx_site_name") or p.get("tx_name") or "Base")
+        rx_name = str(p.get("rx_site_name") or p.get("rx_name") or "Mobile")
+        default_fn = f"{tx_name}_{rx_name}_link.kml".replace(" ", "_")
+
+        fn, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export Radio Link KML (Radio Mobile Format)",
+            default_fn,
+            "KML Files (*.kml);;KMZ Files (*.kmz);;All Files (*)",
+        )
+        if not fn:
+            return
+
+        try:
+            from .link_kml import export_radio_link_kmz, export_radio_link_kml
+            if fn.lower().endswith(".kmz"):
+                export_radio_link_kmz(fn, p, link, num_points=501)
+                self._set_status(f"Exported Radio Link KMZ: {fn}")
+                QMessageBox.information(self, "KMZ Exported", f"Successfully exported Radio Link KMZ to:\n{fn}")
+            else:
+                if not fn.lower().endswith(".kml"):
+                    fn += ".kml"
+                export_radio_link_kml(fn, p, link, num_points=501, copy_icon=True)
+                self._set_status(f"Exported Radio Link KML: {fn}")
+                QMessageBox.information(self, "KML Exported", f"Successfully exported Radio Link KML to:\n{fn}")
+        except Exception as exc:
+            self._set_status(f"Export error: {exc}")
+            QMessageBox.critical(self, "Export Error", f"Failed to export Radio Link:\n{exc}")
+
     def _export_link_kmz(self) -> None:
-        self.export_requested.emit("KMZ")
+        result = self._last_result or {}
+        link = result.get("link")
+        if not link:
+            QMessageBox.warning(self, "No Link Data", "No Radio Link data available to export.")
+            return
+
+        p = result.get("params") or (self._pending[0] if getattr(self, "_pending", None) else self.form.collect())
+        tx_name = str(p.get("tx_site_name") or p.get("tx_name") or "Base")
+        rx_name = str(p.get("rx_site_name") or p.get("rx_name") or "Mobile")
+        default_fn = f"{tx_name}_{rx_name}_link.kmz".replace(" ", "_")
+
+        fn, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export Radio Link (Google Earth)",
+            default_fn,
+            "KMZ Files (*.kmz);;KML Files (*.kml);;All Files (*)",
+        )
+        if not fn:
+            return
+
+        try:
+            from .link_kml import export_radio_link_kmz, export_radio_link_kml
+            if fn.lower().endswith(".kml"):
+                export_radio_link_kml(fn, p, link, num_points=501, copy_icon=True)
+                self._set_status(f"Exported Radio Link KML: {fn}")
+                QMessageBox.information(self, "KML Exported", f"Successfully exported Radio Link KML to:\n{fn}")
+            else:
+                if not fn.lower().endswith(".kmz"):
+                    fn += ".kmz"
+                export_radio_link_kmz(fn, p, link, num_points=501)
+                self._set_status(f"Exported Radio Link KMZ: {fn}")
+                QMessageBox.information(self, "KMZ Exported", f"Successfully exported Radio Link KMZ to:\n{fn}")
+        except Exception as exc:
+            self._set_status(f"Export error: {exc}")
+            QMessageBox.critical(self, "Export Error", f"Failed to export Radio Link:\n{exc}")
 
     def _on_link_point_tracked(self, lat: float, lon: float, dist_km: float, amsl_m: float, agl_m: float, ground_m: float) -> None:
         """Update interactive tracking marker on the map as the user moves cursor on profile (2D drone altitude)."""
@@ -1219,15 +1293,21 @@ class MainWindow(QMainWindow):
         self._set_status("Cache cleared")
         self.terminal.append("[cache] " + msg)
 
-    # ------------------------------------------------------------------ export
     def export_model(self, fmt: str) -> None:
         """Export the last propagation result in the chosen format."""
         result = getattr(self, "_last_result", None)
+        fmt = (fmt or "").strip()
+
+        if result and result.get("link") and (not result.get("png") or fmt in ("KML", "KMZ")):
+            if fmt == "KML":
+                self._export_link_kml()
+            else:
+                self._export_link_kmz()
+            return
+
         if not result or not result.get("png") or not os.path.exists(result["png"]):
             QMessageBox.warning(self, "Export", "Run a propagation calculation first.")
             return
-
-        fmt = (fmt or "").strip()
         png = result["png"]
         bbox = result.get("bbox")
         base = os.path.splitext(os.path.basename(png))[0]

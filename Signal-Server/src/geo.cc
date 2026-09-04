@@ -28,10 +28,17 @@ coord getPointAtDistance(coord center, double distance, double bearing)
 
     // Calculate resulting lat/lon using trig
     double end_lat_rad = asin( sin(start_lat_rad) * cos(dR) + cos(start_lat_rad) * sin(dR) * cos(bearing_rad) );
-    double end_lon_rad = start_lon_rad + atan2( 
+    // In Signal-Server, coordinates are positive-West. Moving East (positive sin(bearing))
+    // must decrease West longitude, so subtract atan2 instead of adding.
+    double end_lon_rad = start_lon_rad - atan2( 
         sin(bearing_rad) * sin(dR) * cos(start_lat_rad),
         cos(dR) - sin(start_lat_rad) * sin(end_lat_rad) 
     );
+
+    while (end_lon_rad < 0.0)
+        end_lon_rad += TWOPI;
+    while (end_lon_rad >= TWOPI)
+        end_lon_rad -= TWOPI;
 
     endCoords.lat = end_lat_rad / DEG2RAD;
     endCoords.lon = end_lon_rad / DEG2RAD;

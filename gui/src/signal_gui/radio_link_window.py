@@ -729,13 +729,26 @@ class RadioLinkWindow(QDialog):
         # --- Menu Bar ---
         self.menu_bar = QMenuBar(self)
         
+        m_file = self.menu_bar.addMenu("File")
+        act_export_kml = m_file.addAction("Export Radio Link KML (Radio Mobile Format)...")
+        act_export_kml.triggered.connect(self._export_radio_link_kml)
+        act_export_kmz = m_file.addAction("Export Radio Link KMZ (Google Earth)...")
+        act_export_kmz.triggered.connect(self._export_radio_link_kmz)
+        act_export_img = m_file.addAction("Export Path Profile PNG...")
+        act_export_img.triggered.connect(self._export_image)
+        act_export_raster = m_file.addAction("Export raster.txt (Radio Mobile Format)...")
+        act_export_raster.triggered.connect(self._export_raster_txt)
+        m_file.addSeparator()
+        act_close = m_file.addAction("Close")
+        act_close.triggered.connect(self.close)
+
         m_edit = self.menu_bar.addMenu("Edit")
         act_copy = m_edit.addAction("Copy Report to Clipboard")
         act_copy.triggered.connect(self._copy_report)
-        act_export_img = m_edit.addAction("Export Path Profile PNG...")
-        act_export_img.triggered.connect(self._export_image)
-        act_export_raster = m_edit.addAction("Export raster.txt (Radio Mobile Format)...")
-        act_export_raster.triggered.connect(self._export_raster_txt)
+        act_edit_kml = m_edit.addAction("Export Radio Link KML (Radio Mobile)...")
+        act_edit_kml.triggered.connect(self._export_radio_link_kml)
+        act_edit_kmz = m_edit.addAction("Export Radio Link KMZ (Google Earth)...")
+        act_edit_kmz.triggered.connect(self._export_radio_link_kmz)
 
         m_view = self.menu_bar.addMenu("View")
         act_details = m_view.addAction("Show Full Path Budget Report")
@@ -980,6 +993,25 @@ class RadioLinkWindow(QDialog):
         self.qual_badge.setStyleSheet("color: #48BB78; font-weight: bold;")
         qual_l.addWidget(self.qual_badge)
         bot_row.addWidget(gb_quality, 1)
+
+        gb_export = QGroupBox("Google Earth 3D Export")
+        exp_l = QHBoxLayout(gb_export)
+        exp_l.setContentsMargins(8, 4, 8, 6)
+        exp_l.setSpacing(6)
+
+        self.btn_export_kml = QPushButton("Export KML")
+        self.btn_export_kml.setToolTip("Export Radio Link 3D KML (Radio Mobile profile format)")
+        self.btn_export_kml.setStyleSheet("QPushButton { background-color: #2B6CB0; color: #FFFFFF; font-weight: bold; border-radius: 4px; padding: 4px 10px; } QPushButton:hover { background-color: #3182CE; }")
+        self.btn_export_kml.clicked.connect(self._export_radio_link_kml)
+
+        self.btn_export_kmz = QPushButton("Export KMZ")
+        self.btn_export_kmz.setToolTip("Export Radio Link 3D KMZ (Google Earth package with antenna icon)")
+        self.btn_export_kmz.setStyleSheet("QPushButton { background-color: #2C7A7B; color: #FFFFFF; font-weight: bold; border-radius: 4px; padding: 4px 10px; } QPushButton:hover { background-color: #319795; }")
+        self.btn_export_kmz.clicked.connect(self._export_radio_link_kmz)
+
+        exp_l.addWidget(self.btn_export_kml)
+        exp_l.addWidget(self.btn_export_kmz)
+        bot_row.addWidget(gb_export, 0)
 
         root.addLayout(bot_row)
 
@@ -1266,6 +1298,50 @@ class RadioLinkWindow(QDialog):
         cb = QGuiApplication.clipboard()
         cb.setText(self._link_data.get("report_text", ""))
         QMessageBox.information(self, "Report Copied", "Full Path Report has been copied to clipboard.")
+
+    def _export_radio_link_kml(self):
+        if not self._link_data:
+            QMessageBox.warning(self, "No Link Data", "No Radio Link data available to export.")
+            return
+
+        tx_name = str(self._current_params.get("tx_site_name") or self._current_params.get("tx_name") or "Base")
+        rx_name = str(self._current_params.get("rx_site_name") or self._current_params.get("rx_name") or "Mobile")
+        default_fn = f"{tx_name}_{rx_name}_link.kml".replace(" ", "_")
+
+        fn, _ = QFileDialog.getSaveFileName(
+            self, "Export Radio Link KML (Radio Mobile Format)", default_fn, "KML Files (*.kml);;All Files (*)"
+        )
+        if not fn:
+            return
+
+        try:
+            from .link_kml import export_radio_link_kml
+            export_radio_link_kml(fn, self._current_params, self._link_data, num_points=501, copy_icon=True)
+            QMessageBox.information(self, "KML Exported", f"Successfully exported Radio Link KML to:\n{fn}")
+        except Exception as e:
+            QMessageBox.critical(self, "Export Error", f"Failed to export KML:\n{e}")
+
+    def _export_radio_link_kmz(self):
+        if not self._link_data:
+            QMessageBox.warning(self, "No Link Data", "No Radio Link data available to export.")
+            return
+
+        tx_name = str(self._current_params.get("tx_site_name") or self._current_params.get("tx_name") or "Base")
+        rx_name = str(self._current_params.get("rx_site_name") or self._current_params.get("rx_name") or "Mobile")
+        default_fn = f"{tx_name}_{rx_name}_link.kmz".replace(" ", "_")
+
+        fn, _ = QFileDialog.getSaveFileName(
+            self, "Export Radio Link KMZ (Google Earth)", default_fn, "KMZ Files (*.kmz);;All Files (*)"
+        )
+        if not fn:
+            return
+
+        try:
+            from .link_kml import export_radio_link_kmz
+            export_radio_link_kmz(fn, self._current_params, self._link_data, num_points=501)
+            QMessageBox.information(self, "KMZ Exported", f"Successfully exported Radio Link KMZ to:\n{fn}")
+        except Exception as e:
+            QMessageBox.critical(self, "Export Error", f"Failed to export KMZ:\n{e}")
 
     def _export_image(self):
         fn, _ = QFileDialog.getSaveFileName(self, "Export Path Profile", "radio_link_profile.png", "PNG Image (*.png)")
