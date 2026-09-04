@@ -110,7 +110,7 @@ class CollapsibleSection(QFrame):
             QFrame {
                 background-color: %s;
                 border-radius: 4px;
-                padding: 6px 10px;
+                padding: 4px 8px;
             }
             QFrame:hover {
                 background-color: #343A40;
@@ -119,17 +119,17 @@ class CollapsibleSection(QFrame):
 
         h_layout = QHBoxLayout(self.header)
         h_layout.setContentsMargins(4, 2, 4, 2)
-        h_layout.setSpacing(8)
+        h_layout.setSpacing(6)
 
         icon_lbl = QLabel()
-        icon_lbl.setPixmap(_pixmap(icon_name, 15, "#CBD5E0"))
+        icon_lbl.setPixmap(_pixmap(icon_name, 14, "#CBD5E0"))
         icon_lbl.setStyleSheet("margin: 0 2px;")
 
         title_lbl = QLabel(title)
-        title_lbl.setStyleSheet("color: #E2E8F0; font-size: 13px; font-weight: 600;")
+        title_lbl.setStyleSheet("color: #E2E8F0; font-size: 12px; font-weight: 600;")
 
         self.arrow_lbl = QLabel("v" if expanded else "<")
-        self.arrow_lbl.setStyleSheet("color: #A0AEC0; font-weight: bold; font-size: 12px;")
+        self.arrow_lbl.setStyleSheet("color: #A0AEC0; font-weight: bold; font-size: 11px;")
 
         h_layout.addWidget(icon_lbl)
         h_layout.addWidget(title_lbl)
@@ -142,8 +142,8 @@ class CollapsibleSection(QFrame):
         self.content = QWidget()
         self.content.setVisible(expanded)
         self.content_layout = QFormLayout(self.content)
-        self.content_layout.setContentsMargins(10, 8, 10, 10)
-        self.content_layout.setSpacing(8)
+        self.content_layout.setContentsMargins(6, 4, 6, 6)
+        self.content_layout.setSpacing(4)
         self.content_layout.setLabelAlignment(Qt.AlignmentFlag.AlignLeft)
 
         main_layout.addWidget(self.content)
@@ -424,8 +424,8 @@ class ParameterForm(QWidget):
 
     def _build(self) -> None:
         self.layout = QVBoxLayout(self)
-        self.layout.setContentsMargins(8, 8, 8, 8)
-        self.layout.setSpacing(4)
+        self.layout.setContentsMargins(4, 4, 4, 4)
+        self.layout.setSpacing(3)
 
         # Combo / SpinBox dark input stylesheet
         input_ss = """
@@ -434,7 +434,7 @@ class ParameterForm(QWidget):
                 color: #E2E8F0;
                 border: 1px solid #3F474F;
                 border-radius: 3px;
-                padding: 4px 6px;
+                padding: 3px 5px;
                 font-size: 11px;
             }
             QComboBox::drop-down { border: none; }
@@ -450,7 +450,7 @@ class ParameterForm(QWidget):
                 color: #E2E8F0;
                 border: 1px solid #3F474F;
                 border-radius: 3px;
-                padding: 4px 8px;
+                padding: 3px 6px;
                 font-size: 11px;
             }
             QPushButton:hover { background-color: #4A5568; }
@@ -878,40 +878,40 @@ class ParameterForm(QWidget):
             }
         """)
         fv = QVBoxLayout(footer)
-        fv.setContentsMargins(6, 6, 6, 6)
-        fv.setSpacing(6)
+        fv.setContentsMargins(4, 4, 4, 4)
+        fv.setSpacing(4)
 
         # Primary Action Row: Lock + Big Green Calculate Button
         row_run = QHBoxLayout()
         row_run.setSpacing(6)
 
         self.btn_lock = QPushButton()
-        self.btn_lock.setIcon(self._icon("lock", 16, "#CBD5E0"))
+        self.btn_lock.setIcon(self._icon("lock", 14, "#CBD5E0"))
         self.btn_lock.setToolTip("Lock / Unlock Form Inputs")
-        self.btn_lock.setFixedSize(36, 36)
+        self.btn_lock.setFixedSize(30, 30)
         self.btn_lock.setStyleSheet("""
             QPushButton {
                 background-color: #1E293B;
                 color: #CBD5E0;
                 border: 1px solid #334155;
-                border-radius: 5px;
+                border-radius: 4px;
             }
             QPushButton:hover { background-color: #334155; color: #FFFFFF; }
         """)
         self.btn_lock.clicked.connect(self._toggle_lock)
 
         self.btn_run = QPushButton(" Run Coverage")
-        self.btn_run.setIcon(self._icon("play", 16, "#FFFFFF"))
+        self.btn_run.setIcon(self._icon("play", 15, "#FFFFFF"))
         self.btn_run.setToolTip("Calculate & Render RF Propagation Plot")
-        self.btn_run.setFixedHeight(36)
+        self.btn_run.setFixedHeight(30)
         self.btn_run.setStyleSheet("""
             QPushButton {
                 background-color: #10B981;
                 color: #FFFFFF;
                 border: none;
-                border-radius: 5px;
+                border-radius: 4px;
                 font-weight: bold;
-                font-size: 13px;
+                font-size: 12px;
                 letter-spacing: 0.3px;
             }
             QPushButton:hover { background-color: #059669; }
@@ -929,26 +929,27 @@ class ParameterForm(QWidget):
         row_exp.setSpacing(6)
 
         exp_icon_lbl = QLabel()
-        exp_icon_lbl.setPixmap(_pixmap("layers", 14, "#94A3B8"))
+        exp_icon_lbl.setPixmap(_pixmap("layers", 13, "#94A3B8"))
         row_exp.addWidget(exp_icon_lbl)
 
         self.export_fmt = QComboBox()
         self.export_fmt.addItems(["KMZ", "KML", "PNG", "PNG (RM-style)", "TXT (Raster)", "GeoTIFF", "KMZ (3D)", "SHP"])
+        self.export_fmt.setFixedHeight(26)
         self.export_fmt.setStyleSheet("""
             QComboBox {
                 background: #1E2226;
                 color: #E2E8F0;
                 border: 1px solid #374151;
                 border-radius: 4px;
-                padding: 4px 6px;
+                padding: 2px 6px;
                 font-size: 11px;
             }
         """)
 
         self.btn_export = QPushButton(" Export")
-        self.btn_export.setIcon(self._icon("download", 13, "#E2E8F0"))
+        self.btn_export.setIcon(self._icon("download", 12, "#E2E8F0"))
         self.btn_export.setToolTip("Export Coverage Layer in Selected Format")
-        self.btn_export.setFixedHeight(28)
+        self.btn_export.setFixedHeight(26)
         self.btn_export.setStyleSheet("""
             QPushButton {
                 background-color: #334155;

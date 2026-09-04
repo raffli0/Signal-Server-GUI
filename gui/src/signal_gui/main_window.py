@@ -291,7 +291,7 @@ class MainWindow(QMainWindow):
         # Terminal Log widget inside Left Sidebar Bottom
         self.terminal = QPlainTextEdit()
         self.terminal.setReadOnly(True)
-        self.terminal.setMaximumHeight(130)
+        self.terminal.setMaximumHeight(100)
         self.terminal.installEventFilter(_wheel_guard)
         self.terminal.setStyleSheet("""
             QPlainTextEdit {
@@ -317,19 +317,19 @@ class MainWindow(QMainWindow):
         btn_clear_log = QPushButton("Clear")
         btn_clear_log.setStyleSheet("QPushButton { background: transparent; color: #A0AEC0; border: none; font-size: 10px; } QPushButton:hover { color: #FC8181; }")
         btn_clear_log.clicked.connect(self.terminal.clear)
-        btn_toggle_log = QPushButton("▾")
-        btn_toggle_log.setStyleSheet("QPushButton { background: transparent; color: #A0AEC0; border: none; font-size: 11px; font-weight: bold; } QPushButton:hover { color: #FFFFFF; }")
+        self.btn_toggle_log = QPushButton("▾")
+        self.btn_toggle_log.setStyleSheet("QPushButton { background: transparent; color: #A0AEC0; border: none; font-size: 11px; font-weight: bold; } QPushButton:hover { color: #FFFFFF; }")
         
         def _toggle_term():
             vis = not self.terminal.isVisible()
             self.terminal.setVisible(vis)
-            btn_toggle_log.setText("▾" if vis else "▸")
+            self.btn_toggle_log.setText("▾" if vis else "▸")
 
-        btn_toggle_log.clicked.connect(_toggle_term)
+        self.btn_toggle_log.clicked.connect(_toggle_term)
         term_hdr.addWidget(term_lbl)
         term_hdr.addStretch()
         term_hdr.addWidget(btn_clear_log)
-        term_hdr.addWidget(btn_toggle_log)
+        term_hdr.addWidget(self.btn_toggle_log)
         term_v.addLayout(term_hdr)
         term_v.addWidget(self.terminal)
 
@@ -597,37 +597,48 @@ class MainWindow(QMainWindow):
 
         Both a minimum and maximum are enforced so the form stays usable and the
         map never collapses. The splitter handle is moved explicitly (via
-        ``setSizes``) because ``setMaximumWidth`` alone does not reposition it,
-        so the change is visible without a window resize.
+        ``setSizes``) while ``setMaximumWidth`` provides a flexible ceiling,
+        preserving the user's manual dragging freedom.
         """
         avail = self._splitter.width()
         if avail <= 0:
             return
         # Map always keeps a usable minimum; sidebar is the remainder, clamped.
-        map_min = 360
-        # Sidebar minimum shrinks on very small windows so the map survives.
-        side_min = min(260, max(200, avail - 320))
-        # Smaller windows give the sidebar a larger share so inputs stay usable.
-        if avail < 900:
-            frac = 0.42
-        elif avail < 1400:
-            frac = 0.34
+        map_min = 400
+        side_min = 250
+        side_max = min(520, max(side_min, avail - map_min))
+
+        # Responsive proportion tuned for 1366x768 and various standard screens:
+        # On 1366x768 (typical laptop screen):
+        # - Target width ~315px - 325px (~23-24% of 1366) leaves >1030px for the map!
+        if avail < 850:
+            frac = 0.35
+        elif avail < 1440:  # covers 1366x768 screens
+            frac = 0.235    # 1366 * 0.235 = ~320px
+        elif avail < 1920:
+            frac = 0.21
         else:
-            frac = 0.28
+            frac = 0.19
+
         side = int(avail * frac)
-        side = max(side_min, min(side, avail - map_min, 460))
+        side = max(side_min, min(side, 360))
+
         self._sidebar.setMinimumWidth(side_min)
-        self._sidebar.setMaximumWidth(side)
+        self._sidebar.setMaximumWidth(side_max)
+
         cur = self._splitter.sizes()
-        if len(cur) == 2 and (cur[0] > side or cur[0] < side_min):
-            # Only move the handle when the sidebar leaves the allowed band, so a
-            # user's manual drag inside the band is preserved on resize.
+        if len(cur) == 2 and (cur[0] > side_max or cur[0] < side_min or cur[0] == 0):
             self._splitter.setSizes([side, max(0, avail - side)])
 
     def showEvent(self, event) -> None:
         super().showEvent(event)
         # Layout is realised now; apply the responsive width for the first paint.
         self._apply_responsive_width()
+        # On compact / 768p laptop screens, collapse the bottom log console by default
+        # to maximize vertical real estate for the parameter form.
+        if self.height() <= 800 and hasattr(self, "terminal") and hasattr(self, "btn_toggle_log"):
+            self.terminal.setVisible(False)
+            self.btn_toggle_log.setText("▸")
 
     def _on_splitter_moved(self, *_args) -> None:
         # Re-layout Leaflet after the container size changes (no window resize).
