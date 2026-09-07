@@ -537,8 +537,9 @@ def stage_output(ppm_path: str, stdout_text: str, title: str = "Coverage",
         "params": params,
     }
 
-    # Render Radio Mobile-style 3D hillshade composite picture
-    if bbox is not None and params and (params.get("sdf_dir") or params.get("lidar_file")):
+    # Render Radio Mobile-style 3D hillshade composite picture only if explicitly requested.
+    # Export controller renders this on-demand when requested by the user, avoiding 7-8s blocking overhead.
+    if bbox is not None and params and params.get("render_rm_picture") and (params.get("sdf_dir") or params.get("lidar_file")):
         try:
             from . import rm_style
             rm_out = os.path.splitext(ppm_path)[0] + "_rm.png"

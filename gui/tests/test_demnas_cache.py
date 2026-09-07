@@ -9,6 +9,7 @@ import os
 import numpy as np
 import pytest
 from osgeo import gdal, osr
+gdal.UseExceptions()
 
 from signal_gui import dem_convert as dc
 from signal_gui.dem_convert import DemResolveError

@@ -279,28 +279,36 @@ namespace {
     void finishProgress()
     {
         unsigned int total_points = 0;
-        unsigned int points_processed = 0;
         
         // Calculate the expected total progress count
         for (const auto& p : thread_progress)
         {
-            if (p.total <= 0) { std::this_thread::sleep_for( std::chrono::milliseconds(2) ); }
-            total_points += p.total;
+            total_points += p.total.load();
         }
 
         spdlog::debug("{} total points to process", total_points);
         
         // Await progress completion
-        while (points_processed < total_points)
+        while (true)
         {
-            std::this_thread::sleep_for( std::chrono::milliseconds(100) );
+            bool any_running = false;
+            for (auto& f : futures) {
+                if (f.valid() && f.wait_for(std::chrono::milliseconds(0)) != std::future_status::ready) {
+                    any_running = true;
+                    break;
+                }
+            }
+            for (auto& th : threads) {
+                if (th.joinable()) {
+                    any_running = true;
+                    break;
+                }
+            }
 
-            // Reset count for this check
-            points_processed = 0;
-
+            unsigned int points_processed = 0;
             for (const auto& p : thread_progress)
             {
-                points_processed += p.count;
+                points_processed += p.count.load();
             }
 
             // Update print — cap at 100% (fix 112% bug when points_processed>total due to rounding)
@@ -308,6 +316,11 @@ namespace {
             if (pct > 100) pct = 100;
             if (points_processed > total_points) points_processed = total_points;
             spdlog::info("[{: 3d}%] Processing {}/{} points", pct, points_processed, total_points);
+
+            if (!any_running)
+                break;
+
+            std::this_thread::sleep_for( std::chrono::milliseconds(100) );
         }
 
         // CRITICAL: Guarantee all worker threads/futures have completely returned
@@ -1268,6 +1281,10 @@ void PlotPropagation(struct site source, bbox bounds,
         ranges[i].pmenv = pmenv;
         ranges[i].tworay = tworay;
         thread_progress[i].id = i;
+        bool vertical = (ranges[i].min_west == ranges[i].max_west);
+        unsigned int totalPoints = vertical ? (unsigned int)std::max(1, (int)std::ceil(fabs(ranges[i].max_north - ranges[i].min_north) / dpp)) : (unsigned int)std::max(1, (int)std::ceil(fabs(ranges[i].max_west - ranges[i].min_west) / dpp));
+        thread_progress[i].total.store(totalPoints);
+        thread_progress[i].count.store(0);
     }
 
     if (use_threads) {
@@ -1431,6 +1448,8 @@ void PlotPropagationRadius(struct site source, double range,
 
     for (size_t i = 0; i < radii.size(); i++) {
         thread_progress[i].id = i;
+        thread_progress[i].total.store(radii[i].points);
+        thread_progress[i].count.store(0);
     }
 
     if (use_threads) {

@@ -129,7 +129,7 @@ def test_build_argv_draft_halves_resolution_and_segments():
     }
     argv = params.build_argv(p, engine_exe="signalserver", output_basename="/tmp/o")
     assert "-res" in argv
-    assert argv[argv.index("-res") + 1] == "2400"   # 1200 * 2 for draft
+    assert argv[argv.index("-res") + 1] == "600"    # 1200 -> 600 for draft (halves pixels per degree)
     assert "-segments" in argv                        # always set now
     assert int(argv[argv.index("-segments") + 1]) >= 4
 

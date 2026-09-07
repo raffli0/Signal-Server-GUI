@@ -360,7 +360,12 @@ def build_argv(
     # preview; "Final" keeps the user-selected resolution.
     res = int(params.get("resolution", 1200))
     if params.get("plot_quality") == "draft":
-        res *= 2
+        if res >= 3600:
+            res = 1200
+        elif res >= 1200:
+            res = 600
+        else:
+            res = 300
     _opt(args, "-res", res)
     _opt(args, "-R", params.get("radius"))
     _opt(args, "-color", params.get("color_file"))

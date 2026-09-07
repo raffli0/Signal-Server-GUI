@@ -831,9 +831,9 @@ class ParameterForm(QWidget):
         self.map_segments = QSpinBox()
         self.map_segments.setRange(4, 360)
         self.map_segments.setSingleStep(2)
-        self.map_segments.setValue(360)
+        self.map_segments.setValue(params_mod.auto_segments())
         self._add_row_with_info(fl_out, "Map segments", self.map_segments,
-                                "360° / segments = step azimuth. 360→1°, 180→2°.")
+                                "Partisi multithreading engine (4–360). Rekomendasi: 16 (atau auto core CPU) untuk kecepatan optimal dan stabilitas tanpa race condition.")
 
         self.color_btn = QPushButton("Color table...")
         self.color_btn.setStyleSheet(btn_ss)
@@ -1365,7 +1365,7 @@ class ParameterForm(QWidget):
         self.radius.setValue(float(d.get("radius", 30)))
         if "plot_segments" in d:
             try:
-                self.map_segments.setValue(int(d.get("plot_segments", 360)))
+                self.map_segments.setValue(int(d.get("plot_segments", params_mod.auto_segments())))
             except Exception:
                 pass
         q = d.get("plot_quality", "final")
