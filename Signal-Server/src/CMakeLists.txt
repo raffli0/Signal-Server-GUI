@@ -42,6 +42,13 @@ include_directories(${spdlog_INCLUDE_DIRS})
 if (EXISTS "/home/dedsec/.local/include")
     include_directories("/home/dedsec/.local/include")
 endif()
+add_compile_definitions(SPDLOG_HEADER_ONLY)
+
+if (TARGET spdlog::spdlog_header_only)
+    set(SPDLOG_LIB spdlog::spdlog_header_only)
+else()
+    set(SPDLOG_LIB spdlog::spdlog)
+endif()
 
 # internal libraries
 add_library(image STATIC image.cc)
@@ -123,7 +130,7 @@ target_link_libraries(signalserver
 			PUBLIC pthread
 			PUBLIC z
 			PUBLIC ${PLATFORM_LIBS}
-            PUBLIC spdlog::spdlog
+            PUBLIC ${SPDLOG_LIB}
             PUBLIC geo
 		  )
 
@@ -149,7 +156,7 @@ target_link_libraries(signalserverHD
 			PUBLIC pthread
 			PUBLIC z
 			PUBLIC ${PLATFORM_LIBS}
-            PUBLIC spdlog::spdlog
+            PUBLIC ${SPDLOG_LIB}
             PUBLIC geo
 		  )
 
@@ -175,7 +182,7 @@ target_link_libraries(signalserverLIDAR
 			PUBLIC pthread
 			PUBLIC z
 			PUBLIC ${PLATFORM_LIBS}
-            PUBLIC spdlog::spdlog
+            PUBLIC ${SPDLOG_LIB}
             PUBLIC geo
 		  )
 
