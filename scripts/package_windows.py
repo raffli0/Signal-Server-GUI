@@ -31,7 +31,7 @@ def package():
 
     dist_dir = os.path.join(ROOT, "dist")
     build_dir = os.path.join(ROOT, "build_pyinstaller")
-    entry_point = os.path.join(ROOT, "gui", "src", "signal_gui", "__main__.py")
+    entry_point = os.path.join(ROOT, "gui", "packaging", "launcher.py")
 
     # Assets & Data to bundle
     resources_src = os.path.join(ROOT, "gui", "src", "signal_gui", "resources")
@@ -80,6 +80,7 @@ def package():
         "--name=SignalServerGUI",
         "--noconfirm",
         "--windowed",
+        f"--paths={os.path.join(ROOT, 'gui', 'src')}",
         f"--distpath={dist_dir}",
         f"--workpath={build_dir}",
     ]

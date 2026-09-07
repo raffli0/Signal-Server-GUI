@@ -7,8 +7,12 @@ import sys
 
 from PySide6.QtWidgets import QApplication
 
-from ._bundle import setup_environment
-from .main_window import MainWindow
+try:
+    from ._bundle import setup_environment
+    from .main_window import MainWindow
+except (ImportError, ValueError):
+    from signal_gui._bundle import setup_environment
+    from signal_gui.main_window import MainWindow
 
 
 def main() -> int:

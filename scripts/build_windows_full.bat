@@ -13,7 +13,7 @@ if errorlevel 1 (
 
 echo [2/4] Installing GUI dependencies and PyInstaller...
 python -m pip install --upgrade pip
-python -m pip install -r gui\requirements.txt
+python -m pip install -e .\gui
 python -m pip install pyinstaller
 
 echo [3/4] Ensuring directories exist...
