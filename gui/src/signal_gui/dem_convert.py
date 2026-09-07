@@ -327,15 +327,20 @@ def convert_hgt_to_sdf(srtm2sdf_exe: str, hgt_path: str, sdf_dir: str) -> Option
     import tempfile
 
     os.makedirs(sdf_dir, exist_ok=True)
+    hgt_arg = os.path.abspath(hgt_path).replace("\\", "/")
     with tempfile.TemporaryDirectory(prefix=".srtm2sdf_", dir=sdf_dir) as td:
-        proc = subprocess.run([srtm2sdf_exe, os.path.abspath(hgt_path)],
+        proc = subprocess.run([srtm2sdf_exe, hgt_arg],
                               cwd=td, capture_output=True)
         _normalize_sdf_names(td)
         produced = [f for f in os.listdir(td) if f.endswith(".sdf")]
-        if not produced:
+        if not produced or proc.returncode != 0:
+            err_msg = proc.stderr.decode("utf-8", errors="replace").strip() if proc.stderr else ""
+            out_msg = proc.stdout.decode("utf-8", errors="replace").strip() if proc.stdout else ""
+            details = err_msg or out_msg
+            extra = f": {details}" if details else ""
             raise DemResolveError(
                 f"srtm2sdf tidak menghasilkan .sdf untuk {os.path.basename(hgt_path)}"
-                f" (exit {proc.returncode})."
+                f" (exit {proc.returncode}){extra}."
             )
         src = os.path.join(td, produced[0])
         try:

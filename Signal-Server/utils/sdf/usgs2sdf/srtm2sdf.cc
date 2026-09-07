@@ -15,6 +15,10 @@
 
 #define BZBUFFER 65536
 
+#ifndef O_BINARY
+#define O_BINARY 0
+#endif
+
 char	sdf_filename[30], sdf_path[255], replacement_flag, opened=0,
 	hgt=0, bil=0;
 
@@ -55,12 +59,16 @@ int ReadSRTM(char *filename)
 	if (strstr(filename, ".bil")!=NULL)
 		bil=1;
 
-	base=strrchr(filename, '/');
-
-	if (base==NULL)
-		base=filename;
+	char *p1 = strrchr(filename, '/');
+	char *p2 = strrchr(filename, '\\');
+	if (p1 != NULL && p2 != NULL)
+		base = (p1 > p2) ? p1 + 1 : p2 + 1;
+	else if (p1 != NULL)
+		base = p1 + 1;
+	else if (p2 != NULL)
+		base = p2 + 1;
 	else
-		base+=1;
+		base = filename;
 
 	if (hgt)
 	{
@@ -153,9 +161,9 @@ int ReadSRTM(char *filename)
 		}
 	}
 
-	infile=open(filename, O_RDONLY);
+	infile=open(filename, O_RDONLY | O_BINARY);
 
-	if (infile==0)
+	if (infile < 0)
 	{
 		fprintf(stderr, "*** Error: Cannot open \"%s\"\n", filename);
 		return -1;
@@ -710,8 +718,11 @@ int main(int argc, char *argv[])
 			merge=ReadUSGS();
 
 		WriteSDF(sdf_filename);
+		return 0;
 	}
-
-	return 0;
+	else
+	{
+		return 1;
+	}
 }
 

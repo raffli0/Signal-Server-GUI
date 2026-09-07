@@ -100,9 +100,12 @@ def test_convert_hgt_to_sdf_heals_poisoned_cache(tmp_path, monkeypatch):
 
 def test_convert_hgt_to_sfd_missing_output_raises(tmp_path):
     fake = tmp_path / "noop.sh"
-    fake.write_text("#!/bin/sh\nexit 0\n")
+    fake.write_text("#!/bin/sh\necho 'detailed error' >&2\nexit 1\n")
     fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
     hgt = tmp_path / "N00E000.hgt"
     hgt.write_bytes(b"\x00\x01")
-    with pytest.raises(dc.DemResolveError):
+    with pytest.raises(dc.DemResolveError) as exc_info:
         dc.convert_hgt_to_sdf(str(fake), str(hgt), str(tmp_path / "sdf"))
+    assert "detailed error" in str(exc_info.value)
+    assert "exit 1" in str(exc_info.value)
+
