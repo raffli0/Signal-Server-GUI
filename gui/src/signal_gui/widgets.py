@@ -78,6 +78,14 @@ def _make_info_btn(tooltip: str) -> QPushButton:
             background-color: #4A5568;
             color: #FFFFFF;
         }
+        QToolTip {
+            background-color: #1E2226;
+            color: #FFFFFF;
+            border: 1px solid #4A5568;
+            border-radius: 4px;
+            padding: 6px 8px;
+            font-size: 11px;
+        }
     """)
     return btn
 

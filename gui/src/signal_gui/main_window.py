@@ -248,6 +248,14 @@ class MainWindow(QMainWindow):
             QMainWindow {
                 background-color: #121417;
             }
+            QToolTip {
+                background-color: #1E2226;
+                color: #FFFFFF;
+                border: 1px solid #4A5568;
+                border-radius: 4px;
+                padding: 6px 8px;
+                font-size: 11px;
+            }
             QSplitter::handle {
                 background-color: #1B1E22;
                 width: 3px;

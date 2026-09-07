@@ -25,6 +25,21 @@ def main() -> int:
         os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = "--log-level=3"
     app = QApplication(sys.argv)
     app.setApplicationName("RF Propagation GUI")
+    from PySide6.QtGui import QPalette, QColor
+    palette = app.palette()
+    palette.setColor(QPalette.ColorRole.ToolTipBase, QColor("#1E2226"))
+    palette.setColor(QPalette.ColorRole.ToolTipText, QColor("#FFFFFF"))
+    app.setPalette(palette)
+    app.setStyleSheet("""
+        QToolTip {
+            background-color: #1E2226;
+            color: #FFFFFF;
+            border: 1px solid #4A5568;
+            border-radius: 4px;
+            padding: 6px 8px;
+            font-size: 11px;
+        }
+    """)
     win = MainWindow()
     win.show()
     return app.exec()
