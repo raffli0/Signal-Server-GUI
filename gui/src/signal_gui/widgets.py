@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
     QComboBox, QCheckBox, QPushButton, QFileDialog, QPlainTextEdit, QStackedWidget,
     QHBoxLayout, QLabel, QSpinBox, QFrame, QScrollArea, QSizePolicy
 )
-from PySide6.QtCore import Signal, Qt
+from PySide6.QtCore import Signal, Qt, QTimer
 from PySide6.QtGui import QWheelEvent
 
 from . import params as params_mod
@@ -234,26 +234,61 @@ class SiteCoordWidget(QWidget):
 
         layout.addWidget(self.stack)
         self.fmt.currentIndexChanged.connect(self.stack.setCurrentIndex)
-        for _w in (self.dd_lat, self.dd_lon, self.dms_lat, self.dms_lon, self.mgrs):
-            _w.textChanged.connect(lambda: self.changed.emit())
-        self.dms_lat_hemi.currentTextChanged.connect(lambda: self.changed.emit())
-        self.dms_lon_hemi.currentTextChanged.connect(lambda: self.changed.emit())
 
-    def get(self):
+        self._debounce_timer = QTimer(self)
+        self._debounce_timer.setSingleShot(True)
+        self._debounce_timer.setInterval(250)
+        self._debounce_timer.timeout.connect(self.changed.emit)
+
+        for _w in (self.dd_lat, self.dd_lon, self.dms_lat, self.dms_lon, self.mgrs):
+            _w.textChanged.connect(self._debounce_timer.start)
+            _w.editingFinished.connect(self._on_editing_finished)
+        self.dms_lat_hemi.currentTextChanged.connect(self._debounce_timer.start)
+        self.dms_lon_hemi.currentTextChanged.connect(self._debounce_timer.start)
+        self.fmt.currentIndexChanged.connect(self._debounce_timer.start)
+
+    def _on_editing_finished(self) -> None:
+        if self._debounce_timer.isActive():
+            self._debounce_timer.stop()
+            self.changed.emit()
+
+    def get(self) -> tuple[Optional[float], Optional[float]]:
         idx = self.fmt.currentIndex()
-        if idx == 0:
-            return (float(self.dd_lat.text()), float(self.dd_lon.text()))
-        if idx == 1:
-            lat = coords.parse_dms(self.dms_lat.text() + self.dms_lat_hemi.currentText())
-            lon = coords.parse_dms(self.dms_lon.text() + self.dms_lon_hemi.currentText())
-            return (lat, lon)
-        return coords.mgrs_to_latlon(self.mgrs.text())
+        try:
+            if idx == 0:
+                lat_str = self.dd_lat.text().strip().replace(",", ".")
+                lon_str = self.dd_lon.text().strip().replace(",", ".")
+                if not lat_str or not lon_str:
+                    return (None, None)
+                return (float(lat_str), float(lon_str))
+            if idx == 1:
+                lat_str = self.dms_lat.text().strip()
+                lon_str = self.dms_lon.text().strip()
+                if not lat_str or not lon_str:
+                    return (None, None)
+                lat = coords.parse_dms(lat_str + self.dms_lat_hemi.currentText())
+                lon = coords.parse_dms(lon_str + self.dms_lon_hemi.currentText())
+                return (lat, lon)
+            if idx == 2:
+                mgrs_str = self.mgrs.text().strip()
+                if not mgrs_str:
+                    return (None, None)
+                return coords.mgrs_to_latlon(mgrs_str)
+        except Exception:
+            return (None, None)
+        return (None, None)
 
     def set(self, lat: Optional[float], lon: Optional[float]) -> None:
         if lat is None or lon is None:
             return
+        self._debounce_timer.stop()
+        self.dd_lat.blockSignals(True)
+        self.dd_lon.blockSignals(True)
         self.dd_lat.setText(f"{lat:.6f}")
         self.dd_lon.setText(f"{lon:.6f}")
+        self.dd_lat.blockSignals(False)
+        self.dd_lon.blockSignals(False)
+        self.changed.emit()
 
 
 class ParameterForm(QWidget):
@@ -295,7 +330,7 @@ class ParameterForm(QWidget):
             row_l.addWidget(info_btn)
         
         lbl = QLabel(label_text)
-        lbl.setStyleSheet("color: #CBD5E0; font-size: 11px; font-weight: 500;")
+        lbl.setStyleSheet("color: #FFFFFF; font-size: 11px; font-weight: 500;")
         form_layout.addRow(lbl, row_w)
 
     def _wire_threshold_pair(self, dbm_box: "FocusWheelSpinBox",

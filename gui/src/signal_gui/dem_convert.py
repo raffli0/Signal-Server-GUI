@@ -595,6 +595,7 @@ def _get_vrt_dataset(vrt: str):
     """Open and cache GDAL dataset for VRT with mtime invalidation."""
     try:
         from osgeo import gdal
+        gdal.UseExceptions()
     except Exception:
         return None, None
     if not os.path.exists(vrt):
@@ -1048,6 +1049,7 @@ def demnas_folder_to_asc(
     round coverage.
     """
     from osgeo import gdal  # local import; only needed here
+    gdal.UseExceptions()
     import numpy as np
 
     vrt = _demnas_vrt(folder, cache_dir)

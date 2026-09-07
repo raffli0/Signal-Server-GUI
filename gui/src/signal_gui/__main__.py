@@ -11,6 +11,11 @@ from .main_window import MainWindow
 
 
 def main() -> int:
+    try:
+        from osgeo import gdal
+        gdal.UseExceptions()
+    except Exception:
+        pass
     # Make QtWebEngine happy under some environments. By default we raise
     # Chromium's log threshold to FATAL so the harmless
     # "Message N rejected by interface blink.mojom.Widget" ERROR noise (emitted

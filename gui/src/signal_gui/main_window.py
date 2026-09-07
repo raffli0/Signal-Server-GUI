@@ -8,6 +8,7 @@ import math
 import os
 import shutil
 import tempfile
+import threading
 import time
 from datetime import datetime
 from typing import Optional
@@ -86,6 +87,7 @@ from .cloudrf_profile_panel import CloudRFPathProfilePanel
 class MainWindow(QMainWindow):
     #: Ground-elevation lookup finished: ("tx"|"rx", elev_m_or_None).
     amsl_ready = Signal(str, object)
+    demnas_status_ready = Signal(str, str)
 
     def __init__(self, root: str = ""):
         super().__init__()
@@ -109,8 +111,13 @@ class MainWindow(QMainWindow):
         self._amsl_timer.setSingleShot(True)
         self._amsl_timer.setInterval(600)
         self._amsl_timer.timeout.connect(self._fetch_ground_elevations)
+        self._demnas_live_timer = QTimer(self)
+        self._demnas_live_timer.setSingleShot(True)
+        self._demnas_live_timer.setInterval(350)
+        self._demnas_live_timer.timeout.connect(self._update_demnas_live)
         self._build_ui()
         self.amsl_ready.connect(self.form.set_ground_elevation)
+        self.demnas_status_ready.connect(self.form.set_demnas_status)
         self._apply_global_theme()
 
     def _detect_root(self) -> str:
@@ -480,11 +487,14 @@ class MainWindow(QMainWindow):
         from . import dem_convert as dc
 
         demnas_folder = self._demnas_folder_for_lookup()
-        for role, coord in (("tx", self.form.tx_coord.get()),
-                            ("rx", self.form.rx_coord.get())):
+        for role, widget in (("tx", self.form.tx_coord),
+                             ("rx", self.form.rx_coord)):
             try:
+                coord = widget.get()
+                if not coord or coord[0] is None or coord[1] is None:
+                    continue
                 lat, lon = float(coord[0]), float(coord[1])
-            except (TypeError, ValueError):
+            except (TypeError, ValueError, Exception):
                 continue
 
             def work(role=role, lat=lat, lon=lon):
@@ -549,6 +559,10 @@ class MainWindow(QMainWindow):
         self._update_demnas_live()
 
     # ------------------------------------------------------------------ DEMNAS/SRTM config
+    def _schedule_demnas_live(self) -> None:
+        """Debounce the live DEMNAS coverage check so typing remains smooth."""
+        self._demnas_live_timer.start()
+
     def _update_demnas_live(self) -> None:
         """Live (toggleable) coverage indicator for the selected DEMNAS/SRTM folder."""
         form = self.form
@@ -564,26 +578,41 @@ class MainWindow(QMainWindow):
         if not folder or not os.path.isdir(folder):
             form.set_demnas_status("idle", f"{tag}: pilih folder")
             return
-        tx = form.tx_coord.get()
-        if not tx:
+        try:
+            tx = form.tx_coord.get()
+        except (ValueError, TypeError):
+            tx = None
+        if not tx or tx[0] is None or tx[1] is None:
             form.set_demnas_status("idle", f"{tag}: tunggu koordinat Tx")
             return
-        try:
-            from . import dem_convert as dc
-            vrt = dc._demnas_vrt(folder, self.cache_dir)
-            lat, lon = tx
-            dc._assert_covers(vrt, lat, lon)
-            elev = dc._sample_elevation(vrt, lat, lon)
-            if elev is None:
-                form.set_demnas_status(
-                    "bad", f"{tag}: ✗ void di Tx ({lat:.3f}, {lon:.3f})"
-                )
-            else:
-                form.set_demnas_status(
-                    "ok", f"{tag}: ✓ Tx ({lat:.3f}, {lon:.3f}) elev {elev:.0f} m"
-                )
-        except Exception as exc:  # noqa: BLE001 - surface any gdal/IO issue as red
-            form.set_demnas_status("bad", f"{tag}: ✗ {exc}")
+
+        lat, lon = tx
+        cache_dir = self.cache_dir
+        self._demnas_live_gen = getattr(self, "_demnas_live_gen", 0) + 1
+        cur_gen = self._demnas_live_gen
+
+        def work():
+            try:
+                from . import dem_convert as dc
+                vrt = dc._demnas_vrt(folder, cache_dir)
+                dc._assert_covers(vrt, lat, lon)
+                elev = dc._sample_elevation(vrt, lat, lon)
+                if getattr(self, "_demnas_live_gen", 0) != cur_gen:
+                    return
+                if elev is None:
+                    self.demnas_status_ready.emit(
+                        "bad", f"{tag}: ✗ void di Tx ({lat:.3f}, {lon:.3f})"
+                    )
+                else:
+                    self.demnas_status_ready.emit(
+                        "ok", f"{tag}: ✓ Tx ({lat:.3f}, {lon:.3f}) elev {elev:.0f} m"
+                    )
+            except Exception as exc:  # noqa: BLE001 - surface any gdal/IO issue as red
+                if getattr(self, "_demnas_live_gen", 0) != cur_gen:
+                    return
+                self.demnas_status_ready.emit("bad", f"{tag}: ✗ {exc}")
+
+        threading.Thread(target=work, daemon=True, name=f"demnas-live-{cur_gen}").start()
 
     def _on_header_section_clicked(self, key: str):
         if key == "clear":
@@ -748,6 +777,12 @@ class MainWindow(QMainWindow):
         except Exception as exc:
             QMessageBox.warning(self, "Input error", str(exc))
             return
+        if p.get("tx_lat") is None or p.get("tx_lon") is None:
+            QMessageBox.warning(
+                self, "Input error",
+                "Koordinat Transmitter (Tx) tidak valid atau belum lengkap."
+            )
+            return
         if link:
             p["path_profile"] = True
         if p.get("path_profile"):
@@ -786,6 +821,9 @@ class MainWindow(QMainWindow):
             p = self.form.collect()
         except Exception as exc:
             QMessageBox.warning(self, "Input error", str(exc))
+            return
+        if p.get("tx_lat") is None or p.get("tx_lon") is None:
+            QMessageBox.warning(self, "Input error", "Koordinat Transmitter (Tx) tidak valid atau belum lengkap.")
             return
         if p.get("rx_lat") is None or p.get("rx_lon") is None:
             QMessageBox.warning(self, "Input error", "Set Rx lat/lon dulu untuk garis Tx→Rx.")
@@ -1040,16 +1078,20 @@ class MainWindow(QMainWindow):
     def _on_tx_coord_changed(self) -> None:
         try:
             lat, lon = self.form.tx_coord.get()
+            if lat is None or lon is None:
+                return
         except (ValueError, TypeError):
             return
         self.map.set_tx(lat, lon, fly=False)
         self._set_status(f"Tx set: {lat:.5f}, {lon:.5f}")
-        self._update_demnas_live()
+        self._schedule_demnas_live()
         self._schedule_amsl()
 
     def _on_rx_coord_changed(self) -> None:
         try:
             lat, lon = self.form.rx_coord.get()
+            if lat is None or lon is None:
+                return
         except (ValueError, TypeError):
             return
         self.map.set_rx(lat, lon, fly=False)
