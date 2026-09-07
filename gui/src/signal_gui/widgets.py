@@ -558,14 +558,43 @@ class ParameterForm(QWidget):
 
         # Tx Antenna Pattern & Direction
         fl_tx.addRow(self._sub_label("Antenna Pattern & Direction"))
-        self.ant_btn = QPushButton("Select pattern (.az/.el)...")
-        self.ant_btn.setStyleSheet(btn_ss)
-        self.ant_path = QLineEdit()
-        self.ant_path.setReadOnly(True)
-        self.ant_path.setPlaceholderText("No pattern selected")
-        self.ant_path.setStyleSheet("background: #1B1E22; color: #A0AEC0; border: 1px solid #3F474F; border-radius: 3px; padding: 3px; font-size: 10px;")
+        self.ant_combo = QComboBox()
+        self.ant_combo.setStyleSheet(input_ss)
+        self.ant_btn = QPushButton()
+        self.ant_btn.setIcon(self._icon("folder", 14, "#CBD5E0"))
+        self.ant_btn.setToolTip("Cari / buka berkas pola antena kustom (*.ant, *.az, *.el)...")
+        self.ant_btn.setFixedSize(28, 24)
+        self.ant_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #2D3748;
+                border: 1px solid #3F474F;
+                border-radius: 3px;
+            }
+            QPushButton:hover {
+                background-color: #3182CE;
+                border-color: #4299E1;
+            }
+            QPushButton:pressed {
+                background-color: #2B6CB0;
+            }
+        """)
         self.ant_btn.clicked.connect(self._pick_antenna)
-        fl_tx.addRow(self.ant_btn, self.ant_path)
+
+        ant_row = QWidget()
+        ant_l = QHBoxLayout(ant_row)
+        ant_l.setContentsMargins(0, 0, 0, 0)
+        ant_l.setSpacing(4)
+        ant_l.addWidget(self.ant_combo, 1)
+        ant_l.addWidget(self.ant_btn)
+
+        self.ant_path = QLineEdit()
+        self.ant_path.setVisible(False)
+        self.ant_path.setText("")
+
+        self._add_row_with_info(fl_tx, "Antenna pattern", ant_row, "Radiation pattern file (.az / .el) for horizontal & vertical directivity")
+        self._populate_antenna_combo()
+        self.ant_combo.currentIndexChanged.connect(self._on_antenna_combo_changed)
+        self.ant_path.textChanged.connect(self._sync_antenna_combo)
         self.pol = QComboBox(); self.pol.addItems(["vertical", "horizontal"])
         self._add_row_with_info(fl_tx, "Polarisation", self.pol, "Antenna polarization")
         self.azimuth = FocusWheelSpinBox(); self.azimuth.setRange(0, 359); self.azimuth.setValue(0)
@@ -791,20 +820,20 @@ class ParameterForm(QWidget):
         fl_dem.addRow(self._dem_fine_step)
 
         # Clutter & Obstacles
-        self.clutter_btn = QPushButton("Select clutter (.clt)...")
-        self.clutter_btn.setStyleSheet(btn_ss)
-        self.clutter_path = QLineEdit()
-        self.clutter_path.setReadOnly(True)
-        self.clutter_path.setPlaceholderText("No clutter file")
-        self.clutter_path.setStyleSheet("background: #1B1E22; color: #A0AEC0; border: 1px solid #3F474F; border-radius: 3px; padding: 3px; font-size: 10px;")
-        self.clutter_btn.clicked.connect(lambda: self._pick(self.clutter_path, "Clutter (*.clt)"))
-        fl_dem.addRow(self.clutter_btn, self.clutter_path)
-        self.gc = FocusWheelSpinBox(); self.gc.setRange(0, 1000); self.gc.setValue(0)
-        self._add_row_with_info(fl_dem, "Ground clutter (m)", self.gc, "Clutter height in meters")
-        self.obstacles = QPlainTextEdit(); self.obstacles.setPlaceholderText("lat,lon,height per line (-udt)")
-        self.obstacles.setMaximumHeight(50)
-        self.obstacles.setStyleSheet("background: #1B1E22; color: #E2E8F0; border: 1px solid #3F474F; font-size: 11px;")
-        fl_dem.addRow("Obstacles", self.obstacles)
+        # self.clutter_btn = QPushButton("Select clutter (.clt)...")
+        # self.clutter_btn.setStyleSheet(btn_ss)
+        # self.clutter_path = QLineEdit()
+        # self.clutter_path.setReadOnly(True)
+        # self.clutter_path.setPlaceholderText("No clutter file")
+        # self.clutter_path.setStyleSheet("background: #1B1E22; color: #A0AEC0; border: 1px solid #3F474F; border-radius: 3px; padding: 3px; font-size: 10px;")
+        # self.clutter_btn.clicked.connect(lambda: self._pick(self.clutter_path, "Clutter (*.clt)"))
+        # fl_dem.addRow(self.clutter_btn, self.clutter_path)
+        # self.gc = FocusWheelSpinBox(); self.gc.setRange(0, 1000); self.gc.setValue(0)
+        # self._add_row_with_info(fl_dem, "Ground clutter (m)", self.gc, "Clutter height in meters")
+        # self.obstacles = QPlainTextEdit(); self.obstacles.setPlaceholderText("lat,lon,height per line (-udt)")
+        # self.obstacles.setMaximumHeight(50)
+        # self.obstacles.setStyleSheet("background: #1B1E22; color: #E2E8F0; border: 1px solid #3F474F; font-size: 11px;")
+        # fl_dem.addRow("Obstacles", self.obstacles)
 
         self.btn_export_dem = QPushButton("Export DEM .tif untuk QGIS")
         self.btn_export_dem.setStyleSheet(btn_ss)
@@ -1065,6 +1094,106 @@ class ParameterForm(QWidget):
         if d:
             self.sdf_path.setText(d)
 
+    def _populate_antenna_combo(self) -> None:
+        """Populate antenna dropdown with discovered and standard pattern files."""
+        self.ant_combo.blockSignals(True)
+        try:
+            self.ant_combo.clear()
+            self.ant_combo.addItem("None (Omnidirectional / Isotropic)", "")
+
+            dirs: list[str] = []
+            if self.ss_root:
+                dirs.append(os.path.join(self.ss_root, "antenna"))
+            try:
+                from ._bundle import app_root
+                root = app_root()
+                dirs.extend([
+                    os.path.join(root, "Signal-Server", "antenna"),
+                    os.path.join(root, "gui", "data", "antennas"),
+                ])
+            except Exception:
+                pass
+
+            friendly = {
+                "omni_8dbi": "Omni 8 dBi (Collinear)",
+                "omni_6dbi": "Omni 6 dBi (Collinear)",
+                "omni_12dbi": "Omni 12 dBi (High Gain)",
+                "dipole": "Dipole (2.15 dBi)",
+                "db413-b": "DB413-B (Directional / Sector)",
+            }
+            order = ["omni_8dbi", "omni_6dbi", "omni_12dbi", "dipole", "db413-b"]
+
+            discovered: dict[str, tuple[str, str]] = {}
+            for d in dirs:
+                if not os.path.isdir(d):
+                    continue
+                for f in sorted(os.listdir(d)):
+                    base, ext = os.path.splitext(f)
+                    if ext.lower() in (".az", ".el", ".ant"):
+                        key = base.lower()
+                        if key not in discovered:
+                            full_base = os.path.join(d, base)
+                            if (os.path.exists(full_base + ".az") and os.path.exists(full_base + ".el")) or os.path.exists(full_base + ".ant"):
+                                discovered[key] = (base, full_base)
+
+            for k in order:
+                if k in discovered:
+                    base, full_base = discovered.pop(k)
+                    label = friendly.get(k, base)
+                    self.ant_combo.addItem(label, full_base)
+
+            for k, (base, full_base) in sorted(discovered.items()):
+                label = friendly.get(k, base.replace("_", " ").title())
+                self.ant_combo.addItem(label, full_base)
+
+            self.ant_combo.addItem("Custom file (*.ant, *.az, *.el)...", "__custom__")
+            self.ant_combo.setCurrentIndex(0)
+        finally:
+            self.ant_combo.blockSignals(False)
+
+    def _on_antenna_combo_changed(self, idx: int) -> None:
+        if idx < 0:
+            return
+        data = self.ant_combo.itemData(idx)
+        if data == "__custom__":
+            self._pick_antenna()
+            return
+        self.ant_path.setText(str(data or ""))
+
+    def set_antenna_basename(self, base: str | None) -> None:
+        """Set the active antenna basename and synchronize the dropdown."""
+        val = (base or "").strip()
+        self.ant_path.setText(val)
+        self._sync_antenna_combo(val)
+
+    def _sync_antenna_combo(self, base: str | None) -> None:
+        val = (base or "").strip()
+        self.ant_combo.blockSignals(True)
+        try:
+            if not val:
+                self.ant_combo.setCurrentIndex(0)
+                return
+
+            val_norm = os.path.normpath(val)
+            val_base = os.path.splitext(os.path.basename(val))[0].lower()
+
+            for i in range(self.ant_combo.count()):
+                d = self.ant_combo.itemData(i)
+                if d and d != "__custom__":
+                    d_str = str(d)
+                    if d_str == val or os.path.normpath(d_str) == val_norm or \
+                       os.path.splitext(os.path.basename(d_str))[0].lower() == val_base:
+                        self.ant_combo.setCurrentIndex(i)
+                        return
+
+            name = os.path.basename(val)
+            label = f"Custom: {name}"
+            insert_pos = max(1, self.ant_combo.count() - 1)
+            self.ant_combo.insertItem(insert_pos, label, val)
+            self.ant_combo.setCurrentIndex(insert_pos)
+        finally:
+            self.ant_combo.blockSignals(False)
+
     def _pick_antenna(self) -> None:
         p = _browse(self, "Select antenna pattern", "Antenna (*.az *.el *.ant);;Radio Mobile Antenna (*.ant);;All Files (*)")
         if p:
@@ -1074,7 +1203,6 @@ class ParameterForm(QWidget):
                 el_path = base + ".el"
                 if not (os.path.exists(az_path) and os.path.exists(el_path)):
                     try:
-                        import math
                         with open(p, "r") as ant_f:
                             lines = [float(l.strip()) for l in ant_f if l.strip()]
                         if len(lines) >= 360:
@@ -1093,7 +1221,9 @@ class ParameterForm(QWidget):
                                     el_f.write(f"{el}\t{10**(val/20.0):0.4f}\n")
                     except Exception:
                         pass
-            self.ant_path.setText(base)
+            self.set_antenna_basename(base)
+        else:
+            self._sync_antenna_combo(self.ant_path.text())
 
     def _update_demnas_visibility(self) -> None:
         idx = self.dem_source.currentIndex()
@@ -1306,7 +1436,7 @@ class ParameterForm(QWidget):
         self.tx_thr.setValue(float(d.get("tx_threshold_dbm", -100)))
         self._update_erp()
         # Antenna
-        self.ant_path.setText(d.get("antenna_basename") or "")
+        self.set_antenna_basename(d.get("antenna_basename") or "")
         self.pol.setCurrentText(d.get("polarization", "vertical"))
         self.azimuth.setValue(float(d.get("azimuth_deg", 0)))
         self.downtilt.setValue(float(d.get("downtilt_deg", 0)))

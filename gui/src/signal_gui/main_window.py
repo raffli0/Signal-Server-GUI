@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
     QPushButton, QProgressBar, QLabel, QFileDialog, QInputDialog, QMessageBox,
     QScrollArea, QApplication, QFrame, QSizePolicy, QDialog
 )
-from PySide6.QtCore import Qt, QTimer, QObject, QEvent, Signal
+from PySide6.QtCore import Qt, QTimer, QObject, QEvent, Signal, QByteArray
 from PySide6.QtGui import QShortcut, QKeySequence
 
 from . import backend, params as params_mod, output_stage, rm_import
@@ -405,13 +405,16 @@ class MainWindow(QMainWindow):
         split = QSplitter(Qt.Orientation.Horizontal)
         split.addWidget(sidebar_container)
         split.addWidget(right)
-        # Keep the sidebar clearly narrower than the map viewport by default;
-        # its max width is recomputed responsively in _apply_responsive_width().
-        split.setStretchFactor(0, 1)
-        split.setStretchFactor(1, 4)
+        # Keep the sidebar at a comfortable width while the map expands to fill;
+        # its default width is computed responsively in _apply_responsive_width().
+        split.setStretchFactor(0, 0)
+        split.setStretchFactor(1, 1)
         split.splitterMoved.connect(self._on_splitter_moved)
         central_layout.addWidget(split, 1)
         self._splitter = split
+
+        self._saved_sidebar_width: int | None = None
+        self._saved_splitter_state: QByteArray | None = None
 
         # Debounced map re-layout after container resizes.
         self._resize_timer = QTimer(self)
@@ -421,6 +424,7 @@ class MainWindow(QMainWindow):
 
         # Apply an initial responsive sidebar width.
         self._apply_responsive_width()
+        self._saved_splitter_state = self._splitter.saveState()
 
         self.setCentralWidget(central_w)
 
@@ -466,13 +470,28 @@ class MainWindow(QMainWindow):
     def _toggle_sidebar(self) -> None:
         """Toggle left sidebar visibility smoothly with state persistence."""
         visible = not self._sidebar.isVisible()
-        self._sidebar.setVisible(visible)
-        if visible:
-            cur_w = self.width()
-            sb_w = max(340, min(int(cur_w * 0.32), 480))
-            self._splitter.setSizes([sb_w, cur_w - sb_w])
+        if not visible:
+            # Closing sidebar: remember current state and width before hiding
+            if hasattr(self, "_splitter"):
+                self._saved_splitter_state = self._splitter.saveState()
+                sizes = self._splitter.sizes()
+                if sizes and sizes[0] > 0:
+                    self._saved_sidebar_width = sizes[0]
+            self._sidebar.setVisible(False)
         else:
-            self._splitter.setSizes([0, self.width()])
+            # Opening sidebar: restore exact saved state
+            self._sidebar.setVisible(True)
+            if getattr(self, "_saved_splitter_state", None) is not None:
+                self._splitter.restoreState(self._saved_splitter_state)
+            elif self._saved_sidebar_width is not None and self._saved_sidebar_width > 0:
+                sizes = self._splitter.sizes()
+                avail = sum(sizes) if sizes else self._splitter.width()
+                if avail <= 0:
+                    avail = self.width()
+                sb_w = self._saved_sidebar_width
+                self._splitter.setSizes([sb_w, max(0, avail - sb_w)])
+            else:
+                self._apply_responsive_width()
         self.map.invalidate_size()
 
     # ------------------------------------------------------------------ AMSL lookup
@@ -607,18 +626,24 @@ class MainWindow(QMainWindow):
                 elev = dc._sample_elevation(vrt, lat, lon)
                 if getattr(self, "_demnas_live_gen", 0) != cur_gen:
                     return
-                if elev is None:
-                    self.demnas_status_ready.emit(
-                        "bad", f"{tag}: ✗ void di Tx ({lat:.3f}, {lon:.3f})"
-                    )
-                else:
-                    self.demnas_status_ready.emit(
-                        "ok", f"{tag}: ✓ Tx ({lat:.3f}, {lon:.3f}) elev {elev:.0f} m"
-                    )
+                try:
+                    if elev is None:
+                        self.demnas_status_ready.emit(
+                            "bad", f"{tag}: ✗ void di Tx ({lat:.3f}, {lon:.3f})"
+                        )
+                    else:
+                        self.demnas_status_ready.emit(
+                            "ok", f"{tag}: ✓ Tx ({lat:.3f}, {lon:.3f}) elev {elev:.0f} m"
+                        )
+                except RuntimeError:
+                    pass
             except Exception as exc:  # noqa: BLE001 - surface any gdal/IO issue as red
                 if getattr(self, "_demnas_live_gen", 0) != cur_gen:
                     return
-                self.demnas_status_ready.emit("bad", f"{tag}: ✗ {exc}")
+                try:
+                    self.demnas_status_ready.emit("bad", f"{tag}: ✗ {exc}")
+                except RuntimeError:
+                    pass
 
         threading.Thread(target=work, daemon=True, name=f"demnas-live-{cur_gen}").start()
 
@@ -637,40 +662,53 @@ class MainWindow(QMainWindow):
         ``setSizes``) while ``setMaximumWidth`` provides a flexible ceiling,
         preserving the user's manual dragging freedom.
         """
-        avail = self._splitter.width()
+        if not hasattr(self, "_sidebar") or not self._sidebar.isVisible():
+            return
+        cur = self._splitter.sizes()
+        avail = sum(cur) if cur else self._splitter.width()
         if avail <= 0:
             return
         # Map always keeps a usable minimum; sidebar is the remainder, clamped.
         map_min = 400
-        side_min = 250
-        side_max = min(520, max(side_min, avail - map_min))
+        side_min = 420
+        # If available space is tight (e.g. very small screen), adjust side_min to avoid collapsing map
+        if avail - map_min < side_min:
+            side_min = max(280, avail - map_min)
+        side_max = min(680, max(side_min, avail - map_min))
 
-        # Responsive proportion tuned for 1366x768 and various standard screens:
-        # On 1366x768 (typical laptop screen):
-        # - Target width ~315px - 325px (~23-24% of 1366) leaves >1030px for the map!
-        if avail < 850:
-            frac = 0.35
+        # Comfortable width: ParameterForm needs ~430-440px to display without horizontal scrolling.
+        if avail < 900:
+            target = min(side_max, max(side_min, int(avail * 0.45)))
         elif avail < 1440:  # covers 1366x768 screens
-            frac = 0.235    # 1366 * 0.235 = ~320px
-        elif avail < 1920:
-            frac = 0.21
-        else:
-            frac = 0.19
+            target = 440
+        elif avail < 1920:  # covers 1920x1080 screens
+            target = 460
+        else:  # 2K / 4K
+            target = 480
 
-        side = int(avail * frac)
-        side = max(side_min, min(side, 360))
+        side = max(side_min, min(target, side_max))
 
         self._sidebar.setMinimumWidth(side_min)
         self._sidebar.setMaximumWidth(side_max)
 
         cur = self._splitter.sizes()
-        if len(cur) == 2 and (cur[0] > side_max or cur[0] < side_min or cur[0] == 0):
-            self._splitter.setSizes([side, max(0, avail - side)])
+        if self._saved_sidebar_width is None:
+            target_side = side
+            self._splitter.setSizes([target_side, max(0, avail - target_side)])
+            self._saved_sidebar_width = target_side
+        elif len(cur) == 2 and (cur[0] > side_max or cur[0] < side_min or cur[0] == 0):
+            target_side = self._saved_sidebar_width if (side_min <= self._saved_sidebar_width <= side_max) else side
+            self._splitter.setSizes([target_side, max(0, avail - target_side)])
+            self._saved_sidebar_width = target_side
+        elif len(cur) == 2 and cur[0] > 0:
+            self._saved_sidebar_width = cur[0]
+        self._saved_splitter_state = self._splitter.saveState()
 
     def showEvent(self, event) -> None:
         super().showEvent(event)
         # Layout is realised now; apply the responsive width for the first paint.
         self._apply_responsive_width()
+        self._saved_splitter_state = self._splitter.saveState()
         # On compact / 768p laptop screens, collapse the bottom log console by default
         # to maximize vertical real estate for the parameter form.
         if self.height() <= 800 and hasattr(self, "terminal") and hasattr(self, "btn_toggle_log"):
@@ -678,6 +716,11 @@ class MainWindow(QMainWindow):
             self.btn_toggle_log.setText("▸")
 
     def _on_splitter_moved(self, *_args) -> None:
+        if hasattr(self, "_sidebar") and self._sidebar.isVisible():
+            sizes = self._splitter.sizes()
+            if sizes and sizes[0] > 0:
+                self._saved_sidebar_width = sizes[0]
+                self._saved_splitter_state = self._splitter.saveState()
         # Re-layout Leaflet after the container size changes (no window resize).
         self._resize_timer.start()
 
