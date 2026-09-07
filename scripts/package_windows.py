@@ -68,6 +68,8 @@ def package():
         "PIL.Image",
         "pyproj",
         "mgrs",
+        "certifi",
+        "ssl",
     ]
     try:
         import osgeo

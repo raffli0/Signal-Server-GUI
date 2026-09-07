@@ -67,22 +67,43 @@ jobs:
         cp /mingw64/bin/libspdlog*.dll bin/ || true
         cp /mingw64/bin/libfmt*.dll bin/ || true
 
-        # Copy GDAL CLI executables and DLLs for DEMNAS processing
-        mkdir -p bin/gdal
-        cp /mingw64/bin/gdal*.exe bin/gdal/ || true
-        cp /mingw64/bin/gdal*.dll bin/gdal/ || true
-        cp /mingw64/bin/libgdal*.dll bin/gdal/ || true
+        # Copy GDAL CLI executables and primary DLLs to bin/
+        cp /mingw64/bin/gdal*.exe bin/ || true
+        cp /mingw64/bin/gdal*.dll bin/ || true
+        cp /mingw64/bin/libgdal*.dll bin/ || true
 
-        # Inspect and copy any remaining needed DLLs
-        for f in bin/*.exe bin/gdal/*.exe; do
-          if [ -f "$f" ]; then
-            ldd "$f" 2>/dev/null | grep '/mingw64/bin/' | awk '{print $3}' | while read -r dll; do
-              if [ -f "$dll" ]; then
-                cp -u "$dll" bin/ || true
-              fi
-            done || true
+        # Copy PROJ and GDAL datum/definition databases
+        mkdir -p bin/gdal_data bin/proj
+        cp -r /mingw64/share/gdal/* bin/gdal_data/ 2>/dev/null || true
+        cp -r /mingw64/share/proj/* bin/proj/ 2>/dev/null || true
+
+        # Iteratively copy all transitive DLL dependencies for executables and DLLs
+        echo "Resolving all transitive DLL dependencies..."
+        for pass in 1 2 3 4 5 6; do
+          NEW_COPIED=0
+          for f in bin/*.exe bin/*.dll; do
+            if [ -f "$f" ]; then
+              for dll in $(ldd "$f" 2>/dev/null | grep '/mingw64/bin/' | awk '{print $3}'); do
+                if [ -f "$dll" ]; then
+                  base=$(basename "$dll")
+                  if [ ! -f "bin/$base" ]; then
+                    cp "$dll" bin/
+                    NEW_COPIED=$((NEW_COPIED + 1))
+                  fi
+                fi
+              done
+            fi
+          done
+          echo "Pass $pass copied $NEW_COPIED new DLLs"
+          if [ "$NEW_COPIED" -eq 0 ]; then
+            break
           fi
         done
+
+        # Mirror GDAL tools and DLLs to bin/gdal/ so both bin/ and bin/gdal/ are 100% self-contained
+        mkdir -p bin/gdal
+        cp bin/gdal*.exe bin/gdal/ 2>/dev/null || true
+        cp bin/*.dll bin/gdal/ 2>/dev/null || true
 
     - name: Install Python Dependencies & PyInstaller
       run: |

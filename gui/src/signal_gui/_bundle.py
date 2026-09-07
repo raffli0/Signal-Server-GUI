@@ -63,8 +63,29 @@ def app_root() -> str:
     return os.path.dirname(os.path.dirname(os.path.dirname(here)))
 
 
+def cache_root() -> str:
+    """Return a writable cache directory for DEM tiles and temporary files.
+
+    In development, uses <repo>/gui/cache/dem.
+    When frozen, uses %LOCALAPPDATA%/SignalServerGUI/cache/dem (Windows) or
+    ~/.cache/SignalServerGUI/cache/dem (Linux) so that the user never encounters
+    permission issues or space constraints in application installation directories.
+    """
+    if is_frozen():
+        local_app_data = os.environ.get("LOCALAPPDATA")
+        if local_app_data:
+            base = os.path.join(local_app_data, "SignalServerGUI", "cache", "dem")
+            os.makedirs(base, exist_ok=True)
+            return base
+        home = os.path.expanduser("~")
+        base = os.path.join(home, ".cache", "SignalServerGUI", "cache", "dem")
+        os.makedirs(base, exist_ok=True)
+        return base
+    return os.path.join(app_root(), "gui", "cache", "dem")
+
+
 def setup_environment() -> None:
-    """Prepend bundled engine and GDAL tools directories to PATH."""
+    """Prepend bundled engine and GDAL tools directories to PATH and set GDAL/PROJ data."""
     root = app_root()
     prepend_paths = [
         os.path.join(root, "bin"),
@@ -77,3 +98,13 @@ def setup_environment() -> None:
         if os.path.isdir(p) and p not in cur_path:
             cur_path = p + os.pathsep + cur_path
     os.environ["PATH"] = cur_path
+
+    # Set GDAL_DATA and PROJ_LIB so GDAL and PROJ find datum/ellipsoid files
+    for gdir in [os.path.join(root, "bin", "gdal_data"), os.path.join(root, "gdal_data")]:
+        if os.path.isdir(gdir):
+            os.environ["GDAL_DATA"] = gdir
+            break
+    for pdir in [os.path.join(root, "bin", "proj"), os.path.join(root, "proj")]:
+        if os.path.isdir(pdir):
+            os.environ["PROJ_LIB"] = pdir
+            break

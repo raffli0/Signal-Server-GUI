@@ -786,7 +786,7 @@ class ParameterForm(QWidget):
             "Offline – DEMNAS (.tif)",
             "Offline – SRTM3 / HGT (.hgt)",
         ])
-        self.dem_source.setCurrentIndex(1)
+        self.dem_source.setCurrentIndex(0)
         self._add_row_with_info(
             fl_dem, "DEM source", self.dem_source,
             "Sumber elevasi: Online (unduh Viewfinder SRTM) atau Offline (folder DEMNAS .tif / SRTM3 .hgt lokal, tanpa internet)")

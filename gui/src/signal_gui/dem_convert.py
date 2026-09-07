@@ -26,12 +26,35 @@ import tempfile
 import urllib.request
 import urllib.error
 import zipfile
+import ssl
 from contextlib import contextmanager
 from typing import Optional, Any
 
 import numpy as np
 
 logger = logging.getLogger("signal_gui.dem_convert")
+
+
+def _urlopen(url: str | urllib.request.Request, timeout: float = 30):
+    """Robust urlopen with SSL certificate verification fallback for Windows."""
+    context = None
+    try:
+        import certifi
+        context = ssl.create_default_context(cafile=certifi.where())
+    except Exception:
+        try:
+            context = ssl.create_default_context()
+        except Exception:
+            context = ssl._create_unverified_context()
+
+    try:
+        return urllib.request.urlopen(url, timeout=timeout, context=context)
+    except urllib.error.URLError as exc:
+        err_str = str(exc).lower()
+        if "certificate" in err_str or "verify failed" in err_str:
+            unverified_ctx = ssl._create_unverified_context()
+            return urllib.request.urlopen(url, timeout=timeout, context=unverified_ctx)
+        raise
 
 
 VIEWFINDER_BASE = {
@@ -65,7 +88,7 @@ def _query_demsearch(
     )
     url = f"{DEMSEARCH_URL.replace('demsearch.php', 'dem_json.php')}?{q}"
     try:
-        with urllib.request.urlopen(url, timeout=30) as resp:
+        with _urlopen(url, timeout=30) as resp:
             data = json.loads(resp.read().decode("utf-8", "replace"))
     except (urllib.error.URLError, OSError, ValueError) as exc:
         raise DemResolveError(f"DEM search request failed: {exc}")
@@ -176,7 +199,7 @@ def download_tile_zip(tile_code: str, resolution: int, dest_dir: str) -> str:
     if os.path.exists(zip_path) and os.path.getsize(zip_path) > 0:
         return zip_path
     try:
-        with urllib.request.urlopen(url, timeout=120) as resp:
+        with _urlopen(url, timeout=120) as resp:
             data = resp.read()
     except (urllib.error.URLError, OSError) as exc:
         raise DemResolveError(f"Failed to download {url}: {exc}")
@@ -466,7 +489,7 @@ def _atomic_gdal_output(dst_path: str):
 
 
 def _run(cmd: list[str]) -> None:
-    """Run a GDAL subprocess, raising DemResolveError with stderr on failure."""
+    """Run a GDAL subprocess, raising DemResolveError with detailed diagnostics on failure."""
     try:
         kwargs = {}
         if os.name == "nt":
@@ -475,9 +498,16 @@ def _run(cmd: list[str]) -> None:
     except FileNotFoundError as exc:
         raise DemResolveError(f"GDAL tool not found: {cmd[0]} ({exc})")
     except subprocess.CalledProcessError as exc:
-        stderr = (exc.stderr or "").strip().splitlines()[-5:]
+        details = []
+        if exc.returncode is not None:
+            details.append(f"exit code {exc.returncode} (0x{exc.returncode & 0xFFFFFFFF:08X})")
+        if exc.stderr and exc.stderr.strip():
+            details.append(f"stderr: {exc.stderr.strip()}")
+        if exc.stdout and exc.stdout.strip():
+            details.append(f"stdout: {exc.stdout.strip()}")
+        detail_msg = " | ".join(details) or "unknown process failure"
         raise DemResolveError(
-            f"GDAL step failed: {' '.join(cmd)}\n" + "\n".join(stderr)
+            f"GDAL step failed: {' '.join(cmd)}\n{detail_msg}"
         )
 
 
@@ -571,8 +601,8 @@ def _demnas_vrt(folder: str, cache_dir: str) -> str:
             f"Folder DEM '{folder}' tidak berisi file .tif/.tiff atau .hgt."
         )
     lst = os.path.join(vrt_dir, f"{key}.txt")
-    with open(lst, "w") as fh:
-        fh.write("\n".join(tifs))
+    with open(lst, "w", encoding="utf-8") as fh:
+        fh.write("\n".join(p.replace("\\", "/") for p in tifs) + "\n")
     # Force WGS84 so downstream sampling (gdallocationinfo -wgs84) and any
     # per-tile reprojection are unambiguous; DEMNAS tiles are always EPSG:4326.
     with _atomic_gdal_output(vrt) as tmp_vrt:
@@ -816,7 +846,7 @@ def _openmeteo_elevation(lat: float, lon: float, timeout: float = 5.0) -> Option
         f"?latitude={lat:.6f}&longitude={lon:.6f}"
     )
     try:
-        with urllib.request.urlopen(url, timeout=timeout) as resp:
+        with _urlopen(url, timeout=timeout) as resp:
             data = json.loads(resp.read().decode("utf-8"))
         elev = (data or {}).get("elevation") or []
         if elev:

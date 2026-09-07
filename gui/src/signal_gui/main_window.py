@@ -101,7 +101,8 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(950, 650)
         self.root = root or self._detect_root()
         self.engines = backend.find_engines(self.root)
-        self.cache_dir = os.path.join(self.root, "gui", "cache", "dem")
+        from ._bundle import cache_root
+        self.cache_dir = cache_root()
         os.makedirs(self.cache_dir, exist_ok=True)
         self._pending = None
         self._worker = None
@@ -540,39 +541,50 @@ class MainWindow(QMainWindow):
             threading.Thread(target=work, daemon=True,
                              name=f"elev-{role}").start()
 
-    def _find_demnas_default(self) -> str:
-        """Return the default DEMNAS folder: ``<root>/gui/data/<name>`` where
-        ``<name>`` matches "demnas" case-insensitively; created if missing."""
-        base = os.path.join(self.root, "gui", "data")
-        os.makedirs(base, exist_ok=True)
+    @staticmethod
+    def _has_dem_files(folder: str, ext=(".tif", ".tiff", ".hgt")) -> bool:
         try:
-            for entry in os.scandir(base):
-                if entry.is_dir() and entry.name.lower() == "demnas":
-                    return entry.path
+            for root, _, files in os.walk(folder):
+                for f in files:
+                    if f.lower().endswith(ext):
+                        return True
         except OSError:
             pass
-        fallback = os.path.join(base, "Demnas")
-        os.makedirs(fallback, exist_ok=True)
-        return fallback
+        return False
 
-    def _find_srtm_default(self) -> str:
-        """Return the default SRTM folder: ``<root>/gui/data/<name>`` matching
-        "srtm3" or "srtm" case-insensitively; created if missing."""
+    def _find_demnas_default(self) -> str:
+        """Return the default DEMNAS folder if it contains raster tiles, else empty."""
         base = os.path.join(self.root, "gui", "data")
-        os.makedirs(base, exist_ok=True)
-        for preferred in ("SRTM3", "srtm3", "SRTM", "srtm"):
+        if not os.path.isdir(base):
+            return ""
+        for preferred in ("Demnas", "demnas", "DEMNAS"):
             p = os.path.join(base, preferred)
-            if os.path.isdir(p):
+            if os.path.isdir(p) and self._has_dem_files(p):
                 return p
         try:
             for entry in os.scandir(base):
-                if entry.is_dir() and "srtm" in entry.name.lower():
+                if entry.is_dir() and "demnas" in entry.name.lower() and self._has_dem_files(entry.path):
                     return entry.path
         except OSError:
             pass
-        fallback = os.path.join(base, "SRTM3")
-        os.makedirs(fallback, exist_ok=True)
-        return fallback
+        return ""
+
+    def _find_srtm_default(self) -> str:
+        """Return the default SRTM folder if it contains .hgt tiles, else empty."""
+        base = os.path.join(self.root, "gui", "data")
+        if not os.path.isdir(base):
+            return ""
+        for preferred in ("SRTM3", "srtm3", "SRTM", "srtm"):
+            p = os.path.join(base, preferred)
+            if os.path.isdir(p) and self._has_dem_files(p, ext=(".hgt",)):
+                return p
+        try:
+            for entry in os.scandir(base):
+                if entry.is_dir() and "srtm" in entry.name.lower() and self._has_dem_files(entry.path, ext=(".hgt",)):
+                    return entry.path
+        except OSError:
+            pass
+        return ""
 
     def _on_dem_source_changed(self, idx: int) -> None:
         cur_dir = self.form.demnas_dir.text().strip()
