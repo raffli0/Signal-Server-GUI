@@ -107,15 +107,23 @@ function render() {
     ctx.fillText(ex.toFixed(1) + ' km', xx - 10, H - 8);
   }
 
-  // Fresnel zone (between lower and upper)
-  ctx.fillStyle = 'rgba(72,187,120,0.18)';
+  // Fresnel zone boundary lines (strictly no fill, sky blue dash)
+  ctx.save();
+  ctx.strokeStyle = '#38bdf8';
+  ctx.lineWidth = 1.3;
+  ctx.setLineDash([4, 3]);
   ctx.beginPath();
   ctx.moveTo(X(0), Y(fu[0]));
   for (var i = 1; i < n; i++) ctx.lineTo(X(i), Y(fu[i]));
-  for (var i = n - 1; i >= 0; i--) ctx.lineTo(X(i), Y(fl[i]));
-  ctx.closePath(); ctx.fill();
+  ctx.stroke();
 
-  // ----- Terrain: hypsometric relief + contour lines (like a topo map) -----
+  ctx.beginPath();
+  ctx.moveTo(X(0), Y(fl[0]));
+  for (var i = 1; i < n; i++) ctx.lineTo(X(i), Y(fl[i]));
+  ctx.stroke();
+  ctx.restore();
+
+  // ----- Terrain: earth brown gradient + contour lines -----
   function terrainPath() {
     ctx.beginPath();
     ctx.moveTo(X(0), Y(t[0]));
@@ -123,13 +131,12 @@ function render() {
     ctx.lineTo(X(n - 1), H - mBot); ctx.lineTo(X(0), H - mBot);
     ctx.closePath();
   }
-  // Hypsometric vertical gradient (high = light, low = dark green)
+  // Warm brown earth vertical gradient
   var grad = ctx.createLinearGradient(0, Y(emax), 0, Y(emin));
-  grad.addColorStop(0.00, '#d9c9a3');
-  grad.addColorStop(0.20, '#b08a4f');
-  grad.addColorStop(0.45, '#8a7d33');
-  grad.addColorStop(0.70, '#4f7a3a');
-  grad.addColorStop(1.00, '#234d2b');
+  grad.addColorStop(0.00, '#8b5a2b');
+  grad.addColorStop(0.35, '#6e4423');
+  grad.addColorStop(0.70, '#4a2c16');
+  grad.addColorStop(1.00, '#2b180d');
   terrainPath();
   ctx.fillStyle = grad; ctx.fill();
 
@@ -137,15 +144,15 @@ function render() {
   var step = niceStep((emax - emin) / 6);
   ctx.save();
   terrainPath(); ctx.clip();
-  ctx.strokeStyle = 'rgba(15,25,15,0.35)'; ctx.lineWidth = 1;
+  ctx.strokeStyle = 'rgba(25,18,10,0.35)'; ctx.lineWidth = 1;
   for (var e = Math.ceil(emin / step) * step; e < emax; e += step) {
     var yy = Y(e);
     ctx.beginPath(); ctx.moveTo(mLeft, yy); ctx.lineTo(W - mRight, yy); ctx.stroke();
   }
   ctx.restore();
 
-  // Bold terrain outline
-  ctx.strokeStyle = '#fbbf24'; ctx.lineWidth = 2;
+  // Bold terrain outline in authentic rich brown
+  ctx.strokeStyle = '#a0522d'; ctx.lineWidth = 2.2;
   ctx.beginPath(); ctx.moveTo(X(0), Y(t[0]));
   for (var i = 1; i < n; i++) ctx.lineTo(X(i), Y(t[i]));
   ctx.stroke();
@@ -178,11 +185,11 @@ function render() {
     ctx.beginPath(); ctx.moveTo(hx, mTop); ctx.lineTo(hx, H - mBot); ctx.stroke();
     ctx.setLineDash([]);
     // markers on the tracked curves
-    ctx.fillStyle = '#f6c453';
+    ctx.fillStyle = '#a0522d';
     ctx.beginPath(); ctx.arc(hx, Y(t[hoverIdx]), 4, 0, 2 * Math.PI); ctx.fill();
     ctx.fillStyle = '#4299e1';
     ctx.beginPath(); ctx.arc(hx, Y(l[hoverIdx]), 3.5, 0, 2 * Math.PI); ctx.fill();
-    ctx.fillStyle = '#48bb78';
+    ctx.fillStyle = '#38bdf8';
     ctx.beginPath(); ctx.arc(hx, Y(fl[hoverIdx]), 3, 0, 2 * Math.PI); ctx.fill();
     ctx.beginPath(); ctx.arc(hx, Y(fu[hoverIdx]), 3, 0, 2 * Math.PI); ctx.fill();
     drawReadout(hoverIdx, hx);

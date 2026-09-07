@@ -7,10 +7,12 @@ import sys
 
 from PySide6.QtWidgets import QApplication
 
+from ._bundle import setup_environment
 from .main_window import MainWindow
 
 
 def main() -> int:
+    setup_environment()
     try:
         from osgeo import gdal
         gdal.UseExceptions()

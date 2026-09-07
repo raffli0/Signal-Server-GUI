@@ -36,6 +36,13 @@ execute_process(
 # Prepare internal libraries search
 include_directories(models)
 
+# Spdlog
+find_package(spdlog REQUIRED)
+include_directories(${spdlog_INCLUDE_DIRS})
+if (EXISTS "/home/dedsec/.local/include")
+    include_directories("/home/dedsec/.local/include")
+endif()
+
 # internal libraries
 add_library(image STATIC image.cc)
 add_library(image-ppm STATIC image-ppm.cc)
@@ -59,15 +66,18 @@ add_library(sui STATIC models/sui.cc)
 
 # external libraries
 find_library(bz2 bz2)
-find_library(dl dl)
 find_library(pthread pthread)
 find_library(z z)
 
-# Spdlog
-find_package(spdlog REQUIRED)
-include_directories(${spdlog_INCLUDE_DIRS})
-# Fallback: ensure header-only spdlog from /home/dedsec/.local is visible to all targets
-include_directories("/home/dedsec/.local/include")
+set(PLATFORM_LIBS "")
+if (NOT WIN32)
+    find_library(dl dl)
+    if (dl)
+        list(APPEND PLATFORM_LIBS ${dl})
+    endif()
+else()
+    list(APPEND PLATFORM_LIBS ws2_32)
+endif()
 
 add_executable(signalserver main.cc)
 add_executable(signalserverHD main.cc)
@@ -110,9 +120,9 @@ target_link_libraries(signalserver
 			PUBLIC soil
 			PUBLIC sui
 			PUBLIC bz2
-			PUBLIC dl
 			PUBLIC pthread
 			PUBLIC z
+			PUBLIC ${PLATFORM_LIBS}
             PUBLIC spdlog::spdlog
             PUBLIC geo
 		  )
@@ -136,9 +146,9 @@ target_link_libraries(signalserverHD
 			PUBLIC soil
 			PUBLIC sui
 			PUBLIC bz2
-			PUBLIC dl
 			PUBLIC pthread
 			PUBLIC z
+			PUBLIC ${PLATFORM_LIBS}
             PUBLIC spdlog::spdlog
             PUBLIC geo
 		  )
@@ -162,9 +172,9 @@ target_link_libraries(signalserverLIDAR
 			PUBLIC soil
 			PUBLIC sui
 			PUBLIC bz2
-			PUBLIC dl
 			PUBLIC pthread
 			PUBLIC z
+			PUBLIC ${PLATFORM_LIBS}
             PUBLIC spdlog::spdlog
             PUBLIC geo
 		  )

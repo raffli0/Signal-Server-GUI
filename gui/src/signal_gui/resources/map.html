@@ -1111,12 +1111,16 @@
       }
 
       if (text) {
-        linkCursorMarker.bindTooltip(text, {
-          permanent: true,
-          direction: 'top',
-          offset: [0, -16],
-          className: 'link-cursor-tooltip'
-        }).openTooltip();
+        if (linkCursorMarker.getTooltip()) {
+          linkCursorMarker.setTooltipContent(text);
+        } else {
+          linkCursorMarker.bindTooltip(text, {
+            permanent: true,
+            direction: 'top',
+            offset: [0, -16],
+            className: 'link-cursor-tooltip'
+          }).openTooltip();
+        }
       }
     }
 

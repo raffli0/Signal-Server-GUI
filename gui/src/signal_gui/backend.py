@@ -43,6 +43,7 @@ def find_engines(root: Optional[str] = None) -> dict:
         ("signalserverLIDAR", "signalserverLIDAR"),
     ):
         cands = [
+            os.path.join(root, "bin", _exe(name)),
             os.path.join(ss, "build", _exe(name)),
             os.path.join(ss, "src", "build", _exe(name)),
             os.path.join(ss, _exe(name)),
@@ -57,6 +58,7 @@ def find_engines(root: Optional[str] = None) -> dict:
                 break
     for key, name in (("srtm2sdf", "srtm2sdf"), ("srtm2sdf-hd", "srtm2sdf-hd")):
         cands = [
+            os.path.join(root, "bin", _exe(name)),
             os.path.join(ss, "utils", "sdf", "usgs2sdf", "build", _exe(name)),
             os.path.join(ss, "utils", "sdf", "usgs2sdf", _exe(name)),
             _exe(name),
@@ -320,9 +322,12 @@ class RunWorker(QThread):
 
         Returns ``(returncode, stdout_lines)``.
         """
+        kwargs = {}
+        if os.name == "nt":
+            kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
         proc = subprocess.Popen(
             argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-            text=True, bufsize=1, env=run_env,
+            text=True, bufsize=1, env=run_env, **kwargs
         )
         stdout_text: list[str] = []
         assert proc.stdout is not None

@@ -61,3 +61,19 @@ def app_root() -> str:
         return bundle_dir()
     here = os.path.dirname(os.path.abspath(__file__))
     return os.path.dirname(os.path.dirname(os.path.dirname(here)))
+
+
+def setup_environment() -> None:
+    """Prepend bundled engine and GDAL tools directories to PATH."""
+    root = app_root()
+    prepend_paths = [
+        os.path.join(root, "bin"),
+        os.path.join(root, "bin", "gdal"),
+        os.path.join(root, "gdal"),
+        os.path.join(root, "Signal-Server", "build"),
+    ]
+    cur_path = os.environ.get("PATH", "")
+    for p in prepend_paths:
+        if os.path.isdir(p) and p not in cur_path:
+            cur_path = p + os.pathsep + cur_path
+    os.environ["PATH"] = cur_path

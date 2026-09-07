@@ -10,7 +10,9 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <errno.h>
+#ifndef _WIN32
 #include <dlfcn.h>
+#endif
 #include "image.hh"
 #include "image-ppm.hh"
 
@@ -244,6 +246,11 @@ char* image_get_library(){
  * It must be a custom compatible library
  */
 int load_library(image_dispatch_table_t *dt){
+#ifdef _WIN32
+	(void)dt;
+	fprintf(stderr, "Custom dynamic image library is not supported on Windows\n");
+	return ENOSYS;
+#else
 	void *hndl;
 	int success = 0;
 
@@ -275,4 +282,5 @@ int load_library(image_dispatch_table_t *dt){
 	}
 
 	return success;
+#endif
 }

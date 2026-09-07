@@ -1,0 +1,86 @@
+name: Build Windows Standalone Installer
+
+on:
+  push:
+    branches: [ master, main ]
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ master, main ]
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+    - name: Checkout Source Code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: Set up MSYS2 MinGW-w64
+      uses: msys2/setup-msys2@v2
+      with:
+        msystem: MINGW64
+        update: true
+        install: >-
+          mingw-w64-x86_64-gcc
+          mingw-w64-x86_64-cmake
+          mingw-w64-x86_64-ninja
+          mingw-w64-x86_64-spdlog
+          mingw-w64-x86_64-bzip2
+          mingw-w64-x86_64-zlib
+
+    - name: Compile Signal-Server C++ Engines (MinGW-w64)
+      shell: msys2 {0}
+      run: |
+        mkdir -p Signal-Server/build
+        cd Signal-Server/build
+        cmake -G Ninja ../src
+        ninja
+        cd ../..
+
+        mkdir -p Signal-Server/utils/sdf/usgs2sdf/build
+        cd Signal-Server/utils/sdf/usgs2sdf/build
+        cmake -G Ninja ..
+        ninja
+        cd ../../../../..
+
+        mkdir -p bin
+        cp Signal-Server/build/*.exe bin/
+        cp Signal-Server/utils/sdf/usgs2sdf/build/*.exe bin/
+        cp /mingw64/bin/libbz2-1.dll bin/ || true
+        cp /mingw64/bin/zlib1.dll bin/ || true
+        cp /mingw64/bin/libwinpthread-1.dll bin/ || true
+        cp /mingw64/bin/libgcc_s_seh-1.dll bin/ || true
+        cp /mingw64/bin/libstdc++-6.dll bin/ || true
+
+    - name: Install Python Dependencies & PyInstaller
+      run: |
+        python -m pip install --upgrade pip
+        python -m pip install -e ./gui
+        python -m pip install pyinstaller
+
+    - name: Bundle Standalone Application
+      run: |
+        python scripts/package_windows.py
+
+    - name: Compile Windows Installer (Inno Setup)
+      uses: Techcable/inno-setup-action@v1
+      with:
+        path: scripts/installer.iss
+
+    - name: Upload Windows Standalone Folder Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: SignalServerGUI-Windows-Portable
+        path: dist/SignalServerGUI/
+
+    - name: Upload Windows Installer Setup Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: SignalServerGUI-Setup
+        path: dist-installer/*.exe

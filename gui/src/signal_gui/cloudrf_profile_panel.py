@@ -8,6 +8,7 @@ vibrant green terrain profile, Fresnel zone, LOS line, antenna masts, and 2D rea
 from __future__ import annotations
 
 import math
+import time
 from typing import Optional, Dict, Any, List
 
 from .link_parse import _destination_point, _initial_bearing
@@ -15,7 +16,7 @@ from .link_parse import _destination_point, _initial_bearing
 from PySide6.QtCore import Qt, Signal, QRectF, QPointF
 from PySide6.QtGui import (
     QColor, QFont, QPainter, QPainterPath, QPen, QBrush, QLinearGradient,
-    QPolygonF, QFontMetrics
+    QPolygonF, QFontMetrics, QPixmap
 )
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QToolTip,
@@ -24,10 +25,11 @@ from PySide6.QtWidgets import (
 
 
 class CloudRFProfileCanvas(QWidget):
-    """High-fidelity Path Profile Canvas with 2D Drone Altitude Tracking."""
+    """High-fidelity Path Profile Canvas with 2D Drone Altitude Tracking and Offscreen Pixmap Caching."""
 
     cursor_tracked_2d = Signal(float, float, float, float, float, float, float)
     # (dist_km, cursor_amsl, cursor_agl, ground_amsl, los_amsl, rx_est_dbm, fspl_db)
+    cursor_left = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -49,6 +51,13 @@ class CloudRFProfileCanvas(QWidget):
         self._active_pos: Optional[QPointF] = None
         self._active_idx: Optional[int] = None
         self._active_amsl: Optional[float] = None
+        self._last_idx: Optional[int] = None
+        self._last_amsl: Optional[float] = None
+        self._bg_cache: Optional[QPixmap] = None
+
+    def resizeEvent(self, event):
+        self._bg_cache = None
+        super().resizeEvent(event)
 
     def set_data(self, profile: Optional[dict], obstructed: bool = False,
                  freq_mhz: float = 868.0, tx_lat: float = 0.0, tx_lon: float = 0.0,
@@ -69,6 +78,9 @@ class CloudRFProfileCanvas(QWidget):
         self._active_pos = None
         self._active_idx = None
         self._active_amsl = None
+        self._last_idx = None
+        self._last_amsl = None
+        self._bg_cache = None
         self.update()
 
     def _get_canvas_bounds(self):
@@ -134,8 +146,9 @@ class CloudRFProfileCanvas(QWidget):
         cursor_agl = cursor_amsl - t
 
         # Avoid redundant sub-pixel recalculations
-        if (getattr(self, "_last_idx", None) == idx and
-                abs(cursor_amsl - getattr(self, "_last_amsl", -999.0)) < 0.5):
+        if (self._last_idx == idx and
+                self._last_amsl is not None and
+                abs(cursor_amsl - self._last_amsl) < 0.6):
             return
 
         self._last_idx = idx
@@ -170,23 +183,23 @@ class CloudRFProfileCanvas(QWidget):
         self._active_pos = None
         self._active_idx = None
         self._active_amsl = None
+        self._last_idx = None
+        self._last_amsl = None
+        self.cursor_left.emit()
         self.update()
 
-    def paintEvent(self, event):
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+    def _render_background_cache(self, b: dict):
+        """Render static background (axes, earth terrain, Fresnel outline, LOS, masts) into QPixmap."""
         W = self.width()
         H = self.height()
-
-        # Dark Canvas Background
-        painter.fillRect(0, 0, W, H, QColor("#090B0E"))
-
-        b = self._get_canvas_bounds()
-        if not b:
-            painter.setPen(QColor("#718096"))
-            painter.setFont(QFont("Segoe UI", 11, QFont.Weight.Bold))
-            painter.drawText(QRectF(0, 0, W, H), Qt.AlignmentFlag.AlignCenter, "No path profile data computed yet")
+        if W <= 0 or H <= 0:
             return
+
+        pixmap = QPixmap(self.size())
+        pixmap.fill(QColor("#090B0E"))
+
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
 
         dists = b["dists"]
         terrain = b["terrain"]
@@ -237,7 +250,7 @@ class CloudRFProfileCanvas(QWidget):
         painter.drawText(QRectF(-60, -10, 120, 20), Qt.AlignmentFlag.AlignCenter, "m AMSL")
         painter.restore()
 
-        # X-axis ticks (approx 8-12 ticks across distance)
+        # X-axis ticks
         num_x_ticks = max(5, min(15, int(pw / 65)))
         x_step = total_dist_km / num_x_ticks
         for i in range(num_x_ticks + 1):
@@ -254,47 +267,53 @@ class CloudRFProfileCanvas(QWidget):
         painter.setFont(QFont("Segoe UI", 8, QFont.Weight.Bold))
         painter.drawText(QRectF(m_left + pw / 2 - 30, H - 16, 60, 14), Qt.AlignmentFlag.AlignCenter, "Km")
 
-        # 2. Dynamic Segmented Terrain Fill & Contour (Green / Yellow / Red based on Fresnel & LOS)
+        # 2. Warm Earth Brown Terrain Body (Authentic Topographic Shading)
         base_y_screen = m_top + ph
+        t_body = QPainterPath()
+        p0_x, p0_y = to_screen(dists[0], terrain[0])
+        t_body.moveTo(p0_x, base_y_screen)
+        t_body.lineTo(p0_x, p0_y)
+        for i in range(1, n):
+            px, py = to_screen(dists[i], terrain[i])
+            t_body.lineTo(px, py)
+        pn_x, _ = to_screen(dists[-1], terrain[-1])
+        t_body.lineTo(pn_x, base_y_screen)
+        t_body.closeSubpath()
+
+        # Rich brown earth gradient (lighter warm brown on ridges to deep dark brown at base)
+        grad = QLinearGradient(0, m_top, 0, base_y_screen)
+        grad.setColorAt(0.0, QColor("#6B4226"))  # Warm mountain sienna
+        grad.setColorAt(0.35, QColor("#52331D")) # Rich earth brown
+        grad.setColorAt(0.75, QColor("#361E10")) # Dark soil brown
+        grad.setColorAt(1.0, QColor("#1D1009"))  # Deep subterranean base
+        painter.setBrush(QBrush(grad))
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.drawPath(t_body)
+
+        # 2b. Terrain Surface Contour Line (Rich Brown #A0522D, with Red highlight for LOS obstructions)
         for i in range(n - 1):
             x1, y1 = to_screen(dists[i], terrain[i])
             x2, y2 = to_screen(dists[i+1], terrain[i+1])
             l1, l2 = los[i], los[i+1]
             t1, t2 = terrain[i], terrain[i+1]
-            fl1, fl2 = f_lower[i], f_lower[i+1]
 
-            # Obstruction & Fresnel analysis for segment [i, i+1]:
-            # 🔴 Red (#FF0000): Segmen puncak bukit/gunung yang menembus garis pandang LOS (obstructed)
             if t1 >= l1 or t2 >= l2:
-                fill_color = QColor(220, 38, 38, 210)   # Red fill
-                line_color = QColor("#FF0000")
-            # 🟡 Yellow (#FFFF00): Segmen tanah kritis yang mulai menyentuh 60% zona Fresnel
-            elif t1 >= fl1 or t2 >= fl2:
-                fill_color = QColor(234, 179, 8, 210)   # Yellow fill
-                line_color = QColor("#FFFF00")
-            # 🟢 Green (#00E600): Segmen tanah yang berada aman di bawah zona Fresnel (> 0.6 F1)
+                # Segment obstructs direct LOS ray
+                line_color = QColor("#EF4444")
+                line_w = 2.6
             else:
-                fill_color = QColor(22, 163, 74, 210)   # Green fill
-                line_color = QColor("#00E600")
+                # Authentic sleek brown terrain surface
+                line_color = QColor("#A0522D")
+                line_w = 2.2
 
-            # Draw vertical trapezoid slice
-            trap = QPolygonF([
-                QPointF(x1, base_y_screen),
-                QPointF(x1, y1),
-                QPointF(x2, y2),
-                QPointF(x2, base_y_screen)
-            ])
-            painter.setBrush(QBrush(fill_color))
-            painter.setPen(Qt.PenStyle.NoPen)
-            painter.drawPolygon(trap)
-
-            # Draw top contour line
-            painter.setPen(QPen(line_color, 2.2))
+            painter.setPen(QPen(line_color, line_w, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
             painter.drawLine(QPointF(x1, y1), QPointF(x2, y2))
 
-        # 3. Fresnel Zone (Dashed Green Curve)
-        pen_fres = QPen(QColor("#48BB78"), 1.2, Qt.PenStyle.DashLine)
+        # 3. Fresnel Zone (Crisp Sky Blue / Cyan Dashed Line - Strictly NO FILL, NO GREEN)
+        pen_fres = QPen(QColor("#38BDF8"), 1.4, Qt.PenStyle.DashLine)
         painter.setPen(pen_fres)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+
         f_lower_path = QPainterPath()
         fx0, fy0 = to_screen(dists[0], f_lower[0])
         f_lower_path.moveTo(fx0, fy0)
@@ -342,130 +361,184 @@ class CloudRFProfileCanvas(QWidget):
         rx_lbl = f"Rx: {self._rx_lat:.5f}, {self._rx_lon:.5f}\n{self._rx_agl:.0f} m AGL"
         painter.drawText(QRectF(rx_tip_x - 146, rx_tip_y - 12, 140, 26), Qt.AlignmentFlag.AlignRight, rx_lbl)
 
-        # 7. Interactive 2D Drone / Target Crosshairs, Slant Beam & Floating HUD
+        # 7. Bottom Right scale tag
+        painter.setPen(QColor("#4A5568"))
+        painter.drawRoundedRect(W - m_right - 70, H - m_bot - 20, 65, 16, 3, 3)
+        painter.setPen(QColor("#718096"))
+        painter.setFont(QFont("Segoe UI", 7))
+        painter.drawText(QRectF(W - m_right - 70, H - m_bot - 20, 65, 16), Qt.AlignmentFlag.AlignCenter, f"{total_dist_km:.2f} km")
+
+        painter.end()
+        self._bg_cache = pixmap
+
+    def paintEvent(self, event):
+        W = self.width()
+        H = self.height()
+        if W <= 0 or H <= 0:
+            return
+
+        painter = QPainter(self)
+        b = self._get_canvas_bounds()
+        if not b:
+            painter.fillRect(0, 0, W, H, QColor("#090B0E"))
+            painter.setPen(QColor("#718096"))
+            painter.setFont(QFont("Segoe UI", 11, QFont.Weight.Bold))
+            painter.drawText(QRectF(0, 0, W, H), Qt.AlignmentFlag.AlignCenter, "No path profile data computed yet")
+            return
+
+        # Check or build cached static background
+        if self._bg_cache is None or self._bg_cache.size() != self.size():
+            self._render_background_cache(b)
+
+        if self._bg_cache is not None:
+            painter.drawPixmap(0, 0, self._bg_cache)
+
+        # Draw interactive hover layer
         if self._active_idx is not None and self._active_amsl is not None:
-            idx = self._active_idx
-            d = dists[idx]
-            t = terrain[idx]
-            l = los[idx]
-            cursor_amsl = self._active_amsl
-            cursor_agl = cursor_amsl - t
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+            self._render_hover_overlay(painter, b)
 
-            # 3D slant range & FSPL
-            tx_amsl = los[0]
-            dh_km = (cursor_amsl - tx_amsl) / 1000.0
-            d_3d_km = math.sqrt(d**2 + dh_km**2)
-            freq = max(1.0, self._frequency_mhz)
-            fspl = 20.0 * math.log10(max(0.001, d_3d_km)) + 20.0 * math.log10(freq) + 32.44
-            rx_est = self._tx_eirp_dbm + self._rx_gain_dbi - fspl
-            if cursor_amsl < t:
-                rx_est -= 50.0
+    def _render_hover_overlay(self, painter: QPainter, b: dict):
+        """Draw interactive crosshairs, slant beam, reticle, and floating HUD overlay."""
+        W = b["W"]
+        H = b["H"]
+        m_left = b["m_left"]
+        m_right = b["m_right"]
+        m_top = b["m_top"]
+        m_bot = b["m_bot"]
+        pw = b["pw"]
+        ph = b["ph"]
+        d_min = b["d_min"]
+        total_dist_km = b["total_dist_km"]
+        y_max = b["y_max"]
+        y_span = b["y_span"]
 
-            # Screen coordinates
-            cx, cy = to_screen(d, cursor_amsl)
-            g_cx, g_cy = to_screen(d, t)
+        dists = b["dists"]
+        terrain = b["terrain"]
+        los = b["los"]
 
-            # A. Real-Time Slant Transmission Beam from Tx Antenna Tip to Drone
-            beam_col = QColor("#38BDF8") if cursor_amsl >= t else QColor("#EF4444")
-            painter.setPen(QPen(beam_col, 1.5, Qt.PenStyle.DashDotLine))
-            painter.drawLine(QPointF(tx_tip_x, tx_tip_y), QPointF(cx, cy))
+        def to_screen(d_val, y_val):
+            sx = m_left + (d_val - d_min) / total_dist_km * pw
+            sy = m_top + (y_max - y_val) / y_span * ph
+            return sx, sy
 
-            # B. 2D Crosshair Guide Lines
-            painter.setPen(QPen(QColor("#38BDF8"), 1.0, Qt.PenStyle.DashLine))
-            # Vertical line
-            painter.drawLine(int(cx), int(m_top), int(cx), int(H - m_bot))
-            # Horizontal line
-            painter.drawLine(int(m_left), int(cy), int(W - m_right), int(cy))
+        idx = self._active_idx
+        d = dists[idx]
+        t = terrain[idx]
+        l = los[idx]
+        cursor_amsl = self._active_amsl
+        cursor_agl = cursor_amsl - t
 
-            # C. Y-axis & X-axis Coordinate Badges
-            painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(QColor("#0284C7"))
-            # Y badge on left axis
-            y_badge = QRectF(m_left - 48, cy - 8, 44, 16)
-            painter.drawRoundedRect(y_badge, 3, 3)
-            painter.setPen(QColor("#FFFFFF"))
-            painter.setFont(QFont("Segoe UI", 7, QFont.Weight.Bold))
-            painter.drawText(y_badge, Qt.AlignmentFlag.AlignCenter, f"{int(cursor_amsl)}m")
+        # 3D slant range & FSPL
+        tx_amsl = los[0]
+        dh_km = (cursor_amsl - tx_amsl) / 1000.0
+        d_3d_km = math.sqrt(d**2 + dh_km**2)
+        freq = max(1.0, self._frequency_mhz)
+        fspl = 20.0 * math.log10(max(0.001, d_3d_km)) + 20.0 * math.log10(freq) + 32.44
+        rx_est = self._tx_eirp_dbm + self._rx_gain_dbi - fspl
+        if cursor_amsl < t:
+            rx_est -= 50.0
 
-            # X badge on bottom axis
-            x_badge = QRectF(cx - 24, H - m_bot + 2, 48, 15)
-            painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(QColor("#0284C7"))
-            painter.drawRoundedRect(x_badge, 3, 3)
-            painter.setPen(QColor("#FFFFFF"))
-            painter.drawText(x_badge, Qt.AlignmentFlag.AlignCenter, f"{d:.2f}km")
+        # Screen coordinates
+        cx, cy = to_screen(d, cursor_amsl)
+        g_cx, g_cy = to_screen(d, t)
+        tx_tip_x, tx_tip_y = to_screen(dists[0], los[0])
 
-            # D. Ground Projection Dot & Drone Reticle
-            painter.setPen(QPen(QColor("#FFFFFF"), 1.2))
-            painter.setBrush(QColor("#10B981"))
-            painter.drawEllipse(QPointF(g_cx, g_cy), 3.5, 3.5)
+        # A. Slant Transmission Beam from Tx Antenna Tip to Drone
+        beam_col = QColor("#38BDF8") if cursor_amsl >= t else QColor("#EF4444")
+        painter.setPen(QPen(beam_col, 1.5, Qt.PenStyle.DashDotLine))
+        painter.drawLine(QPointF(tx_tip_x, tx_tip_y), QPointF(cx, cy))
 
-            # Drone Reticle at (cx, cy)
-            reticle_color = QColor("#38BDF8") if cursor_amsl >= t else QColor("#EF4444")
-            painter.setPen(QPen(reticle_color, 1.8))
-            painter.setBrush(QColor(56, 189, 248, 60))
-            painter.drawEllipse(QPointF(cx, cy), 6.5, 6.5)
-            painter.setBrush(reticle_color)
-            painter.drawEllipse(QPointF(cx, cy), 2.5, 2.5)
+        # B. 2D Crosshair Guide Lines
+        painter.setPen(QPen(QColor("#38BDF8"), 1.0, Qt.PenStyle.DashLine))
+        painter.drawLine(int(cx), int(m_top), int(cx), int(H - m_bot))
+        painter.drawLine(int(m_left), int(cy), int(W - m_right), int(cy))
 
-            # Drone Tag next to reticle
-            drone_tag = f"🛸 {int(cursor_amsl)}m ({cursor_agl:+.0f}m AGL)"
-            painter.setFont(QFont("Segoe UI", 7, QFont.Weight.Bold))
-            painter.setPen(QColor("#FFFFFF"))
-            tag_x = cx + 9 if cx + 120 < W - m_right else cx - 110
-            painter.drawText(QRectF(tag_x, cy - 18, 110, 16), Qt.AlignmentFlag.AlignLeft, drone_tag)
+        # C. Y-axis & X-axis Coordinate Badges
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor("#0284C7"))
+        y_badge = QRectF(m_left - 48, cy - 8, 44, 16)
+        painter.drawRoundedRect(y_badge, 3, 3)
+        painter.setPen(QColor("#FFFFFF"))
+        painter.setFont(QFont("Segoe UI", 7, QFont.Weight.Bold))
+        painter.drawText(y_badge, Qt.AlignmentFlag.AlignCenter, f"{int(cursor_amsl)}m")
 
-            # E. Floating HUD Card
-            hud_w = 205.0
-            hud_h = 110.0
-            hud_margin = 14.0
-            hud_x = cx + hud_margin if cx + hud_w + hud_margin < W - m_right else cx - hud_w - hud_margin
-            hud_y = max(m_top + 4.0, min(H - m_bot - hud_h - 4.0, cy - 20.0))
+        x_badge = QRectF(cx - 24, H - m_bot + 2, 48, 15)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor("#0284C7"))
+        painter.drawRoundedRect(x_badge, 3, 3)
+        painter.setPen(QColor("#FFFFFF"))
+        painter.drawText(x_badge, Qt.AlignmentFlag.AlignCenter, f"{d:.2f}km")
 
-            hud_rect = QRectF(hud_x, hud_y, hud_w, hud_h)
-            painter.setPen(QPen(QColor("#38BDF8"), 1.2))
-            painter.setBrush(QColor(15, 23, 42, 248))  # Dark Slate 97% opacity
-            painter.drawRoundedRect(hud_rect, 6.0, 6.0)
+        # D. Ground Projection Dot & Drone Reticle
+        painter.setPen(QPen(QColor("#FFFFFF"), 1.2))
+        painter.setBrush(QColor("#10B981"))
+        painter.drawEllipse(QPointF(g_cx, g_cy), 3.5, 3.5)
 
-            # HUD Header & Status
-            painter.setFont(QFont("Segoe UI", 8, QFont.Weight.Bold))
-            painter.setPen(QColor("#FFFFFF"))
-            painter.drawText(QRectF(hud_x + 10, hud_y + 8, hud_w - 20, 16), Qt.AlignmentFlag.AlignLeft, f"Distance: {d:.2f} km")
+        reticle_color = QColor("#38BDF8") if cursor_amsl >= t else QColor("#EF4444")
+        painter.setPen(QPen(reticle_color, 1.8))
+        painter.setBrush(QColor(56, 189, 248, 60))
+        painter.drawEllipse(QPointF(cx, cy), 6.5, 6.5)
+        painter.setBrush(reticle_color)
+        painter.drawEllipse(QPointF(cx, cy), 2.5, 2.5)
 
-            if cursor_amsl < t - 2.0:
-                status_text = "UNDERGROUND"
-                status_col = QColor("#EF4444")
-            elif cursor_agl < 15.0:
-                status_text = "LOW ALTITUDE"
-                status_col = QColor("#F59E0B")
-            else:
-                status_text = "AIRBORNE"
-                status_col = QColor("#38BDF8")
+        drone_tag = f"🛸 {int(cursor_amsl)}m ({cursor_agl:+.0f}m AGL)"
+        painter.setFont(QFont("Segoe UI", 7, QFont.Weight.Bold))
+        painter.setPen(QColor("#FFFFFF"))
+        tag_x = cx + 9 if cx + 120 < W - m_right else cx - 110
+        painter.drawText(QRectF(tag_x, cy - 18, 110, 16), Qt.AlignmentFlag.AlignLeft, drone_tag)
 
-            painter.setFont(QFont("Segoe UI", 7, QFont.Weight.Bold))
-            painter.setPen(status_col)
-            painter.drawText(QRectF(hud_x + hud_w - 85, hud_y + 9, 75, 14), Qt.AlignmentFlag.AlignRight, status_text)
+        # E. Floating HUD Card
+        hud_w = 205.0
+        hud_h = 110.0
+        hud_margin = 14.0
+        hud_x = cx + hud_margin if cx + hud_w + hud_margin < W - m_right else cx - hud_w - hud_margin
+        hud_y = max(m_top + 4.0, min(H - m_bot - hud_h - 4.0, cy - 20.0))
 
-            # HUD Metrics Lines
-            painter.setFont(QFont("Segoe UI", 8))
-            painter.setPen(QColor("#FFFFFF"))
-            painter.drawText(QRectF(hud_x + 10, hud_y + 26, hud_w - 20, 14), Qt.AlignmentFlag.AlignLeft, f"Drone Alt: {cursor_amsl:.1f} m AMSL")
+        hud_rect = QRectF(hud_x, hud_y, hud_w, hud_h)
+        painter.setPen(QPen(QColor("#38BDF8"), 1.2))
+        painter.setBrush(QColor(15, 23, 42, 248))  # Dark Slate 97% opacity
+        painter.drawRoundedRect(hud_rect, 6.0, 6.0)
 
-            agl_col = QColor("#38BDF8") if cursor_agl >= 0 else QColor("#EF4444")
-            painter.setPen(agl_col)
-            painter.drawText(QRectF(hud_x + 10, hud_y + 42, hud_w - 20, 14), Qt.AlignmentFlag.AlignLeft, f"Height AGL: {cursor_agl:+.1f} m AGL")
+        # HUD Header & Status
+        painter.setFont(QFont("Segoe UI", 8, QFont.Weight.Bold))
+        painter.setPen(QColor("#FFFFFF"))
+        painter.drawText(QRectF(hud_x + 10, hud_y + 8, hud_w - 20, 16), Qt.AlignmentFlag.AlignLeft, f"Distance: {d:.2f} km")
 
-            painter.setPen(QColor("#94A3B8"))
-            painter.drawText(QRectF(hud_x + 10, hud_y + 58, hud_w - 20, 14), Qt.AlignmentFlag.AlignLeft, f"Ground: {t:.1f} m | LOS: {l:.1f} m")
+        if cursor_amsl < t - 2.0:
+            status_text = "UNDERGROUND"
+            status_col = QColor("#EF4444")
+        elif cursor_agl < 15.0:
+            status_text = "LOW ALTITUDE"
+            status_col = QColor("#F59E0B")
+        else:
+            status_text = "AIRBORNE"
+            status_col = QColor("#38BDF8")
 
-            rx_col = QColor("#4ADE80") if rx_est >= -85 else (QColor("#F59E0B") if rx_est >= -105 else QColor("#EF4444"))
-            painter.setPen(rx_col)
-            painter.setFont(QFont("Segoe UI", 8, QFont.Weight.Bold))
-            painter.drawText(QRectF(hud_x + 10, hud_y + 74, hud_w - 20, 14), Qt.AlignmentFlag.AlignLeft, f"Est Rx: {rx_est:.1f} dBm")
+        painter.setFont(QFont("Segoe UI", 7, QFont.Weight.Bold))
+        painter.setPen(status_col)
+        painter.drawText(QRectF(hud_x + hud_w - 85, hud_y + 9, 75, 14), Qt.AlignmentFlag.AlignRight, status_text)
 
-            painter.setFont(QFont("Segoe UI", 7))
-            painter.setPen(QColor("#93C5FD"))
-            painter.drawText(QRectF(hud_x + 10, hud_y + 90, hud_w - 20, 14), Qt.AlignmentFlag.AlignLeft, f"FSPL: {fspl:.1f} dB | 3D: {d_3d_km:.2f} km")
+        # HUD Metrics Lines
+        painter.setFont(QFont("Segoe UI", 8))
+        painter.setPen(QColor("#FFFFFF"))
+        painter.drawText(QRectF(hud_x + 10, hud_y + 26, hud_w - 20, 14), Qt.AlignmentFlag.AlignLeft, f"Drone Alt: {cursor_amsl:.1f} m AMSL")
+
+        agl_col = QColor("#38BDF8") if cursor_agl >= 0 else QColor("#EF4444")
+        painter.setPen(agl_col)
+        painter.drawText(QRectF(hud_x + 10, hud_y + 42, hud_w - 20, 14), Qt.AlignmentFlag.AlignLeft, f"Height AGL: {cursor_agl:+.1f} m AGL")
+
+        painter.setPen(QColor("#94A3B8"))
+        painter.drawText(QRectF(hud_x + 10, hud_y + 58, hud_w - 20, 14), Qt.AlignmentFlag.AlignLeft, f"Ground: {t:.1f} m | LOS: {l:.1f} m")
+
+        rx_col = QColor("#4ADE80") if rx_est >= -85 else (QColor("#F59E0B") if rx_est >= -105 else QColor("#EF4444"))
+        painter.setPen(rx_col)
+        painter.setFont(QFont("Segoe UI", 8, QFont.Weight.Bold))
+        painter.drawText(QRectF(hud_x + 10, hud_y + 74, hud_w - 20, 14), Qt.AlignmentFlag.AlignLeft, f"Est Rx: {rx_est:.1f} dBm")
+
+        painter.setFont(QFont("Segoe UI", 7))
+        painter.setPen(QColor("#93C5FD"))
+        painter.drawText(QRectF(hud_x + 10, hud_y + 90, hud_w - 20, 14), Qt.AlignmentFlag.AlignLeft, f"FSPL: {fspl:.1f} dB | 3D: {d_3d_km:.2f} km")
 
         # Bottom Right scale tag
         painter.setPen(QColor("#4A5568"))
@@ -587,10 +660,9 @@ class CloudRFPathProfilePanel(QWidget):
             lbl.setTextFormat(Qt.TextFormat.RichText)
             return lbl
 
-        legend_row.addWidget(_legend_item("■", "Aman (>0.6 F1)", "#00E600"))
-        legend_row.addWidget(_legend_item("■", "Kritis (≤0.6 F1)", "#FFFF00"))
-        legend_row.addWidget(_legend_item("■", "Terhalang (LOS)", "#FF0000"))
-        legend_row.addWidget(_legend_item("---", "Fresnel", "#48BB78"))
+        legend_row.addWidget(_legend_item("—", "Tanah (Earth)", "#A0522D"))
+        legend_row.addWidget(_legend_item("—", "Terhalang (LOS)", "#EF4444"))
+        legend_row.addWidget(_legend_item("---", "Fresnel (1.0 F1)", "#38BDF8"))
         legend_row.addWidget(_legend_item("—", "LOS", "#22C55E"))
         right_col.addLayout(legend_row)
 
@@ -600,8 +672,10 @@ class CloudRFPathProfilePanel(QWidget):
         # ---------------------------------------------------------------------
         # Path Profile Canvas
         # ---------------------------------------------------------------------
+        self._last_ipc_time = 0.0
         self.canvas = CloudRFProfileCanvas(self)
         self.canvas.cursor_tracked_2d.connect(self._on_cursor_tracked_2d)
+        self.canvas.cursor_left.connect(self._on_cursor_left)
         main_layout.addWidget(self.canvas, 1)
 
     def update_link_results(self, link: dict, params: dict):
@@ -691,18 +765,28 @@ class CloudRFPathProfilePanel(QWidget):
                 f"background: rgba(26, 32, 44, 0.85); border: 1px solid {sig_col}55; border-radius: 6px;"
             )
 
+    def _on_cursor_left(self):
+        """Restore default received power badge when cursor leaves profile canvas."""
+        self._set_signal_badge(self._default_rx_dbm)
+
     def _on_cursor_tracked_2d(self, dist_km: float, cursor_amsl: float, cursor_agl: float,
                              ground_m: float, los_m: float, rx_est_dbm: float, fspl_db: float):
         if not self._params_data:
             return
-        try:
-            tx_lat = float(self._params_data.get("tx_lat", 0.0))
-            tx_lon = float(self._params_data.get("tx_lon", 0.0))
-            rx_lat = float(self._params_data.get("rx_lat", 0.0))
-            rx_lon = float(self._params_data.get("rx_lon", 0.0))
-            az = _initial_bearing(tx_lat, tx_lon, rx_lat, rx_lon)
-            lat, lon = _destination_point(tx_lat, tx_lon, az, dist_km)
-            self.map_point_tracked.emit(lat, lon, dist_km, cursor_amsl, cursor_agl, ground_m)
-            self._set_signal_badge(rx_est_dbm)
-        except Exception:
-            pass
+
+        # Throttle Chromium WebEngine map IPC to max 30 FPS (33ms) to prevent UI stutter
+        now = time.monotonic()
+        if now - getattr(self, "_last_ipc_time", 0.0) >= 0.033:
+            self._last_ipc_time = now
+            try:
+                tx_lat = float(self._params_data.get("tx_lat", 0.0))
+                tx_lon = float(self._params_data.get("tx_lon", 0.0))
+                rx_lat = float(self._params_data.get("rx_lat", 0.0))
+                rx_lon = float(self._params_data.get("rx_lon", 0.0))
+                az = _initial_bearing(tx_lat, tx_lon, rx_lat, rx_lon)
+                lat, lon = _destination_point(tx_lat, tx_lon, az, dist_km)
+                self.map_point_tracked.emit(lat, lon, dist_km, cursor_amsl, cursor_agl, ground_m)
+            except Exception:
+                pass
+
+        self._set_signal_badge(rx_est_dbm)

@@ -468,7 +468,10 @@ def _atomic_gdal_output(dst_path: str):
 def _run(cmd: list[str]) -> None:
     """Run a GDAL subprocess, raising DemResolveError with stderr on failure."""
     try:
-        subprocess.run(cmd, check=True, capture_output=True, text=True)
+        kwargs = {}
+        if os.name == "nt":
+            kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+        subprocess.run(cmd, check=True, capture_output=True, text=True, **kwargs)
     except FileNotFoundError as exc:
         raise DemResolveError(f"GDAL tool not found: {cmd[0]} ({exc})")
     except subprocess.CalledProcessError as exc:
@@ -480,8 +483,11 @@ def _run(cmd: list[str]) -> None:
 
 def _gdal_extent(tif_path: str) -> tuple[float, float, float, float]:
     """Return the (minx, miny, maxx, maxy) WGS84 extent of a raster."""
+    kwargs = {}
+    if os.name == "nt":
+        kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
     out = subprocess.run(
-        ["gdalinfo", "-json", tif_path], capture_output=True, text=True
+        ["gdalinfo", "-json", tif_path], capture_output=True, text=True, **kwargs
     )
     if out.returncode != 0:
         raise DemResolveError(f"gdalinfo failed for {tif_path}")
@@ -644,9 +650,12 @@ def _sample_elevation(vrt: str, lat: float, lon: float) -> Optional[float]:
             pass
 
     # Fallback to gdallocationinfo CLI
+    kwargs = {}
+    if os.name == "nt":
+        kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
     out = subprocess.run(
         ["gdallocationinfo", "-valonly", "-wgs84", vrt, str(lon), str(lat)],
-        capture_output=True, text=True,
+        capture_output=True, text=True, **kwargs
     )
     if out.returncode != 0:
         return None
