@@ -29,20 +29,20 @@ typedef struct _image_ctx{
 	void *_dt;
 } image_ctx_t, *pimage_ctx_t;
 
-typedef int _init(image_ctx_t*);
-typedef int _add_pixel(image_ctx_t*,const uint8_t,const uint8_t,const uint8_t,const uint8_t);
-typedef int _set_pixel(image_ctx_t*,const size_t,const size_t,const uint8_t,const uint8_t,const uint8_t,const uint8_t);
-typedef int _get_pixel(image_ctx_t*,const size_t,const size_t,const uint8_t*,const uint8_t*,const uint8_t*,const uint8_t*);
-typedef int _write(image_ctx_t*,FILE*);
-typedef void _free(image_ctx_t*);
+typedef int _image_init(image_ctx_t*);
+typedef int _image_add_pixel(image_ctx_t*,const uint8_t,const uint8_t,const uint8_t,const uint8_t);
+typedef int _image_set_pixel(image_ctx_t*,const size_t,const size_t,const uint8_t,const uint8_t,const uint8_t,const uint8_t);
+typedef int _image_get_pixel(image_ctx_t*,const size_t,const size_t,const uint8_t*,const uint8_t*,const uint8_t*,const uint8_t*);
+typedef int _image_write(image_ctx_t*,FILE*);
+typedef void _image_free(image_ctx_t*);
 
 typedef struct _image_dispatch_table{
-	_init		*init;
-	_add_pixel	*add_pixel;
-	_set_pixel	*set_pixel;
-	_get_pixel	*get_pixel;
-	_write		*write;
-	_free		*free;
+	_image_init		*init;
+	_image_add_pixel	*add_pixel;
+	_image_set_pixel	*set_pixel;
+	_image_get_pixel	*get_pixel;
+	_image_write		*write;
+	_image_free		*free;
 } image_dispatch_table_t;
 
 int image_set_format(int);

@@ -267,18 +267,18 @@ int load_library(image_dispatch_table_t *dt){
 		return EINVAL;
 	}
 	/* Perform symbol lookup */
-	if((dt->init = (_init*)dlsym(hndl,"lib_init")) == NULL ||
-		(dt->add_pixel = (_add_pixel*)dlsym(hndl,"lib_add_pixel")) == NULL ||
-		(dt->write = (_write*)dlsym(hndl,"lib_write")) == NULL){
+	if((dt->init = (_image_init*)dlsym(hndl,"lib_init")) == NULL ||
+		(dt->add_pixel = (_image_add_pixel*)dlsym(hndl,"lib_add_pixel")) == NULL ||
+		(dt->write = (_image_write*)dlsym(hndl,"lib_write")) == NULL){
 		fprintf(stderr,"Invalid image processing module specified\n\t%s",dlerror());
 		success = EINVAL;
 		(void) dlclose(hndl);
 	}
 	/* Lookup optional symbols, these can return NULL */
 	if(success == 0){
-		dt->get_pixel = (_get_pixel*)dlsym(hndl,"lib_get_pixel");
-		dt->set_pixel = (_set_pixel*)dlsym(hndl,"lib_set_pixel");
-		dt->free = (_free*)dlsym(hndl,"lib_free");
+		dt->get_pixel = (_image_get_pixel*)dlsym(hndl,"lib_get_pixel");
+		dt->set_pixel = (_image_set_pixel*)dlsym(hndl,"lib_set_pixel");
+		dt->free = (_image_free*)dlsym(hndl,"lib_free");
 	}
 
 	return success;
