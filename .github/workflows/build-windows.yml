@@ -2,10 +2,10 @@ name: Build Windows Standalone Installer
 
 on:
   push:
-    branches: [ master, main ]
+    branches: [ '**' ]
     tags: [ 'v*' ]
   pull_request:
-    branches: [ master, main ]
+    branches: [ '**' ]
   workflow_dispatch:
 
 jobs:
@@ -68,10 +68,12 @@ jobs:
       run: |
         python scripts/package_windows.py
 
+    - name: Install Inno Setup
+      run: choco install innosetup
+
     - name: Compile Windows Installer (Inno Setup)
-      uses: Techcable/inno-setup-action@v1
-      with:
-        path: scripts/installer.iss
+      run: |
+        & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" scripts/installer.iss
 
     - name: Upload Windows Standalone Folder Artifact
       uses: actions/upload-artifact@v4
