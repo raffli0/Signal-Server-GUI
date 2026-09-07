@@ -389,14 +389,47 @@ class ParameterForm(QWidget):
         self._wire_threshold_pair(dbm, uv)
         return dbm, uv, container
 
-    def _sub_label(self, text: str) -> QLabel:
-        """Small uppercase group divider used inside a merged section."""
-        lbl = QLabel(text.upper())
+    def _sub_label(self, text: str, icon: str = "") -> QWidget:
+        """Clear, prominent visual sub-group divider inside an accordion section."""
+        if not icon:
+            t_low = text.lower()
+            if any(k in t_low for k in ("power", "feeder", "rf", "sensitivity")):
+                icon = "radio"
+            elif any(k in t_low for k in ("pattern", "antenna", "direction")):
+                icon = "antenna"
+            elif any(k in t_low for k in ("site", "location", "position", "frequency")):
+                icon = "tower"
+
+        banner = QFrame()
+        banner.setStyleSheet("""
+            QFrame {
+                background-color: #1A1F26;
+                border-left: 3px solid #3182CE;
+                border-radius: 3px;
+            }
+        """)
+        b_layout = QHBoxLayout(banner)
+        b_layout.setContentsMargins(8, 5, 8, 5)
+        b_layout.setSpacing(6)
+
+        if icon:
+            icon_lbl = QLabel()
+            icon_lbl.setPixmap(_pixmap(icon, 13, "#63B3ED"))
+            b_layout.addWidget(icon_lbl)
+
+        lbl = QLabel(text)
         lbl.setStyleSheet(
-            "color: #718096; font-size: 10px; font-weight: 700; "
-            "letter-spacing: 0.5px; padding-top: 6px; padding-bottom: 2px;"
+            "color: #F7FAFC; font-size: 11px; font-weight: 700; "
+            "letter-spacing: 0.3px;"
         )
-        return lbl
+        b_layout.addWidget(lbl)
+        b_layout.addStretch(1)
+
+        wrapper = QWidget()
+        w_layout = QVBoxLayout(wrapper)
+        w_layout.setContentsMargins(0, 10, 0, 4)
+        w_layout.addWidget(banner)
+        return wrapper
 
     def _add_gated_row(self, form_layout: QFormLayout, label_text: str,
                        widget: QWidget, tooltip: str = "", gate_key: str = None
@@ -486,6 +519,11 @@ class ParameterForm(QWidget):
                 color: #E2E8F0;
                 selection-background-color: #3182CE;
             }
+            QComboBox:disabled {
+                background-color: #14171A;
+                color: #A0AEC0;
+                border: 1px solid #2D3748;
+            }
         """
         btn_ss = """
             QPushButton {
@@ -504,8 +542,9 @@ class ParameterForm(QWidget):
         # -- 1. Transmitter (Tx)
         # =========================================================================
         fl_tx = self._section("tx", _SECTION_ICON["tx"], "Transmitter (Tx)", expanded=False)
-        self.units = QComboBox(); self.units.addItems(["Metric", "Imperial"])
-        self._add_row_with_info(fl_tx, "Units", self.units, "Unit system (Metric / Imperial)")
+        # Units kept headless for collect()/load() backward compatibility without showing in form
+        self.units = QComboBox(); self.units.addItems(["Metric", "Imperial"]); self.units.setCurrentText("Metric")
+        fl_tx.addRow(self._sub_label("Site Location & Frequency", "tower"))
         self.tx_name = QLineEdit()
         self.tx_name.setPlaceholderText("Site name (e.g. BTS-01)")
         self._add_row_with_info(fl_tx, "Site name", self.tx_name, "Label for this transmitter site")
@@ -529,7 +568,7 @@ class ParameterForm(QWidget):
         self._add_row_with_info(fl_tx, "Frequency (MHz)", self.frequency, "Operating frequency in MHz")
 
         # Tx Signal & Feeder
-        fl_tx.addRow(self._sub_label("RF Power & Feeder"))
+        fl_tx.addRow(self._sub_label("RF Power & Feeder", "radio"))
         self.rf_power = FocusWheelSpinBox(); self.rf_power.setRange(0, 1e7); self.rf_power.setValue(1)
         self.tx_dbm_label = QLabel("≈ 30.0 dBm")
         self.tx_dbm_label.setStyleSheet("color: #319795; font-size: 11px; font-weight: bold;")
@@ -557,7 +596,7 @@ class ParameterForm(QWidget):
             w.valueChanged.connect(self._update_erp)
 
         # Tx Antenna Pattern & Direction
-        fl_tx.addRow(self._sub_label("Antenna Pattern & Direction"))
+        fl_tx.addRow(self._sub_label("Antenna Pattern & Direction", "antenna"))
         self.ant_combo = QComboBox()
         self.ant_combo.setStyleSheet(input_ss)
         self.ant_btn = QPushButton()
@@ -625,6 +664,7 @@ class ParameterForm(QWidget):
         # -- 2. Receiver (Rx)
         # =========================================================================
         fl_rx = self._section("rx", _SECTION_ICON["rx"], "Receiver (Rx)", expanded=False)
+        fl_rx.addRow(self._sub_label("Receiver Site & Location", "tower"))
         self.rx_name = QLineEdit()
         self.rx_name.setPlaceholderText("Site name (e.g. UE-01)")
         self._add_row_with_info(fl_rx, "Site name", self.rx_name, "Label for this receiver site")
@@ -644,7 +684,7 @@ class ParameterForm(QWidget):
         fl_rx.addRow(self.rx_amsl)
         self.rx_height.valueChanged.connect(lambda _: self._refresh_amsl_labels())
         # Rx Signal & Feeder
-        fl_rx.addRow(self._sub_label("RF Power & Feeder"))
+        fl_rx.addRow(self._sub_label("RF Power & Sensitivity", "radio"))
         self.rx_power = FocusWheelSpinBox(); self.rx_power.setRange(0, 1e7); self.rx_power.setValue(1)
         self.rx_dbm_label = QLabel("≈ 30.0 dBm")
         self.rx_dbm_label.setStyleSheet("color: #319795; font-size: 11px; font-weight: bold;")
@@ -819,21 +859,10 @@ class ParameterForm(QWidget):
         self._dem_fine_step.setStyleSheet("color:#CBD5E0; font-size:11px;")
         fl_dem.addRow(self._dem_fine_step)
 
-        # Clutter & Obstacles
-        # self.clutter_btn = QPushButton("Select clutter (.clt)...")
-        # self.clutter_btn.setStyleSheet(btn_ss)
-        # self.clutter_path = QLineEdit()
-        # self.clutter_path.setReadOnly(True)
-        # self.clutter_path.setPlaceholderText("No clutter file")
-        # self.clutter_path.setStyleSheet("background: #1B1E22; color: #A0AEC0; border: 1px solid #3F474F; border-radius: 3px; padding: 3px; font-size: 10px;")
-        # self.clutter_btn.clicked.connect(lambda: self._pick(self.clutter_path, "Clutter (*.clt)"))
-        # fl_dem.addRow(self.clutter_btn, self.clutter_path)
-        # self.gc = FocusWheelSpinBox(); self.gc.setRange(0, 1000); self.gc.setValue(0)
-        # self._add_row_with_info(fl_dem, "Ground clutter (m)", self.gc, "Clutter height in meters")
-        # self.obstacles = QPlainTextEdit(); self.obstacles.setPlaceholderText("lat,lon,height per line (-udt)")
-        # self.obstacles.setMaximumHeight(50)
-        # self.obstacles.setStyleSheet("background: #1B1E22; color: #E2E8F0; border: 1px solid #3F474F; font-size: 11px;")
-        # fl_dem.addRow("Obstacles", self.obstacles)
+        # Clutter & Obstacles (kept headless so collect/load and backend remain functional without error)
+        self.clutter_path = QLineEdit()
+        self.gc = FocusWheelSpinBox(); self.gc.setRange(0, 1000); self.gc.setValue(0)
+        self.obstacles = QPlainTextEdit()
 
         self.btn_export_dem = QPushButton("Export DEM .tif untuk QGIS")
         self.btn_export_dem.setStyleSheet(btn_ss)
@@ -846,8 +875,10 @@ class ParameterForm(QWidget):
         # =========================================================================
         fl_out = self._section("output", _SECTION_ICON["output"], "Output & Visualization", expanded=False)
         self.engine = QComboBox(); self.engine.addItems(list(params_mod.ENGINES.keys()))
-        self.engine.setCurrentText("LIDAR")
-        self._add_row_with_info(fl_out, "Engine", self.engine, "Signal-Server engine build")
+        self.engine.setCurrentText("Standard")
+        self._add_row_with_info(fl_out, "Engine", self.engine, "Signal-Server engine build (Standard/HD = SDF; LIDAR = .asc)")
+        self.engine.currentTextChanged.connect(self._on_engine_changed)
+        self._on_engine_changed(self.engine.currentText())
 
         self.radius = FocusWheelSpinBox(); self.radius.setRange(0.1, 10000); self.radius.setValue(2)
         self._add_row_with_info(fl_out, "Radius (km)", self.radius, "Plot coverage radius in km")
@@ -872,12 +903,60 @@ class ParameterForm(QWidget):
         self._add_row_with_info(fl_out, "Map segments", self.map_segments,
                                 "Partisi multithreading engine (4–360). Rekomendasi: 16 (atau auto core CPU) untuk kecepatan optimal dan stabilitas tanpa race condition.")
 
-        self.color_btn = QPushButton("Color table...")
-        self.color_btn.setStyleSheet(btn_ss)
+        # Color table selection with fast dropdown and Visual Palette Manager
+        self.color_combo = QComboBox()
+        self.color_combo.setStyleSheet(input_ss)
+        self.color_btn = QPushButton()
+        self.color_btn.setIcon(self._icon("palette", 14, "#CBD5E0"))
+        self.color_btn.setToolTip("Buka Color Palette Manager (Visual Create & My Colours)...")
+        self.color_btn.setFixedSize(28, 24)
+        self.color_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #2D3748;
+                border: 1px solid #3F474F;
+                border-radius: 3px;
+            }
+            QPushButton:hover {
+                background-color: #3182CE;
+                border-color: #4299E1;
+            }
+            QPushButton:pressed {
+                background-color: #2B6CB0;
+            }
+        """)
+        self.color_btn.clicked.connect(self._open_color_manager)
+
+        self.color_folder_btn = QPushButton()
+        self.color_folder_btn.setIcon(self._icon("folder", 14, "#CBD5E0"))
+        self.color_folder_btn.setToolTip("Cari berkas skema warna (*.dcf, *.scf, *.dat) manual...")
+        self.color_folder_btn.setFixedSize(28, 24)
+        self.color_folder_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #2D3748;
+                border: 1px solid #3F474F;
+                border-radius: 3px;
+            }
+            QPushButton:hover {
+                background-color: #3182CE;
+                border-color: #4299E1;
+            }
+            QPushButton:pressed {
+                background-color: #2B6CB0;
+            }
+        """)
+        self.color_folder_btn.clicked.connect(self._pick_color)
+
+        color_row = QWidget()
+        color_l = QHBoxLayout(color_row)
+        color_l.setContentsMargins(0, 0, 0, 0)
+        color_l.setSpacing(4)
+        color_l.addWidget(self.color_combo, 1)
+        color_l.addWidget(self.color_btn)
+        color_l.addWidget(self.color_folder_btn)
+
         self.color_path = QLineEdit()
+        self.color_path.setVisible(False)
         self.color_path.setReadOnly(True)
-        self.color_path.setPlaceholderText("Default: splat-classic.dcf")
-        self.color_path.setStyleSheet("background: #1B1E22; color: #A0AEC0; border: 1px solid #3F474F; border-radius: 3px; padding: 3px; font-size: 10px;")
         default_color = os.path.join(
             os.path.dirname(__file__), "resources", "radiomobile.dcf")
         if not os.path.exists(default_color) and self.ss_root:
@@ -885,8 +964,12 @@ class ParameterForm(QWidget):
         if os.path.exists(default_color):
             self.color_path.setText(default_color)
         self._color_user_chosen = False
-        self.color_btn.clicked.connect(self._pick_color)
-        fl_out.addRow(self.color_btn, self.color_path)
+
+        self._add_row_with_info(fl_out, "Color table", color_row, "Skema warna coverage (.dcf) atau buka Palette Manager visual")
+        self.color_combo.currentIndexChanged.connect(self._on_color_combo_changed)
+        self._populate_color_combo()
+        if os.path.exists(default_color):
+            self._sync_color_combo(default_color)
 
         self.dbm_color = QCheckBox("dBm colour scale")
         self.dbm_color.setChecked(True)
@@ -1063,6 +1146,88 @@ class ParameterForm(QWidget):
         if p:
             label.setText(p)
 
+    def _open_color_manager(self) -> None:
+        """Open the visual Color Palette Manager dialog."""
+        from .color_manager import ColorManagerDialog
+        dlg = ColorManagerDialog(current_color_file=self.color_path.text(), signal_server_root=self.ss_root, parent=self)
+        dlg.palette_applied.connect(self.set_color_file)
+        dlg.exec()
+
+    def _populate_color_combo(self) -> None:
+        """Populate color scheme dropdown with discovered and standard palettes."""
+        self.color_combo.blockSignals(True)
+        try:
+            self.color_combo.clear()
+            from . import color_manager
+            palettes = color_manager.discover_all_palettes(self.ss_root)
+            for p in palettes:
+                self.color_combo.addItem(p.name, p.file_path or "")
+            self.color_combo.addItem("Manage palettes...", "__manager__")
+            self.color_combo.addItem("Custom file (*.dcf, *.dat)...", "__custom__")
+        except Exception:
+            pass
+        finally:
+            self.color_combo.blockSignals(False)
+
+    def _on_color_combo_changed(self, idx: int) -> None:
+        if idx < 0:
+            return
+        data = self.color_combo.itemData(idx)
+        if data == "__manager__":
+            self._open_color_manager()
+            return
+        if data == "__custom__":
+            self._pick_color()
+            return
+        self.set_color_file(str(data or ""))
+
+    def set_color_file(self, path: str | None) -> None:
+        """Set the active color table path and synchronize dropdown."""
+        p = (path or "").strip()
+        self.color_path.setText(p)
+        if p and not p.lower().endswith(".dat"):
+            self._color_user_chosen = True
+        self._sync_color_combo(p)
+
+        # Auto-align RX threshold if palette minimum level is lower than current threshold
+        if p and os.path.exists(p):
+            try:
+                from . import rm_style
+                with open(p, "r", encoding="utf-8", errors="replace") as fh:
+                    bands = rm_style.parse_dcf_levels(fh.read())
+                if bands:
+                    min_lvl = min(lvl for lvl, _ in bands)
+                    if self.rx_thr.value() > min_lvl:
+                        self.rx_thr.setValue(float(min_lvl))
+            except Exception:
+                pass
+
+    def _sync_color_combo(self, path: str | None) -> None:
+        val = (path or "").strip()
+        self.color_combo.blockSignals(True)
+        try:
+            if not val:
+                return
+            val_norm = os.path.normpath(val)
+            val_base = os.path.splitext(os.path.basename(val))[0].lower()
+
+            for i in range(self.color_combo.count()):
+                d = self.color_combo.itemData(i)
+                if d and d not in ("__manager__", "__custom__"):
+                    d_str = str(d)
+                    if d_str == val or os.path.normpath(d_str) == val_norm or \
+                       os.path.splitext(os.path.basename(d_str))[0].lower() == val_base:
+                        self.color_combo.setCurrentIndex(i)
+                        return
+
+            name = os.path.basename(val)
+            label = f"Custom: {name}"
+            insert_pos = max(0, self.color_combo.count() - 2)
+            self.color_combo.insertItem(insert_pos, label, val)
+            self.color_combo.setCurrentIndex(insert_pos)
+        finally:
+            self.color_combo.blockSignals(False)
+
     def _pick_color(self) -> None:
         start_dir = None
         if self.ss_root and os.path.isdir(os.path.join(self.ss_root, "color")):
@@ -1073,21 +1238,9 @@ class ParameterForm(QWidget):
                 start_dir = bundled
         p = _browse(self, "Select color table", "Color (*.dcf *.scf *.dat)", start_dir)
         if p:
-            self.color_path.setText(p)
-            if not p.lower().endswith(".dat"):
-                self._color_user_chosen = True
-            # Auto-align RX threshold if palette minimum level is lower than current threshold
-            if os.path.exists(p):
-                try:
-                    from . import rm_style
-                    with open(p, "r", encoding="utf-8", errors="replace") as fh:
-                        bands = rm_style.parse_dcf_levels(fh.read())
-                    if bands:
-                        min_lvl = min(lvl for lvl, _ in bands)
-                        if self.rx_thr.value() > min_lvl:
-                            self.rx_thr.setValue(float(min_lvl))
-                except Exception:
-                    pass
+            self.set_color_file(p)
+        else:
+            self._sync_color_combo(self.color_path.text())
 
     def _pick_dir(self) -> None:
         d = QFileDialog.getExistingDirectory(self, "Select SDF directory")
@@ -1225,6 +1378,30 @@ class ParameterForm(QWidget):
         else:
             self._sync_antenna_combo(self.ant_path.text())
 
+    def _on_engine_changed(self, engine_name: str) -> None:
+        """Lock terrain format to match engine, preventing invalid combinations."""
+        engine_name = (engine_name or "").strip()
+        self.terrain.blockSignals(True)
+        try:
+            if engine_name in ("Standard", "HD"):
+                self.terrain.setCurrentIndex(0)  # "SDF (terrain)"
+                self.terrain.setEnabled(False)
+                self.terrain.setToolTip(f"Terkunci ke SDF (terrain) karena Engine '{engine_name}' menggunakan format SDF.")
+                self.sdf_btn.setVisible(True)
+                self.sdf_path.setVisible(True)
+                self.lidar_btn.setVisible(False)
+                self.lidar_path.setVisible(False)
+            elif engine_name == "LIDAR":
+                self.terrain.setCurrentIndex(1)  # "LIDAR (.asc)"
+                self.terrain.setEnabled(False)
+                self.terrain.setToolTip("Terkunci ke LIDAR (.asc) karena Engine 'LIDAR' menggunakan berkas .asc.")
+                self.sdf_btn.setVisible(False)
+                self.sdf_path.setVisible(False)
+                self.lidar_btn.setVisible(True)
+                self.lidar_path.setVisible(True)
+        finally:
+            self.terrain.blockSignals(False)
+
     def _update_demnas_visibility(self) -> None:
         idx = self.dem_source.currentIndex()
         offline = idx in (1, 2)
@@ -1345,7 +1522,9 @@ class ParameterForm(QWidget):
 
         climate = self.climate.currentData() or None
         dem_res_map = {0: 3, 1: 1, 2: 15}
-        units = "metric" if self.units.currentText() == "Metric" else "imperial"
+        units = "metric"
+        if hasattr(self, "units"):
+            units = "metric" if self.units.currentText() == "Metric" else "imperial"
 
         two_ray_val = self.two_rays.currentData()
         if two_ray_val is None:
@@ -1420,7 +1599,8 @@ class ParameterForm(QWidget):
         if not isinstance(d, dict):
             return
         # Site / Tx
-        self.units.setCurrentText("Metric" if d.get("units", "metric") == "metric" else "Imperial")
+        if hasattr(self, "units"):
+            self.units.setCurrentText("Metric" if d.get("units", "metric") == "metric" else "Imperial")
         self.tx_name.setText(d.get("tx_name") or "")
         self.tx_network.setText(d.get("tx_network") or "")
         self.tx_coord.set(d.get("tx_lat"), d.get("tx_lon"))
@@ -1480,11 +1660,16 @@ class ParameterForm(QWidget):
             if idx < 0:                       # stale/unknown value -> default
                 idx = 0
             self.climate.setCurrentIndex(idx)
-        self.clutter_path.setText(d.get("clutter_file") or "")
-        self.gc.setValue(float(d.get("ground_clutter", 0)))
-        self.obstacles.setPlainText("\n".join(str(o) for o in d.get("obstacles", [])))
+        if hasattr(self, "clutter_path"):
+            self.clutter_path.setText(d.get("clutter_file") or "")
+        if hasattr(self, "gc"):
+            self.gc.setValue(float(d.get("ground_clutter", 0)))
+        if hasattr(self, "obstacles"):
+            self.obstacles.setPlainText("\n".join(str(o) for o in d.get("obstacles", [])))
         # Output / Engine
-        self.engine.setCurrentText(d.get("engine", "LIDAR"))
+        engine_name = d.get("engine", "Standard")
+        self.engine.setCurrentText(engine_name)
+        self._on_engine_changed(engine_name)
         if d.get("dem_kind") == "srtm" or d.get("dem_source") == "srtm":
             self.dem_source.setCurrentIndex(2)
         elif d.get("dem_source") == "offline":
@@ -1493,7 +1678,6 @@ class ParameterForm(QWidget):
             self.dem_source.setCurrentIndex(0)
         self.demnas_dir.setText(d.get("demnas_dir") or "")
         self._update_demnas_visibility()
-        self.terrain.setCurrentIndex(1 if d.get("terrain_source", "lidar") == "lidar" else 0)
         self.sdf_path.setText(d.get("sdf_dir") or "")
         self.lidar_path.setText(d.get("lidar_file") or "")
         res = d.get("resolution", 1200)
@@ -1510,7 +1694,7 @@ class ParameterForm(QWidget):
         qi = self.plot_quality.findData(q)
         if qi >= 0:
             self.plot_quality.setCurrentIndex(qi)
-        self.color_path.setText(d.get("color_file") or "")
+        self.set_color_file(d.get("color_file") or "")
         self.dbm_color.setChecked(bool(d.get("dbm_color", True)))
         self.transparent_holes.setChecked(bool(d.get("transparent_holes", True)))
         if hasattr(self, "kmz_contour_mode"):

@@ -19,7 +19,10 @@ def test_run_worker_end_to_end(tmp_path):
         import pytest
         pytest.skip("sample SDF data not present")
 
-    app = QCoreApplication([])
+    from PySide6.QtWidgets import QApplication
+    app = QApplication.instance()
+    if app is None:
+        app = QApplication(["-platform", "offscreen"])
     out_base = str(tmp_path / "cov")
     p = {
         "tx_lat": 51.849, "tx_lon": -2.2299, "tx_height": 25,
