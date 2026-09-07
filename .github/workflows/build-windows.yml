@@ -13,6 +13,9 @@ jobs:
     runs-on: windows-latest
 
     steps:
+    - name: Configure Git for Windows
+      run: git config --global core.protectNTFS false
+
     - name: Checkout Source Code
       uses: actions/checkout@v4
 
@@ -33,30 +36,53 @@ jobs:
           mingw-w64-x86_64-spdlog
           mingw-w64-x86_64-bzip2
           mingw-w64-x86_64-zlib
+          mingw-w64-x86_64-gdal
 
     - name: Compile Signal-Server C++ Engines (MinGW-w64)
       shell: msys2 {0}
       run: |
+        ROOT_DIR="$(pwd)"
         mkdir -p Signal-Server/build
         cd Signal-Server/build
         cmake -G Ninja ../src
         ninja
-        cd ../..
+        cd "$ROOT_DIR"
 
         mkdir -p Signal-Server/utils/sdf/usgs2sdf/build
         cd Signal-Server/utils/sdf/usgs2sdf/build
         cmake -G Ninja ..
         ninja
-        cd ../../../../..
+        cd "$ROOT_DIR"
 
         mkdir -p bin
         cp Signal-Server/build/*.exe bin/
         cp Signal-Server/utils/sdf/usgs2sdf/build/*.exe bin/
-        cp /mingw64/bin/libbz2-1.dll bin/ || true
+
+        # Copy runtime dependencies from MinGW64
+        cp /mingw64/bin/libbz2*.dll bin/ || true
         cp /mingw64/bin/zlib1.dll bin/ || true
-        cp /mingw64/bin/libwinpthread-1.dll bin/ || true
-        cp /mingw64/bin/libgcc_s_seh-1.dll bin/ || true
-        cp /mingw64/bin/libstdc++-6.dll bin/ || true
+        cp /mingw64/bin/libwinpthread*.dll bin/ || true
+        cp /mingw64/bin/libgcc_s*.dll bin/ || true
+        cp /mingw64/bin/libstdc++*.dll bin/ || true
+        cp /mingw64/bin/libspdlog*.dll bin/ || true
+        cp /mingw64/bin/libfmt*.dll bin/ || true
+
+        # Copy GDAL CLI executables and DLLs for DEMNAS processing
+        mkdir -p bin/gdal
+        cp /mingw64/bin/gdal*.exe bin/gdal/ || true
+        cp /mingw64/bin/gdal*.dll bin/gdal/ || true
+        cp /mingw64/bin/libgdal*.dll bin/gdal/ || true
+
+        # Inspect and copy any remaining needed DLLs
+        for f in bin/*.exe bin/gdal/*.exe; do
+          if [ -f "$f" ]; then
+            ldd "$f" 2>/dev/null | grep '/mingw64/bin/' | awk '{print $3}' | while read -r dll; do
+              if [ -f "$dll" ]; then
+                cp -u "$dll" bin/ || true
+              fi
+            done || true
+          fi
+        done
 
     - name: Install Python Dependencies & PyInstaller
       run: |
@@ -73,7 +99,16 @@ jobs:
 
     - name: Compile Windows Installer (Inno Setup)
       run: |
-        & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" scripts/installer.iss
+        if (Get-Command iscc -ErrorAction SilentlyContinue) {
+          iscc scripts/installer.iss
+        } elseif (Test-Path "C:\Program Files (x86)\Inno Setup 6\ISCC.exe") {
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" scripts/installer.iss
+        } elseif (Test-Path "C:\Program Files\Inno Setup 6\ISCC.exe") {
+          & "C:\Program Files\Inno Setup 6\ISCC.exe" scripts/installer.iss
+        } else {
+          Write-Error "ISCC compiler not found!"
+          exit 1
+        }
 
     - name: Upload Windows Standalone Folder Artifact
       uses: actions/upload-artifact@v4

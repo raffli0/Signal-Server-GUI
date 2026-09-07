@@ -1057,16 +1057,41 @@ def demnas_folder_to_asc(
     ``MIN_ASC_RELIEF_M``) — both make the engine compute a fake, perfectly
     round coverage.
     """
-    from osgeo import gdal  # local import; only needed here
-    gdal.UseExceptions()
+    try:
+        from osgeo import gdal  # local import; only needed here
+        gdal.UseExceptions()
+        has_osgeo = True
+    except ImportError:
+        has_osgeo = False
+
     import numpy as np
 
     vrt = _demnas_vrt(folder, cache_dir)
 
     span = max(lon_hi - lon_lo, lat_hi - lat_lo)
-    ds_vrt = gdal.Open(vrt)
-    native = abs(ds_vrt.GetGeoTransform()[1]) if ds_vrt is not None else None
-    ds_vrt = None
+    native = None
+    if has_osgeo:
+        try:
+            ds_vrt = gdal.Open(vrt)
+            if ds_vrt is not None:
+                native = abs(ds_vrt.GetGeoTransform()[1])
+            ds_vrt = None
+        except Exception:
+            native = None
+    if native is None:
+        try:
+            kwargs = {}
+            if os.name == "nt":
+                kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+            proc = subprocess.run(["gdalinfo", "-json", vrt], capture_output=True, text=True, **kwargs)
+            if proc.returncode == 0:
+                info = json.loads(proc.stdout)
+                gt = info.get("geoTransform")
+                if gt:
+                    native = abs(gt[1])
+        except Exception:
+            native = None
+
     # allow_oversample True when target < native (step 1/4 → 7.5m bilinear)
     allow_os = bool(target_cellsize and native and target_cellsize < native)
     cellsize_deg = _asc_cellsize(span, native or 0.0, target_cellsize,
@@ -1082,14 +1107,44 @@ def demnas_folder_to_asc(
             "-overwrite", vrt, tmp_clip,
         ])
 
-    ds = gdal.Open(clipped)
-    if ds is None:
-        raise DemResolveError(f"Tidak dapat membuka hasil clip: {clipped}")
-    band = ds.GetRasterBand(1)
-    gt = ds.GetGeoTransform()
-    arr = band.ReadAsArray()
-    nodata = band.GetNoDataValue()
-    ds = None
+    arr = None
+    gt = None
+    nodata = None
+
+    if has_osgeo:
+        try:
+            ds = gdal.Open(clipped)
+            if ds is not None:
+                band = ds.GetRasterBand(1)
+                gt = ds.GetGeoTransform()
+                arr = band.ReadAsArray()
+                nodata = band.GetNoDataValue()
+                ds = None
+        except Exception:
+            arr = None
+
+    if arr is None:
+        from PIL import Image
+        try:
+            im = Image.open(clipped)
+            arr = np.array(im)
+        except Exception as exc:
+            raise DemResolveError(f"Tidak dapat membuka hasil clip: {clipped} ({exc})")
+        kwargs = {}
+        if os.name == "nt":
+            kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+        proc = subprocess.run(["gdalinfo", "-json", clipped], capture_output=True, text=True, **kwargs)
+        if proc.returncode == 0:
+            try:
+                info = json.loads(proc.stdout)
+                gt = info.get("geoTransform")
+                bands_info = info.get("bands", [])
+                if bands_info:
+                    nodata = bands_info[0].get("noDataValue")
+            except Exception:
+                pass
+        if gt is None:
+            gt = (lon_lo, cellsize_deg, 0.0, lat_hi, 0.0, -cellsize_deg)
 
     height, width = arr.shape
     xll = gt[0]

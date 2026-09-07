@@ -62,10 +62,18 @@ def package():
         "PySide6.QtGui",
         "PySide6.QtWidgets",
         "PySide6.QtCore",
-        "osgeo",
-        "osgeo.gdal",
         "numpy",
+        "scipy",
+        "PIL",
+        "PIL.Image",
+        "pyproj",
+        "mgrs",
     ]
+    try:
+        import osgeo
+        hidden_imports.extend(["osgeo", "osgeo.gdal"])
+    except ImportError:
+        pass
 
     cmd = [
         sys.executable, "-m", "PyInstaller",
