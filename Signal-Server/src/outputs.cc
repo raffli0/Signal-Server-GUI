@@ -89,7 +89,7 @@ void DoPathLoss(char *filename, unsigned char geo, unsigned char kml,
 	   90 degrees from its representation in dem[][] so that north
 	   points up and east points right in the image generated. */
 
-	char mapfile[255];
+	char mapfile[512];
 	unsigned red, green, blue, terrain = 0;
 	unsigned char found, mask, cityorcounty;
 	int indx, x, y, z, x0 = 0, y0 = 0, loss, match;
@@ -348,7 +348,7 @@ int DoSigStr(char *filename, unsigned char geo, unsigned char kml,
 	   90 degrees from its representation in dem[][] so that north
 	   points up and east points right in the image generated. */
 
-	char mapfile[255];
+	char mapfile[512];
 	unsigned terrain, red, green, blue;
 	unsigned char found, mask, cityorcounty;
 	int indx, x, y, z = 1, x0 = 0, y0 = 0, signal, match;
@@ -620,7 +620,7 @@ void DoRxdPwr(char *filename, unsigned char geo, unsigned char kml,
 	   90 degrees from its representation in dem[][] so that north
 	   points up and east points right in the image generated. */
 
-	char mapfile[255];
+	char mapfile[512];
 	unsigned terrain, red, green, blue;
 	unsigned char found, mask, cityorcounty;
 	int indx, x, y, z = 1, x0 = 0, y0 = 0, dBm, match;
@@ -888,7 +888,7 @@ void DoLOS(char *filename, unsigned char geo, unsigned char kml,
 	   90 degrees from its representation in dem[][] so that north
 	   points up and east points right in the image generated. */
 
-	char mapfile[255];
+	char mapfile[512];
 	unsigned terrain;
 	unsigned char found, mask;
 	int indx, x, y, x0 = 0, y0 = 0;
@@ -1138,8 +1138,8 @@ void PathReport(struct site source, struct site destination, char *name,
 	   found, .png is assumed. */
 
 	int x, y, z, errnum;
-	char basename[255], term[30], ext[15], strmode[100],
-	    report_name[80], block = 0;
+	char basename[512], term[30], ext[15], strmode[100],
+	    report_name[512], block = 0;
 	double maxloss = -100000.0, minloss = 100000.0, angle1, angle2,
 	    azimuth, pattern = 1.0, patterndB = 0.0,
 	    total_loss = 0.0, cos_xmtr_angle, cos_test_angle = 0.0,
@@ -1149,7 +1149,7 @@ void PathReport(struct site source, struct site destination, char *name,
 	    0.0, voltage, rxp, power_density, dkm;
 	FILE *fd = NULL, *fd2 = NULL;
 
-	snprintf(report_name, 80, "%s.txt%c", name, 0);
+	snprintf(report_name, sizeof(report_name), "%s.txt", name);
 	four_thirds_earth = FOUR_THIRDS * EARTHRADIUS;
 
 	fd2 = fopen(report_name, "w");
@@ -1875,9 +1875,9 @@ void SeriesData(struct site source, struct site destination, char *name,
 		unsigned char fresnel_plot, unsigned char normalised)
 {
 	int x, y, z;
-	char basename[255], term[30], ext[15], profilename[255],
-	    referencename[255], cluttername[255], curvaturename[255],
-	    fresnelname[255], fresnel60name[255];
+	char basename[512], term[30], ext[15], profilename[512],
+	    referencename[512], cluttername[512], curvaturename[512],
+	    fresnelname[512], fresnel60name[512];
 	double a, b, c, height = 0.0, refangle, cangle, maxheight =
 	    -100000.0, minheight = 100000.0, lambda = 0.0, f_zone =
 	    0.0, fpt6_zone = 0.0, nm = 0.0, nb = 0.0, ed = 0.0, es = 0.0, r =
@@ -1907,18 +1907,12 @@ void SeriesData(struct site source, struct site destination, char *name,
 		nm = (-source.alt - es - nb) / (path.distance[path.length - 1]);
 	}
 
-	strcpy(profilename, name);
-	strcat(profilename, "_profile\0");
-	strcpy(referencename, name);
-	strcat(referencename, "_reference\0");
-	strcpy(cluttername, name);
-	strcat(cluttername, "_clutter\0");
-	strcpy(curvaturename, name);
-	strcat(curvaturename, "_curvature\0");
-	strcpy(fresnelname, name);
-	strcat(fresnelname, "_fresnel\0");
-	strcpy(fresnel60name, name);
-	strcat(fresnel60name, "_fresnel60\0");
+	snprintf(profilename, sizeof(profilename), "%s_profile", name);
+	snprintf(referencename, sizeof(referencename), "%s_reference", name);
+	snprintf(cluttername, sizeof(cluttername), "%s_clutter", name);
+	snprintf(curvaturename, sizeof(curvaturename), "%s_curvature", name);
+	snprintf(fresnelname, sizeof(fresnelname), "%s_fresnel", name);
+	snprintf(fresnel60name, sizeof(fresnel60name), "%s_fresnel60", name);
 
 	fd = fopen(profilename, "wb");
 	if (clutter > 0.0)

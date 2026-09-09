@@ -1232,7 +1232,7 @@ int main(int argc, char *argv[])
     unsigned char LRmap = 0, txsites = 0, topomap = 0, geo = 0, kml =
         0, area_mode = 0, max_txsites, ngs = 0;
 
-    char mapfile[255], ano_filename[255], lidar_tiles[27000], clutter_file[255],antenna_file[255];
+    char mapfile[512], ano_filename[512], lidar_tiles[27000], clutter_file[512], antenna_file[512];
     char *az_filename, *el_filename, *udt_file = NULL;
 
     double altitude = 0.0, altitudeLR = 0.0, tx_range = 0.0,

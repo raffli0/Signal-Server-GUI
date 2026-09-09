@@ -428,9 +428,11 @@ class RunWorker(QThread):
                             f"Signal-Server exited with code {proc_returncode}"
                         )
                     else:
-                        self.error_occurred.emit(
-                            "Engine finished but link report not found."
-                        )
+                        tail = "\n".join(stdout_text[-5:]) if stdout_text else ""
+                        msg = "Engine finished but link report not found."
+                        if tail:
+                            msg += f"\nOutput engine:\n{tail}"
+                        self.error_occurred.emit(msg)
                     return
                 try:
                     link = link_parse.parse_link_output(
