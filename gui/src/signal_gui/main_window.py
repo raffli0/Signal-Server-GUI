@@ -12,7 +12,7 @@ import tempfile
 import threading
 import time
 from datetime import datetime
-from typing import Optional
+from typing import Any, Optional
 
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QSplitter, QVBoxLayout, QHBoxLayout, QPlainTextEdit,
