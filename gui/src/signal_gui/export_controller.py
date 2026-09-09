@@ -318,15 +318,12 @@ def export_model(
     """Dispatch export operation based on format string."""
     fmt = (fmt or "").strip()
 
-    if result and result.get("link") and (not result.get("png") or fmt in ("KML", "KMZ")):
-        if fmt == "KML":
-            export_link_kml(parent, result, params, status_callback)
-        else:
-            export_link_kmz(parent, result, params, status_callback)
-        return
-
     if not result or not result.get("png") or not os.path.exists(result["png"]):
-        QMessageBox.warning(parent, "Export", "Run a propagation calculation first.")
+        QMessageBox.warning(
+            parent,
+            "Export Coverage",
+            "Belum ada hasil kalkulasi cakupan (Coverage). Jalankan simulasi coverage terlebih dahulu.",
+        )
         return
     png = result["png"]
     bbox = result.get("bbox")

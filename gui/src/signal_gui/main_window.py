@@ -107,6 +107,8 @@ class MainWindow(QMainWindow):
         self._pending = None
         self._worker = None
         self._last_result = None
+        self._last_coverage_result = None
+        self._last_link_result = None
         self._pick_no_fly = False
         self._amsl_timer = QTimer(self)
         self._amsl_timer.setSingleShot(True)
@@ -1008,6 +1010,7 @@ class MainWindow(QMainWindow):
             if p.get("tx_lat") is not None and p.get("tx_lon") is not None:
                 self.map.mark_tx_saved(float(p["tx_lat"]), float(p["tx_lon"]))
             self._last_result = result
+            self._last_coverage_result = result
             self._set_status("Done. Coverage shown on map.")
             if result.get("kml"):
                 self._set_status(f"Done. KML: {result['kml']}")
@@ -1016,6 +1019,7 @@ class MainWindow(QMainWindow):
             self._purge_render_cache(keep=run_dir)
         else:
             self._last_result = None
+            self._last_coverage_result = None
             self._set_status("Finished with no coverage.")
             self._purge_render_cache()
 
@@ -1030,7 +1034,7 @@ class MainWindow(QMainWindow):
         else:
             link_color = "#00E600"
         self.map.draw_link(tx[0], tx[1], rx[0], rx[1], color=link_color)
-        self._last_result = {"link": link, "params": p}
+        self._last_link_result = {"link": link, "params": p}
         self._set_status("Done. Radio link computed.")
 
         # Show Integrated Cloud-RF Path Profile Panel directly on the right pane!
@@ -1050,13 +1054,15 @@ class MainWindow(QMainWindow):
 
     def _export_link_kml(self) -> None:
         from . import export_controller
-        p = self._pending[0] if getattr(self, "_pending", None) else (self.form.collect() if hasattr(self, "form") else {})
-        export_controller.export_link_kml(self, self._last_result, p, self._set_status)
+        link_res = self._last_link_result or (self._last_result if (self._last_result and self._last_result.get("link")) else None)
+        p = (link_res.get("params") if link_res and isinstance(link_res.get("params"), dict) else None) or (self._pending[0] if getattr(self, "_pending", None) else (self.form.collect() if hasattr(self, "form") else {}))
+        export_controller.export_link_kml(self, link_res, p, self._set_status)
 
     def _export_link_kmz(self) -> None:
         from . import export_controller
-        p = self._pending[0] if getattr(self, "_pending", None) else (self.form.collect() if hasattr(self, "form") else {})
-        export_controller.export_link_kmz(self, self._last_result, p, self._set_status)
+        link_res = self._last_link_result or (self._last_result if (self._last_result and self._last_result.get("link")) else None)
+        p = (link_res.get("params") if link_res and isinstance(link_res.get("params"), dict) else None) or (self._pending[0] if getattr(self, "_pending", None) else (self.form.collect() if hasattr(self, "form") else {}))
+        export_controller.export_link_kmz(self, link_res, p, self._set_status)
 
     def _on_link_point_tracked(self, lat: float, lon: float, dist_km: float, amsl_m: float, agl_m: float, ground_m: float) -> None:
         """Update interactive tracking marker on the map as the user moves cursor on profile (2D drone altitude)."""
@@ -1354,9 +1360,12 @@ class MainWindow(QMainWindow):
         """Export the last propagation result in the chosen format."""
         from . import export_controller
 
+        # Always use coverage result for sidebar export
+        res = self._last_coverage_result or (self._last_result if (self._last_result and self._last_result.get("png")) else None)
+
         color_file = None
-        if self._last_result and isinstance(self._last_result.get("params"), dict):
-            color_file = self._last_result["params"].get("color_file")
+        if res and isinstance(res.get("params"), dict):
+            color_file = res["params"].get("color_file")
         if not color_file and hasattr(self, "form") and hasattr(self.form, "color_path"):
             color_file = self.form.color_path.text().strip() or None
 
@@ -1364,7 +1373,7 @@ class MainWindow(QMainWindow):
         if hasattr(self, "form") and hasattr(self.form, "kmz_contour_mode"):
             mode_idx = self.form.kmz_contour_mode.currentIndex()
 
-        params = self._pending[0] if getattr(self, "_pending", None) else None
+        params = (res.get("params") if res and isinstance(res.get("params"), dict) else None) or (self._pending[0] if getattr(self, "_pending", None) else None)
         if not params and hasattr(self, "form"):
             try:
                 params = self.form.collect()
@@ -1374,7 +1383,7 @@ class MainWindow(QMainWindow):
         export_controller.export_model(
             self,
             fmt=fmt,
-            result=self._last_result,
+            result=res,
             params=params,
             cache_dir=self.cache_dir,
             color_file=color_file,
