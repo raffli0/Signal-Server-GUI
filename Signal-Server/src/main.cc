@@ -46,7 +46,7 @@ int MAXPAGES = 10*10;
 int IPPD = 1200;
 int ARRAYSIZE = (MAXPAGES * IPPD) + 10;
 
-char sdf_path[255], opened = 0, gpsav = 0, dashes[80], *color_file = NULL;
+char sdf_path[512], opened = 0, gpsav = 0, dashes[80], *color_file = NULL;
 
 double earthradius, max_range = 0.0, forced_erp, dpp, ppd, yppd,
     fzone_clearance = 0.6, forced_freq, clutter, lat, lon, txh, tercon, terdic,
@@ -1428,7 +1428,8 @@ int main(int argc, char *argv[])
             z = x + 1;
 
             if (z <= y && argv[z][0] && argv[z][0] != '-') {
-                strncpy(clutter_file, argv[z], 253);
+                strncpy(clutter_file, argv[z], sizeof(clutter_file) - 1);
+                clutter_file[sizeof(clutter_file) - 1] = '\0';
             }
         }
 
@@ -1436,7 +1437,8 @@ int main(int argc, char *argv[])
             z = x + 1;
 
             if (z <= y && argv[z][0] && argv[z][0] != '-') {
-                strncpy(antenna_file, argv[z], 253);
+                strncpy(antenna_file, argv[z], sizeof(antenna_file) - 1);
+                antenna_file[sizeof(antenna_file) - 1] = '\0';
             }
         }
 
@@ -1570,8 +1572,10 @@ int main(int argc, char *argv[])
         if (strcmp(argv[x], "-sdf") == 0) {
             z = x + 1;
 
-            if (z <= y && argv[z][0] && argv[z][0] != '-')
-                strncpy(sdf_path, argv[z], 253);
+            if (z <= y && argv[z][0] && argv[z][0] != '-') {
+                strncpy(sdf_path, argv[z], sizeof(sdf_path) - 1);
+                sdf_path[sizeof(sdf_path) - 1] = '\0';
+            }
         }
         
         if (strcmp(argv[x], "-lid") == 0) {
@@ -1887,11 +1891,12 @@ int main(int argc, char *argv[])
         if (strcmp(argv[x], "-color") == 0) {
             z = x + 1;
 
-            if (z <= y && argv[z][0]) {
+            if (z <= y && argv[z][0] && argv[z][0] != '-') {
                 color_file = (char*) calloc(PATH_MAX+1, sizeof(char));
                 if (color_file == NULL)
                     return ENOMEM;
-                strncpy(color_file, argv[z], 253);
+                strncpy(color_file, argv[z], PATH_MAX);
+                color_file[PATH_MAX] = '\0';
             }
         }
 
@@ -1992,7 +1997,7 @@ int main(int argc, char *argv[])
     if (sdf_path[0]) {
         x = strlen(sdf_path);
 
-        if (sdf_path[x - 1] != '/' && x != 0) {
+        if (sdf_path[x - 1] != '/' && sdf_path[x - 1] != '\\' && x != 0) {
             spdlog::debug("Appending / to SDF directory");
             sdf_path[x] = '/';
             sdf_path[x + 1] = 0;

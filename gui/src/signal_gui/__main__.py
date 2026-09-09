@@ -17,6 +17,12 @@ except (ImportError, ValueError):
 
 def main() -> int:
     setup_environment()
+    if os.name == "nt":
+        import ctypes
+        try:
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("raffli0.SignalServerGUI.1.0")
+        except Exception:
+            pass
     try:
         from osgeo import gdal
         gdal.UseExceptions()
@@ -31,6 +37,14 @@ def main() -> int:
         os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = "--log-level=3"
     app = QApplication(sys.argv)
     app.setApplicationName("RF Propagation GUI")
+    try:
+        from .icons import icon
+    except (ImportError, ValueError):
+        from signal_gui.icons import icon
+    try:
+        app.setWindowIcon(icon("tower", color="#48BB78", size=64))
+    except Exception:
+        pass
     from PySide6.QtGui import QPalette, QColor
     palette = app.palette()
     palette.setColor(QPalette.ColorRole.ToolTipBase, QColor("#1E2226"))
