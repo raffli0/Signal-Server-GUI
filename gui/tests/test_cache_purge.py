@@ -60,3 +60,29 @@ def test_purge_missing_cache_dir_is_safe(tmp_path):
     win = _bare_window(str(tmp_path / "does_not_exist"))
     win._purge_render_cache()
     assert os.path.isdir(win.cache_dir)
+
+
+def test_purge_preserves_active_coverage_dir(tmp_path):
+    stale = tmp_path / "siggui_old"
+    stale.mkdir()
+    (stale / "coverage.png").write_bytes(b"old")
+
+    cov_dir = tmp_path / "siggui_coverage"
+    cov_dir.mkdir()
+    cov_png = cov_dir / "coverage.png"
+    cov_png.write_bytes(b"coverage")
+
+    link_dir = tmp_path / "siggui_link"
+    link_dir.mkdir()
+    (link_dir / "link_report.txt").write_bytes(b"link")
+
+    win = _bare_window(str(tmp_path))
+    win._last_coverage_result = {"png": str(cov_png), "bbox": (1, 2, 3, 4)}
+
+    # When radio link finishes and purges with keep=link_dir
+    win._purge_render_cache(keep=str(link_dir))
+
+    assert not stale.exists()                      # Stale folder deleted
+    assert (cov_dir / "coverage.png").exists()     # Coverage folder preserved!
+    assert (link_dir / "link_report.txt").exists() # Active link folder preserved!
+

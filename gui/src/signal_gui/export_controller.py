@@ -5,6 +5,7 @@ Extracts export logic from MainWindow for modularity, clean code, and testabilit
 
 from __future__ import annotations
 
+import base64
 import logging
 import math
 import os
@@ -317,6 +318,26 @@ def export_model(
 ) -> None:
     """Dispatch export operation based on format string."""
     fmt = (fmt or "").strip()
+
+    # Safety fallback: recover PNG from map if result["png"] was missing from disk
+    if (not result or not result.get("png") or not os.path.exists(result["png"])) and hasattr(parent, "map") and getattr(parent.map, "_coverage", None):
+        try:
+            data_uri, bbox_coords = parent.map._coverage
+            if data_uri and data_uri.startswith("data:image/png;base64,"):
+                b64_data = data_uri.split(",", 1)[1]
+                rec_dir = os.path.join(cache_dir, "active_coverage")
+                os.makedirs(rec_dir, exist_ok=True)
+                rec_png = os.path.join(rec_dir, "coverage.png")
+                with open(rec_png, "wb") as f:
+                    f.write(base64.b64decode(b64_data))
+                s, w, n, e = bbox_coords
+                result = {
+                    "png": rec_png,
+                    "bbox": (n, e, s, w),
+                    "params": params or {},
+                }
+        except Exception:
+            pass
 
     if not result or not result.get("png") or not os.path.exists(result["png"]):
         QMessageBox.warning(

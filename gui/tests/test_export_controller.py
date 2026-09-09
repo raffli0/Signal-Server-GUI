@@ -151,3 +151,46 @@ def test_main_window_export_coverage_preserved_after_link(tmp_path):
         _, kwargs = mock_exp_model.call_args
         assert kwargs["result"] == coverage_result
 
+
+def test_export_model_recovers_from_map_when_png_missing(tmp_path):
+    mock_parent = MagicMock()
+    # Fake map coverage data URI: base64 of 4 bytes
+    fake_b64 = "data:image/png;base64,iVBORw0KGgo="
+    mock_parent.map._coverage = (fake_b64, [-7.0, 107.0, -6.5, 107.5])
+
+    out_kmz = str(tmp_path / "out.kmz")
+    with patch("signal_gui.export_controller.QFileDialog.getSaveFileName", return_value=(out_kmz, "KMZ (*.kmz)")), \
+         patch("signal_gui.export_controller.export_coverage_kmz") as mock_cov_kmz:
+        # Pass None as result -> should recover from map
+        export_controller.export_model(mock_parent, "KMZ", None, {}, str(tmp_path))
+        mock_cov_kmz.assert_called_once()
+
+
+def test_on_finished_link_failure_does_not_clear_coverage(tmp_path):
+    from signal_gui.main_window import MainWindow
+
+    win = MainWindow.__new__(MainWindow)
+    win.cache_dir = str(tmp_path)
+    win.progress = MagicMock()
+    win._hide_loading = MagicMock()
+    win.form = MagicMock()
+    win.terminal = MagicMock()
+    win.map = MagicMock()
+    win.path_profile_panel = MagicMock()
+    win._set_status = MagicMock()
+
+    # Pre-existing coverage result
+    cov_result = {"png": str(tmp_path / "cov.png"), "bbox": (-7.0, -6.5, 107.0, 107.5)}
+    win._last_coverage_result = cov_result
+    win._last_result = cov_result
+
+    # Pending was a Radio Link run (path_profile = True)
+    win._pending = ({"path_profile": True, "tx_lat": -6.2, "tx_lon": 106.8}, None, str(tmp_path / "run" / "cov"), None, None)
+
+    # Radio Link run fails (ok = False, result = {})
+    win._on_finished(False, "error", {})
+
+    # Coverage result MUST still be intact!
+    assert win._last_coverage_result == cov_result
+
+

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import logging
 import math
@@ -975,15 +976,25 @@ class MainWindow(QMainWindow):
         self.form.btn_run.setEnabled(True)
         run_dir = (os.path.dirname(self._pending[2])
                    if self._pending else None)
-        if ok and result.get("link"):
-            p = self._pending[0] if self._pending else {}
-            tx = (float(p.get("tx_lat")), float(p.get("tx_lon")))
-            rx = (float(p.get("rx_lat")), float(p.get("rx_lon")))
-            self.map.mark_tx_saved(*tx)
-            self._show_link_panel(result["link"], tx, rx)
-            # Render selesai -> paksa bersihkan cache (kecuali run aktif).
-            self._purge_render_cache(keep=run_dir)
+        is_link_run = bool(
+            (self._pending and self._pending[0] and self._pending[0].get("path_profile"))
+            or (result and result.get("link"))
+        )
+
+        if is_link_run:
+            if ok and result.get("link"):
+                p = self._pending[0] if self._pending else {}
+                tx = (float(p.get("tx_lat")), float(p.get("tx_lon")))
+                rx = (float(p.get("rx_lat")), float(p.get("rx_lon")))
+                self.map.mark_tx_saved(*tx)
+                self._show_link_panel(result["link"], tx, rx)
+                # Render selesai -> bersihkan cache tanpa menghapus run aktif & coverage aktif
+                self._purge_render_cache(keep=run_dir)
+            else:
+                self._set_status("Kalkulasi radio link selesai tanpa hasil.")
+                self._purge_render_cache(keep=run_dir)
             return
+
         # Area coverage (clear any previous link result)
         self.map.clear_link()
         self.path_profile_panel.setVisible(False)
@@ -1266,19 +1277,38 @@ class MainWindow(QMainWindow):
         self.progress.setVisible(False)
         self._hide_loading()
         self.form.btn_run.setEnabled(True)
+        self._last_result = None
+        self._last_coverage_result = None
+        self._last_link_result = None
         self._set_status("Ready")
 
-    def _purge_render_cache(self, keep: Optional[str] = None) -> None:
+    def _purge_render_cache(self, keep: Optional[Any] = None) -> None:
         """Force-delete the render cache (``.../gui/cache/dem``) contents.
 
         Runs automatically before and after every render so the GUI can never
-        show leftover images from an earlier run: stale ``siggui_*`` run
-        directories, downloaded DEM tiles, VRT/LIDAR/SDF products -- everything
-        is removed. ``keep`` (the active run directory) survives so the files
-        still referenced by the GUI (coverage PNG/KML, raster TXT for export)
-        remain valid until the next run purges them.
+        show leftover images from an earlier run. Keeps active run directory
+        AND the directory containing active coverage result so that exports
+        (KMZ, KML, PNG, raster TXT) remain valid.
         """
-        keep_abs = os.path.abspath(keep) if keep else None
+        keep_dirs: set[str] = set()
+        if keep:
+            if isinstance(keep, str):
+                keep_dirs.add(os.path.abspath(keep))
+            else:
+                try:
+                    for k in keep:
+                        if k:
+                            keep_dirs.add(os.path.abspath(k))
+                except TypeError:
+                    pass
+
+        # CRITICAL: Always preserve the directory of the active coverage result!
+        if getattr(self, "_last_coverage_result", None) and self._last_coverage_result.get("png"):
+            cov_png = self._last_coverage_result["png"]
+            cov_dir = os.path.dirname(cov_png)
+            if os.path.isdir(cov_dir):
+                keep_dirs.add(os.path.abspath(cov_dir))
+
         try:
             entries = list(os.scandir(self.cache_dir))
         except OSError:
@@ -1287,7 +1317,7 @@ class MainWindow(QMainWindow):
         removed = 0
         for entry in entries:
             try:
-                if keep_abs and os.path.abspath(entry.path) == keep_abs:
+                if os.path.abspath(entry.path) in keep_dirs:
                     continue
                 # Do NOT delete DEM caches (lidar, vrt, demnas, srtm, etc.) during automatic purge!
                 # Only delete stale siggui_* run folders and temporary files.
@@ -1362,6 +1392,29 @@ class MainWindow(QMainWindow):
 
         # Always use coverage result for sidebar export
         res = self._last_coverage_result or (self._last_result if (self._last_result and self._last_result.get("png")) else None)
+
+        # Fallback: if map is showing coverage but in-memory dict/file was purged
+        if (not res or not res.get("png") or not os.path.exists(res["png"])) and hasattr(self, "map") and getattr(self.map, "_coverage", None):
+            try:
+                data_uri, bbox_coords = self.map._coverage
+                if data_uri and data_uri.startswith("data:image/png;base64,"):
+                    b64_data = data_uri.split(",", 1)[1]
+                    rec_dir = os.path.join(self.cache_dir, "active_coverage")
+                    os.makedirs(rec_dir, exist_ok=True)
+                    rec_png = os.path.join(rec_dir, "coverage.png")
+                    with open(rec_png, "wb") as f:
+                        f.write(base64.b64decode(b64_data))
+                    s, w, n, e = bbox_coords
+                    p_form = self.form.collect() if hasattr(self, "form") else {}
+                    res = {
+                        "png": rec_png,
+                        "bbox": (n, e, s, w),
+                        "params": p_form,
+                    }
+                    self._last_coverage_result = res
+                    self._last_result = res
+            except Exception as exc:
+                logger.warning("Failed to recover coverage from map: %s", exc)
 
         color_file = None
         if res and isinstance(res.get("params"), dict):
