@@ -109,3 +109,19 @@ def test_convert_hgt_to_sfd_missing_output_raises(tmp_path):
     assert "detailed error" in str(exc_info.value)
     assert "exit 1" in str(exc_info.value)
 
+
+def test_resolve_regional_tile_viewfinder_index():
+    # Bandung -> SB48
+    assert dc.resolve_regional_tile(-6.9, 107.6, 3) == "SB48"
+    assert dc.resolve_regional_tile_bbox(-7.0, -6.8, 107.5, 107.7, 3) == "SB48"
+
+    # Jakarta -> SB48
+    assert dc.resolve_regional_tile(-6.2, 106.8, 3) == "SB48"
+
+    # Alps in DEM1 -> L32
+    assert dc.resolve_regional_tile(46.0, 8.0, 1) == "L32"
+
+    # Bandung in res=1 (HD) should gracefully fall back to SB48 (DEM3)
+    assert dc.resolve_regional_tile(-6.9, 107.6, 1) == "SB48"
+
+

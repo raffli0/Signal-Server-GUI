@@ -35,8 +35,13 @@ import numpy as np
 logger = logging.getLogger("signal_gui.dem_convert")
 
 
-def _urlopen(url: str | urllib.request.Request, timeout: float = 30):
-    """Robust urlopen with SSL certificate verification fallback for Windows."""
+def _urlopen(url: str, timeout: int = 30):
+    """Open a URL with browser User-Agent and automatic fallback for SSL/cert errors."""
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        "Accept": "*/*",
+    }
+    req = urllib.request.Request(url, headers=headers)
     context = None
     try:
         import certifi
@@ -48,12 +53,12 @@ def _urlopen(url: str | urllib.request.Request, timeout: float = 30):
             context = ssl._create_unverified_context()
 
     try:
-        return urllib.request.urlopen(url, timeout=timeout, context=context)
-    except urllib.error.URLError as exc:
+        return urllib.request.urlopen(req, timeout=timeout, context=context)
+    except Exception as exc:
         err_str = str(exc).lower()
-        if "certificate" in err_str or "verify failed" in err_str:
+        if "certificate" in err_str or "verify failed" in err_str or "ssl" in err_str:
             unverified_ctx = ssl._create_unverified_context()
-            return urllib.request.urlopen(url, timeout=timeout, context=unverified_ctx)
+            return urllib.request.urlopen(req, timeout=timeout, context=unverified_ctx)
         raise
 
 
@@ -68,6 +73,39 @@ DEMSEARCH_URL = "https://www.imagico.de/map/demsearch.php"
 # Raised when the regional tile code cannot be resolved automatically.
 class DemResolveError(RuntimeError):
     pass
+
+
+_VIEWFINDER_INDEX: Optional[dict] = None
+
+
+def _get_viewfinder_index() -> dict:
+    """Load the built-in Viewfinder Panoramas worldwide coverage index."""
+    global _VIEWFINDER_INDEX
+    if _VIEWFINDER_INDEX is not None:
+        return _VIEWFINDER_INDEX
+    path = os.path.join(os.path.dirname(__file__), "resources", "viewfinder_index.json")
+    if os.path.exists(path):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                _VIEWFINDER_INDEX = json.load(f)
+                return _VIEWFINDER_INDEX
+        except Exception as exc:
+            logger.warning("Gagal memuat viewfinder_index.json: %s", exc)
+    _VIEWFINDER_INDEX = {}
+    return _VIEWFINDER_INDEX
+
+
+def _tile_resolution(code: str, preferred_res: int) -> int:
+    """Return the native Viewfinder resolution folder (3, 1, or 15) for a tile code."""
+    index = _get_viewfinder_index()
+    if index:
+        tiles_pref = [item[0] for item in index.get(str(preferred_res), [])]
+        if code in tiles_pref:
+            return preferred_res
+        for res_str in ("3", "1", "15"):
+            if code in [item[0] for item in index.get(res_str, [])]:
+                return int(res_str)
+    return preferred_res
 
 
 def _cache_sub(cache_dir: str, name: str) -> str:
@@ -103,50 +141,81 @@ def _ranked_tiles_for_bbox(
     """Return Viewfinder regional tile codes whose region covers the bbox
     *centre*, ordered most-specific (smallest area) first.
 
-    Picking the most specific tile avoids grabbing a huge continent tile that,
-    once downloaded, does not actually contain the 1-degree SRTM cell covering
-    the transmitter -- which previously produced degenerate (line-shaped)
-    coverage. ``DemResolveError`` is raised when nothing matches.
+    Queries the local bundled Viewfinder Panoramas geographic index first
+    (instant and offline-capable). Falls back to imagico.de's dem_json if needed.
     """
-    data = _query_demsearch(lat_lo, lat_hi, lon_lo, lon_hi, resolution)
-    frag = f"/dem{resolution}/"
+    index = _get_viewfinder_index()
     center_lat = (lat_lo + lat_hi) / 2.0
     center_lon = (lon_lo + lon_hi) / 2.0
 
-    def _area(it):
-        try:
-            return (float(it["lon_end"]) - float(it["lon_start"])) * (
-                float(it["lat_end"]) - float(it["lat_start"])
-            )
-        except (KeyError, ValueError, TypeError):
-            return float("inf")
+    if index:
+        # Check primary resolution. If res=1 (HD) but no 1" tile exists for this area,
+        # seamlessly fall back to 3" (90m, worldwide coverage).
+        res_checks = [resolution, 3] if resolution == 1 else [resolution]
+        for res_check in res_checks:
+            tiles = index.get(str(res_check), [])
+            center_matches = []
+            bbox_matches = []
+            for item in tiles:
+                code, s, n, w, e = item[0], item[1], item[2], item[3], item[4]
+                area = (n - s) * (e - w)
+                if s <= center_lat <= n and w <= center_lon <= e:
+                    center_matches.append((area, code))
+                elif max(s, lat_lo) <= min(n, lat_hi) and max(w, lon_lo) <= min(e, lon_hi):
+                    bbox_matches.append((area, code))
 
-    candidates = []
-    for item in data:
-        link = item.get("link", "")
-        if str(item.get("type")) != "2" or frag not in link:
-            continue
-        try:
-            ls, le = float(item["lon_start"]), float(item["lon_end"])
-            bs, be = float(item["lat_start"]), float(item["lat_end"])
-        except (KeyError, ValueError, TypeError):
-            continue
-        if ls <= center_lon <= le and bs <= center_lat <= be:
-            candidates.append(item)
-    if not candidates:  # fallback: any Viewfinder multi-tile
+            center_matches.sort()
+            bbox_matches.sort()
+            out = [c for _, c in center_matches]
+            for _, c in bbox_matches:
+                if c not in out:
+                    out.append(c)
+            if out:
+                return out
+
+    # Fallback to network demsearch if local index didn't match
+    try:
+        data = _query_demsearch(lat_lo, lat_hi, lon_lo, lon_hi, resolution)
+        frag = f"/dem{resolution}/"
+
+        def _area(it):
+            try:
+                return (float(it["lon_end"]) - float(it["lon_start"])) * (
+                    float(it["lat_end"]) - float(it["lat_start"])
+                )
+            except (KeyError, ValueError, TypeError):
+                return float("inf")
+
+        candidates = []
         for item in data:
-            if str(item.get("type")) == "2" and "viewfinderpanoramas.org" in item.get("link", ""):
+            link = item.get("link", "")
+            if str(item.get("type")) != "2" or frag not in link:
+                continue
+            try:
+                ls, le = float(item["lon_start"]), float(item["lon_end"])
+                bs, be = float(item["lat_start"]), float(item["lat_end"])
+            except (KeyError, ValueError, TypeError):
+                continue
+            if ls <= center_lon <= le and bs <= center_lat <= be:
                 candidates.append(item)
-    if not candidates:
-        raise DemResolveError("No Viewfinder DEM tile covers this location")
-    candidates.sort(key=_area)
-    out = []
-    for item in candidates:
-        name = item.get("name", "")
-        code = name[:-4] if name.endswith(".zip") else name
-        if code and code not in out:
-            out.append(code)
-    return out
+        if not candidates:  # fallback: any Viewfinder multi-tile
+            for item in data:
+                if str(item.get("type")) == "2" and "viewfinderpanoramas.org" in item.get("link", ""):
+                    candidates.append(item)
+        if candidates:
+            candidates.sort(key=_area)
+            out = []
+            for item in candidates:
+                name = item.get("name", "")
+                code = name[:-4] if name.endswith(".zip") else name
+                if code and code not in out:
+                    out.append(code)
+            if out:
+                return out
+    except Exception as exc:
+        logger.warning("demsearch network query failed: %s", exc)
+
+    raise DemResolveError("No Viewfinder DEM tile covers this location")
 
 
 def resolve_regional_tile_bbox(
@@ -154,10 +223,8 @@ def resolve_regional_tile_bbox(
 ) -> str:
     """Resolve a bounding box to the best Viewfinder regional tile code.
 
-    Uses imagico.de's ``dem_json.php`` backend (the same one the interactive
-    search map calls). Returns the most specific multi-tile (``type == 2``)
-    whose region covers the bbox centre. Raises ``DemResolveError`` if nothing
-    matches, so the caller can fall back to a manual tile code.
+    Returns the most specific regional tile code whose region covers the bbox centre.
+    Raises ``DemResolveError`` if nothing matches.
     """
     return _ranked_tiles_for_bbox(lat_lo, lat_hi, lon_lo, lon_hi, resolution)[0]
 
@@ -170,39 +237,56 @@ def resolve_regional_tile(lat: float, lon: float, resolution: int = 3) -> str:
 def download_tile_zip(tile_code: str, resolution: int, dest_dir: str) -> str:
     """Download a regional DEM zip into ``dest_dir``; returns the zip path.
 
-    ``tile_code`` may be a bare code (e.g. ``B48``) or a full Viewfinder URL
-    (e.g. ``https://viewfinderpanoramas.org/dem3/B48.zip``).
+    ``tile_code`` may be a bare code (e.g. ``SB48``) or a full Viewfinder URL.
     """
-    if resolution not in VIEWFINDER_BASE:
-        raise DemResolveError(f"Unsupported DEM resolution: {resolution}")
-    # Sanitasi tile_code: cegah path traversal `../` dan karakter aneh
+    actual_res = _tile_resolution(tile_code, resolution)
+    if actual_res not in VIEWFINDER_BASE:
+        actual_res = resolution if resolution in VIEWFINDER_BASE else 3
+
     raw_code = tile_code.strip()
     if "/" in raw_code or "\\" in raw_code or ".." in raw_code:
-        # jika URL, ambil basename saja
         if raw_code.startswith("http://") or raw_code.startswith("https://"):
-            pass  # URL handled below
+            pass
         else:
             raise DemResolveError(f"Tile code tidak valid (path traversal): {tile_code}")
+
     if tile_code.startswith("http://") or tile_code.startswith("https://"):
         url = tile_code
         code = tile_code.rstrip("/").split("/")[-1].replace(".zip", "")
-        # sanitasi code dari URL juga
         code = re.sub(r"[^A-Za-z0-9_-]", "", code) or "tile"
     else:
-        # hanya alfanumerik, _ dan -
         if not re.match(r"^[A-Za-z0-9_-]+$", tile_code):
             raise DemResolveError(f"Tile code tidak valid: {tile_code}")
-        url = f"{VIEWFINDER_BASE[resolution]}/{tile_code}.zip"
+        url = f"{VIEWFINDER_BASE[actual_res]}/{tile_code}.zip"
         code = tile_code
+
     os.makedirs(dest_dir, exist_ok=True)
     zip_path = os.path.join(dest_dir, f"{code}.zip")
     if os.path.exists(zip_path) and os.path.getsize(zip_path) > 0:
         return zip_path
-    try:
-        with _urlopen(url, timeout=120) as resp:
-            data = resp.read()
-    except (urllib.error.URLError, OSError) as exc:
-        raise DemResolveError(f"Failed to download {url}: {exc}")
+
+    urls_to_try = [url]
+    if not (tile_code.startswith("http://") or tile_code.startswith("https://")):
+        for alt_res in (3, 1, 15):
+            alt_url = f"{VIEWFINDER_BASE[alt_res]}/{tile_code}.zip"
+            if alt_url not in urls_to_try:
+                urls_to_try.append(alt_url)
+
+    last_err: Optional[Exception] = None
+    data = None
+    for try_url in urls_to_try:
+        try:
+            with _urlopen(try_url, timeout=120) as resp:
+                data = resp.read()
+                if data and len(data) > 100:
+                    break
+        except Exception as exc:
+            last_err = exc
+            continue
+
+    if not data:
+        raise DemResolveError(f"Failed to download tile {tile_code}: {last_err}")
+
     with open(zip_path, "wb") as fh:
         fh.write(data)
     return zip_path
