@@ -328,9 +328,12 @@ def convert_hgt_to_sdf(srtm2sdf_exe: str, hgt_path: str, sdf_dir: str) -> Option
 
     os.makedirs(sdf_dir, exist_ok=True)
     hgt_arg = os.path.abspath(hgt_path).replace("\\", "/")
+    kwargs = {}
+    if os.name == "nt":
+        kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
     with tempfile.TemporaryDirectory(prefix=".srtm2sdf_", dir=sdf_dir) as td:
         proc = subprocess.run([srtm2sdf_exe, hgt_arg],
-                              cwd=td, capture_output=True)
+                              cwd=td, capture_output=True, **kwargs)
         _normalize_sdf_names(td)
         produced = [f for f in os.listdir(td) if f.endswith(".sdf")]
         if not produced or proc.returncode != 0:

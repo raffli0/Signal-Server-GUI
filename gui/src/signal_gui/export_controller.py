@@ -284,7 +284,10 @@ def export_dem_tif(
             str(float(tx_lon) + lon_deg), str(float(tx_lat) + lat_deg),
             "-tr", "0.00027", "0.00027", "-r", "bilinear", vrt, path,
         ]
-        subprocess.run(cmd, check=True)
+        kwargs = {}
+        if os.name == "nt":
+            kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+        subprocess.run(cmd, check=True, **kwargs)
         msg = f"DEM diekspor ke {path}\nElevasi Tx: {elev} m"
         if elev is None or elev == 0:
             msg += "\n⚠️ LUBANG HITAM: elev 0/void di Tx → 100% masalah preprocessing! Cek QGIS."
