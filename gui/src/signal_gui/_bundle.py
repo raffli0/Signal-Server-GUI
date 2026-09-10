@@ -87,9 +87,12 @@ def cache_root() -> str:
 def setup_environment() -> None:
     """Prepend bundled engine and GDAL tools directories to PATH and set GDAL/PROJ data."""
     root = app_root()
+    exe_dir = os.path.dirname(sys.executable) if is_frozen() else root
     prepend_paths = [
         os.path.join(root, "bin"),
         os.path.join(root, "bin", "gdal"),
+        os.path.join(exe_dir, "bin"),
+        os.path.join(exe_dir, "bin", "gdal"),
         os.path.join(root, "gdal"),
         os.path.join(root, "Signal-Server", "build"),
     ]
@@ -100,11 +103,12 @@ def setup_environment() -> None:
     os.environ["PATH"] = cur_path
 
     # Set GDAL_DATA and PROJ_LIB so GDAL and PROJ find datum/ellipsoid files
-    for gdir in [os.path.join(root, "bin", "gdal_data"), os.path.join(root, "gdal_data")]:
-        if os.path.isdir(gdir):
-            os.environ["GDAL_DATA"] = gdir
-            break
-    for pdir in [os.path.join(root, "bin", "proj"), os.path.join(root, "proj")]:
-        if os.path.isdir(pdir):
-            os.environ["PROJ_LIB"] = pdir
-            break
+    for base in [root, exe_dir]:
+        for gdir in [os.path.join(base, "bin", "gdal_data"), os.path.join(base, "gdal_data")]:
+            if os.path.isdir(gdir):
+                os.environ["GDAL_DATA"] = gdir
+                break
+        for pdir in [os.path.join(base, "bin", "proj"), os.path.join(base, "proj")]:
+            if os.path.isdir(pdir):
+                os.environ["PROJ_LIB"] = pdir
+                break

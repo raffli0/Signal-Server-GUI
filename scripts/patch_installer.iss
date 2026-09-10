@@ -43,8 +43,8 @@ VersionInfoProductVersion={#MyAppVersion}
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Files]
-; Only copies the updated GUI executable and _internal files (bin/ is omitted to keep download tiny)
-Source: "..\dist-patch\SignalServerGUI\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+; Only copies the lightweight Python GUI code and resources into {app}\patch (~1.9MB uncompressed, ~1.5MB installer!)
+Source: "..\dist-patch\patch\*"; DestDir: "{app}\patch"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"

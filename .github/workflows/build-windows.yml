@@ -145,13 +145,11 @@ jobs:
 
     - name: Create Lightweight GUI Update Patch Files
       run: |
-        New-Item -ItemType Directory -Force -Path dist-patch\SignalServerGUI
-        Copy-Item -Path dist\SignalServerGUI\* -Destination dist-patch\SignalServerGUI -Recurse
-        if (Test-Path dist-patch\SignalServerGUI\bin) {
-          Remove-Item -Path dist-patch\SignalServerGUI\bin -Recurse -Force
-        }
-        Compress-Archive -Path dist-patch\SignalServerGUI\* -DestinationPath dist-patch\SignalServerGUI-Patch.zip -Force
-        Write-Host "GUI Patch ZIP created successfully at dist-patch\SignalServerGUI-Patch.zip"
+        New-Item -ItemType Directory -Force -Path dist-patch\patch\signal_gui
+        Copy-Item -Path gui\src\signal_gui\* -Destination dist-patch\patch\signal_gui -Recurse
+        Compress-Archive -Path dist-patch\patch -DestinationPath dist-patch\SignalServerGUI-Patch.zip -Force
+        $size = (Get-Item dist-patch\SignalServerGUI-Patch.zip).Length / 1MB
+        Write-Host "Real Lightweight GUI Patch ZIP created ($([math]::Round($size, 2)) MB) at dist-patch\SignalServerGUI-Patch.zip"
 
     - name: Cache Inno Setup
       id: cache-inno
