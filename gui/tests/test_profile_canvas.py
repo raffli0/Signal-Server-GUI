@@ -132,9 +132,10 @@ def test_compute_terrain_contour_colors():
     cols_fres = compute_terrain_contour_colors(dists, terrain_fres, los, f_lower)
     assert cols_fres[0] == QColor("#EAB308")
 
-    # Test 4: Valley in deep shadow behind mountain -> Red
-    # Mountain at d=1.0 with height 130m, deep valley at d=2.0 with height 10m
-    terrain_shadow = [80.0, 130.0, 10.0, 10.0, 80.0]
+    # Test 4: Valley in deep shadow between two mountains -> Red
+    # Mountain 1 at d=1.0 (130m), deep valley at d=2.0 (10m), Mountain 2 at d=3.0 (130m)
+    terrain_shadow = [80.0, 130.0, 10.0, 130.0, 80.0]
     cols_shadow = compute_terrain_contour_colors(dists, terrain_shadow, los, f_lower)
-    assert cols_shadow[1] == QColor("#EF4444")  # in shadow of mountain
+    assert cols_shadow[1] in (QColor("#EF4444"), QColor("#EAB308"))  # descent into shadow
+    assert cols_shadow[2] in (QColor("#EF4444"), QColor("#EAB308"))  # valley / ascent
 

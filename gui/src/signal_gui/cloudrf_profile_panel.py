@@ -32,7 +32,13 @@ def compute_terrain_contour_colors(
     los: list[float],
     f_lower: list[float],
 ) -> list[QColor]:
-    """Compute Radio Mobile style clearance & shadow colors (Green/Yellow/Red) for terrain segments."""
+    """Compute Radio Mobile style clearance & shadow colors (Green/Yellow/Red) for terrain segments.
+
+    Uses the bidirectional horizon (intervisibility) algorithm with 4/3 effective Earth curvature:
+    - Green: Directly illuminated by Tx (or Rx) line-of-sight.
+    - Yellow: Marginal diffraction boundary / transition edge or 60% Fresnel obstruction.
+    - Red: Deep RF terrain shadow behind mountain ridges or direct LOS ray obstruction.
+    """
     n = len(dists)
     if n < 2:
         return []
@@ -44,21 +50,62 @@ def compute_terrain_contour_colors(
 
     tx_amsl = l_arr[0]
     rx_amsl = l_arr[-1]
-    tot_m = max(1.0, d_arr[-1] - d_arr[0])
     r_eff = 8500000.0  # 4/3 effective earth radius in meters
 
     col_red = QColor("#EF4444")     # Obstructed / Terrain shadow (Red)
     col_yellow = QColor("#EAB308")  # Marginal / 60% Fresnel / Diffraction (Yellow)
     col_green = QColor("#22C55E")   # Clear Line of Sight / Illuminated (Green)
 
+    # 1. Forward horizon from Tx (observer at Tx antenna looking towards Rx)
+    vis_tx = np.zeros(n, dtype=bool)
+    diff_tx = np.zeros(n, dtype=np.float64)
+    max_angle_tx = -1e9
+    vis_tx[0] = True
+    for i in range(1, n):
+        cur_d = d_arr[i] - d_arr[0]
+        if cur_d <= 0.0:
+            vis_tx[i] = True
+            continue
+        # Elevation angle tangent taking 4/3 earth curvature into account
+        angle = (t_arr[i] - tx_amsl) / cur_d - cur_d / (2.0 * r_eff)
+        if angle >= max_angle_tx:
+            vis_tx[i] = True
+            diff_tx[i] = 0.0
+            max_angle_tx = angle
+        else:
+            vis_tx[i] = False
+            # Shadow depth: clearance below the ray cast by the horizon peak
+            ray_h = tx_amsl + cur_d * max_angle_tx + (cur_d**2) / (2.0 * r_eff)
+            diff_tx[i] = t_arr[i] - ray_h  # negative in shadow
+
+    # 2. Backward horizon from Rx (observer at Rx antenna looking towards Tx)
+    vis_rx = np.zeros(n, dtype=bool)
+    diff_rx = np.zeros(n, dtype=np.float64)
+    max_angle_rx = -1e9
+    vis_rx[-1] = True
+    for i in range(n - 2, -1, -1):
+        cur_d = d_arr[-1] - d_arr[i]
+        if cur_d <= 0.0:
+            vis_rx[i] = True
+            continue
+        angle = (t_arr[i] - rx_amsl) / cur_d - cur_d / (2.0 * r_eff)
+        if angle >= max_angle_rx:
+            vis_rx[i] = True
+            diff_rx[i] = 0.0
+            max_angle_rx = angle
+        else:
+            vis_rx[i] = False
+            ray_h = rx_amsl + cur_d * max_angle_rx + (cur_d**2) / (2.0 * r_eff)
+            diff_rx[i] = t_arr[i] - ray_h
+
+    # 3. Classify each segment between sample i and i+1
     colors: list[QColor] = []
     for i in range(n - 1):
         t_mid = 0.5 * (t_arr[i] + t_arr[i + 1])
         l_mid = 0.5 * (l_arr[i] + l_arr[i + 1])
         fl_mid = 0.5 * (fl_arr[i] + fl_arr[i + 1])
-        d_mid = 0.5 * (d_arr[i] + d_arr[i + 1])
 
-        # 1. Direct path clearance between Tx and Rx:
+        # A. Direct link penetration between Tx and Rx:
         if t_mid >= l_mid or t_arr[i] >= l_arr[i] or t_arr[i + 1] >= l_arr[i + 1]:
             colors.append(col_red)
             continue
@@ -66,35 +113,24 @@ def compute_terrain_contour_colors(
             colors.append(col_yellow)
             continue
 
-        # 2. Line-of-sight visibility from Tx:
-        if i > 0:
-            dj = d_arr[1 : i + 1]
-            alpha = dj / d_mid
-            drop = (dj * (d_mid - dj)) / (2.0 * r_eff)
-            ray_h = tx_amsl + alpha * (t_mid - tx_amsl) - drop
-            clr_tx = float(np.min(ray_h - t_arr[1 : i + 1]))
-        else:
-            clr_tx = 999.0
+        # B. Intervisibility from Tx or Rx:
+        vis_tx_seg = vis_tx[i] and vis_tx[i + 1]
+        vis_rx_seg = vis_rx[i] and vis_rx[i + 1]
+        one_vis = vis_tx[i] or vis_tx[i + 1] or vis_rx[i] or vis_rx[i + 1]
 
-        vis_clr = clr_tx
-
-        # 3. Line-of-sight visibility from Rx for the second half of the path:
-        if d_mid > 0.5 * tot_m and i < n - 2:
-            rem_m = tot_m - d_mid
-            dj_rx = tot_m - d_arr[i + 1 : -1]
-            alpha_rx = dj_rx / rem_m
-            drop_rx = (dj_rx * (rem_m - dj_rx)) / (2.0 * r_eff)
-            ray_h_rx = rx_amsl + alpha_rx * (t_mid - rx_amsl) - drop_rx
-            clr_rx = float(np.min(ray_h_rx - t_arr[i + 1 : -1]))
-            vis_clr = max(vis_clr, clr_rx)
-
-        # 4. Classify segment color:
-        if vis_clr < -1.0:
-            colors.append(col_red)
-        elif vis_clr < 8.0:
+        if vis_tx_seg or vis_rx_seg:
+            colors.append(col_green)
+        elif one_vis:
             colors.append(col_yellow)
         else:
-            colors.append(col_green)
+            max_diff = max(
+                0.5 * (diff_tx[i] + diff_tx[i + 1]),
+                0.5 * (diff_rx[i] + diff_rx[i + 1]),
+            )
+            if max_diff > -25.0:  # marginal transition zone within 25m of horizon ray
+                colors.append(col_yellow)
+            else:
+                colors.append(col_red)
 
     return colors
 
