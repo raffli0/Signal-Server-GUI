@@ -12,6 +12,7 @@ import time
 from typing import Optional, Dict, Any, List
 
 from .link_parse import _destination_point, _initial_bearing
+from .icons import icon as svg_icon
 
 import numpy as np
 
@@ -676,100 +677,215 @@ class CloudRFPathProfilePanel(QWidget):
         self.points_locked = bool(locked)
         if hasattr(self, "btn_lock"):
             if self.points_locked:
-                self.btn_lock.setText("🔒 Locked")
-                self.btn_lock.setStyleSheet("QPushButton { background: #E53E3E; color: #FFFFFF; font-weight: 700; font-size: 11px; border: none; border-radius: 3px; padding: 2px 6px; } QPushButton:hover { background: #C53030; }")
+                self.btn_lock.setText(" Locked")
+                self.btn_lock.setIcon(svg_icon("lock", 12, "#FFFFFF"))
+                self.btn_lock.setStyleSheet("""
+                    QPushButton {
+                        background-color: #DC2626;
+                        color: #FFFFFF;
+                        border: 1px solid #EF4444;
+                        border-radius: 4px;
+                        padding: 1px 8px;
+                        font-size: 11px;
+                        font-weight: 700;
+                        height: 22px;
+                    }
+                    QPushButton:hover {
+                        background-color: #B91C1C;
+                        color: #FFFFFF;
+                    }
+                """)
                 self.btn_lock.setToolTip("Titik Tx & Rx terkunci. Klik untuk membuka kunci.")
             else:
-                self.btn_lock.setText("🔓 Lock")
-                self.btn_lock.setStyleSheet("QPushButton { background: #2D3748; color: #CBD5E0; font-weight: 700; font-size: 11px; border: 1px solid #4A5568; border-radius: 3px; padding: 2px 6px; } QPushButton:hover { background: #4A5568; color: #FFFFFF; }")
+                self.btn_lock.setText(" Lock")
+                self.btn_lock.setIcon(svg_icon("unlock", 12, "#CBD5E1"))
+                self.btn_lock.setStyleSheet("""
+                    QPushButton {
+                        background-color: #1E293B;
+                        color: #CBD5E1;
+                        border: 1px solid #334155;
+                        border-radius: 4px;
+                        padding: 1px 8px;
+                        font-size: 11px;
+                        font-weight: 600;
+                        height: 22px;
+                    }
+                    QPushButton:hover {
+                        background-color: #334155;
+                        color: #FFFFFF;
+                        border-color: #475569;
+                    }
+                """)
                 self.btn_lock.setToolTip("Kunci titik Tx & Rx agar tidak berubah saat peta diklik")
 
     def _build_ui(self):
         main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(10, 8, 10, 6)
+        main_layout.setContentsMargins(8, 6, 8, 6)
         main_layout.setSpacing(4)
 
         # ---------------------------------------------------------------------
-        # Top Header Bar: 4-Line Metrics on Left, Big Callout in Middle, Legend on Right
+        # Top Header Container: Modern 2-Tier Dashboard
         # ---------------------------------------------------------------------
-        header_widget = QWidget()
+        header_widget = QFrame()
+        header_widget.setObjectName("ProfileHeaderCard")
+        header_widget.setStyleSheet("""
+            QFrame#ProfileHeaderCard {
+                background-color: #11151A;
+                border: 1px solid #1E252E;
+                border-radius: 6px;
+            }
+        """)
         header_layout = QHBoxLayout(header_widget)
-        header_layout.setContentsMargins(0, 0, 0, 0)
-        header_layout.setSpacing(12)
+        header_layout.setContentsMargins(6, 4, 6, 4)
+        header_layout.setSpacing(10)
 
-        # Left 4-Line Metrics
-        metrics_col = QVBoxLayout()
-        metrics_col.setSpacing(2)
-        metrics_col.setContentsMargins(0, 0, 0, 0)
+        # 1. Left: Signal Level & Verdict Card
+        self.signal_card = QFrame()
+        self.signal_card.setObjectName("SignalBadgeCard")
+        self.signal_card.setFixedSize(125, 46)
+        self.signal_card.setStyleSheet("""
+            QFrame#SignalBadgeCard {
+                background-color: #0D2318;
+                border: 1px solid #22C55E66;
+                border-radius: 6px;
+            }
+        """)
+        sc_layout = QVBoxLayout(self.signal_card)
+        sc_layout.setContentsMargins(4, 2, 4, 2)
+        sc_layout.setSpacing(0)
+        sc_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        line_style = "color: #CBD5E0; font-size: 10px; font-family: 'Segoe UI', system-ui, sans-serif;"
-        self.lbl_line1 = QLabel("Distance: — Km  Bearing to Rx: —°  Downtilt to Rx: —°")
-        self.lbl_line1.setStyleSheet(line_style)
-        self.lbl_line2 = QLabel("Frequency: —MHz  Model: —  Path loss: —dB  Received power: —dBm  Field strength: —dBuV/m")
-        self.lbl_line2.setStyleSheet(line_style)
-        self.lbl_line3 = QLabel("Tx antenna gain: —dBd / —dBi  ERP: —W / —dBm  EIRP: —W / —dBm")
-        self.lbl_line3.setStyleSheet(line_style)
-        self.lbl_line4 = QLabel("Rx antenna gain: —dBd / —dBi")
-        self.lbl_line4.setStyleSheet(line_style)
+        lbl_level_tag = QLabel("RX LEVEL")
+        lbl_level_tag.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lbl_level_tag.setStyleSheet("color: #64748B; font-size: 8px; font-weight: 700; letter-spacing: 0.8px;")
 
-        metrics_col.addWidget(self.lbl_line1)
-        metrics_col.addWidget(self.lbl_line2)
-        metrics_col.addWidget(self.lbl_line3)
-        metrics_col.addWidget(self.lbl_line4)
-        header_layout.addLayout(metrics_col, 1)
-
-        # Center Big Bold Signal Callout (Fixed size to prevent layout shaking during hover)
-        self.lbl_signal_callout = QLabel("— dBm")
-        self.lbl_signal_callout.setFixedSize(130, 36)
-        self.lbl_signal_callout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._current_sig_col = "#68D391"
-        self.lbl_signal_callout.setStyleSheet(
-            "color: #68D391; font-size: 16px; font-weight: 800; "
-            "font-family: 'Segoe UI', system-ui, sans-serif; "
-            "background: rgba(26, 32, 44, 0.85); border: 1px solid #68D39155; border-radius: 6px;"
+        self.lbl_signal_val = QLabel("— dBm")
+        self.lbl_signal_val.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.lbl_signal_val.setStyleSheet(
+            "color: #22C55E; font-size: 14px; font-weight: 800; font-family: 'Segoe UI', system-ui, sans-serif;"
         )
-        header_layout.addWidget(self.lbl_signal_callout)
+        self.lbl_signal_callout = self.lbl_signal_val  # alias for backwards compatibility
 
-        # Right Quick Actions & Legend
-        right_col = QVBoxLayout()
-        right_col.setSpacing(3)
-        right_col.setContentsMargins(0, 0, 0, 0)
-        right_col.setAlignment(Qt.AlignmentFlag.AlignRight)
+        self.lbl_verdict = QLabel("● CLEAR LOS")
+        self.lbl_verdict.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.lbl_verdict.setStyleSheet(
+            "color: #22C55E; font-size: 9px; font-weight: 700; letter-spacing: 0.5px;"
+        )
 
-        # Action links row (Swap, Lock, KMZ, PNG, Close)
+        sc_layout.addWidget(lbl_level_tag)
+        sc_layout.addWidget(self.lbl_signal_val)
+        sc_layout.addWidget(self.lbl_verdict)
+        header_layout.addWidget(self.signal_card)
+
+        # 2. Center/Right: 2-Tier Balanced Info Area
+        info_area = QVBoxLayout()
+        info_area.setContentsMargins(0, 0, 0, 0)
+        info_area.setSpacing(3)
+
+        # ---- Tier 1: Primary Metrics + Action Buttons ----
+        tier1 = QHBoxLayout()
+        tier1.setContentsMargins(0, 0, 0, 0)
+        tier1.setSpacing(8)
+
+        self.lbl_row1 = QLabel("Distance: — Km &nbsp;│&nbsp; Bearing: —° &nbsp;│&nbsp; Downtilt: —° &nbsp;│&nbsp; Freq: —MHz &nbsp;│&nbsp; Path loss: —dB")
+        self.lbl_row1.setStyleSheet("color: #CBD5E1; font-size: 11px; font-family: 'Segoe UI', system-ui, sans-serif;")
+        tier1.addWidget(self.lbl_row1, 1)
+
+        # Action Buttons Toolbar
         actions_row = QHBoxLayout()
-        actions_row.setSpacing(8)
+        actions_row.setSpacing(5)
         actions_row.setAlignment(Qt.AlignmentFlag.AlignRight)
 
-        self.btn_swap = QPushButton("⇄ Swap")
-        self.btn_swap.setToolTip("Tukar Tx dan Rx (Swap arah link)")
-        self.btn_swap.setStyleSheet("QPushButton { background: #2B6CB0; color: #FFFFFF; font-weight: 700; font-size: 11px; border: none; border-radius: 3px; padding: 2px 6px; } QPushButton:hover { background: #3182CE; }")
+        self.btn_swap = QPushButton(" Swap")
+        self.btn_swap.setIcon(svg_icon("swap", 12, "#93C5FD"))
+        self.btn_swap.setToolTip("Tukar posisi Tx dan Rx (Swap arah link)")
+        self.btn_swap.setFixedHeight(22)
+        self.btn_swap.setStyleSheet("""
+            QPushButton {
+                background-color: #1A2744;
+                color: #93C5FD;
+                border: 1px solid #3B82F666;
+                border-radius: 4px;
+                padding: 1px 8px;
+                font-size: 11px;
+                font-weight: 700;
+            }
+            QPushButton:hover {
+                background-color: #2563EB;
+                color: #FFFFFF;
+                border-color: #60A5FA;
+            }
+            QPushButton:pressed { background-color: #1D4ED8; }
+        """)
         self.btn_swap.clicked.connect(lambda: self.swap_requested.emit())
 
-        self.btn_lock = QPushButton("🔓 Lock")
-        self.btn_lock.setToolTip("Kunci / Buka kunci titik Tx dan Rx dari klik peta")
-        self.btn_lock.setStyleSheet("QPushButton { background: #2D3748; color: #CBD5E0; font-weight: 700; font-size: 11px; border: 1px solid #4A5568; border-radius: 3px; padding: 2px 6px; } QPushButton:hover { background: #4A5568; color: #FFFFFF; }")
+        self.btn_lock = QPushButton(" Lock")
+        self.btn_lock.setIcon(svg_icon("unlock", 12, "#CBD5E1"))
+        self.btn_lock.setToolTip("Kunci / Buka kunci titik koordinat Tx dan Rx dari klik peta")
+        self.btn_lock.setFixedHeight(22)
+        self.btn_lock.setStyleSheet("""
+            QPushButton {
+                background-color: #1E293B;
+                color: #CBD5E1;
+                border: 1px solid #334155;
+                border-radius: 4px;
+                padding: 1px 8px;
+                font-size: 11px;
+                font-weight: 600;
+            }
+            QPushButton:hover {
+                background-color: #334155;
+                color: #FFFFFF;
+                border-color: #475569;
+            }
+        """)
         self.btn_lock.clicked.connect(lambda: self.lock_toggled.emit(not self.points_locked))
 
-        btn_kml = QPushButton("KML")
-        btn_kml.setToolTip("Export Radio Link 3D KML (Radio Mobile format)")
-        btn_kml.setStyleSheet("QPushButton { background: transparent; color: #3182CE; font-weight: 700; font-size: 11px; border: none; } QPushButton:hover { color: #63B3ED; }")
-        btn_kml.clicked.connect(lambda: self.export_kml_requested.emit())
+        def _action_btn(text, tooltip, cb):
+            btn = QPushButton(text)
+            btn.setToolTip(tooltip)
+            btn.setFixedHeight(22)
+            btn.setStyleSheet("""
+                QPushButton {
+                    background-color: #1E293B;
+                    color: #94A3B8;
+                    border: 1px solid #334155;
+                    border-radius: 4px;
+                    padding: 1px 8px;
+                    font-size: 11px;
+                    font-weight: 600;
+                }
+                QPushButton:hover {
+                    background-color: #334155;
+                    color: #38BDF8;
+                    border-color: #38BDF866;
+                }
+            """)
+            btn.clicked.connect(cb)
+            return btn
 
-        btn_kmz = QPushButton("KMZ")
-        btn_kmz.setToolTip("Export Radio Link 3D KMZ (Google Earth package)")
-        btn_kmz.setStyleSheet("QPushButton { background: transparent; color: #3182CE; font-weight: 700; font-size: 11px; border: none; } QPushButton:hover { color: #63B3ED; }")
-        btn_kmz.clicked.connect(lambda: self.export_kmz_requested.emit())
-
-        btn_png = QPushButton("PNG")
-        btn_png.setToolTip("Export Path Profile PNG Image")
-        btn_png.setStyleSheet("QPushButton { background: transparent; color: #3182CE; font-weight: 700; font-size: 11px; border: none; } QPushButton:hover { color: #63B3ED; }")
-        btn_png.clicked.connect(lambda: self.export_png_requested.emit())
+        btn_kml = _action_btn("KML", "Export Radio Link 3D KML (format Radio Mobile)", lambda: self.export_kml_requested.emit())
+        btn_kmz = _action_btn("KMZ", "Export Radio Link 3D KMZ (paket Google Earth)", lambda: self.export_kmz_requested.emit())
+        btn_png = _action_btn("PNG", "Export gambar Path Profile PNG", lambda: self.export_png_requested.emit())
 
         btn_close = QPushButton("✕")
-        btn_close.setToolTip("Close Radio Link Profile")
-        btn_close.setFixedSize(20, 20)
-        btn_close.setStyleSheet("QPushButton { background: transparent; color: #A0AEC0; font-size: 12px; font-weight: bold; border: none; } QPushButton:hover { color: #FC8181; }")
+        btn_close.setToolTip("Tutup panel Radio Link Profile")
+        btn_close.setFixedSize(22, 22)
+        btn_close.setStyleSheet("""
+            QPushButton {
+                background-color: #1E293B;
+                color: #94A3B8;
+                border: 1px solid #334155;
+                border-radius: 4px;
+                font-size: 11px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #7F1D1D;
+                color: #FCA5A5;
+                border-color: #EF4444;
+            }
+        """)
         btn_close.clicked.connect(lambda: self.close_requested.emit())
 
         actions_row.addWidget(self.btn_swap)
@@ -778,26 +894,45 @@ class CloudRFPathProfilePanel(QWidget):
         actions_row.addWidget(btn_kmz)
         actions_row.addWidget(btn_png)
         actions_row.addWidget(btn_close)
-        right_col.addLayout(actions_row)
+        tier1.addLayout(actions_row)
+        info_area.addLayout(tier1)
 
-        # Legend items
+        # ---- Tier 2: Secondary Specs + Legend ----
+        tier2 = QHBoxLayout()
+        tier2.setContentsMargins(0, 0, 0, 0)
+        tier2.setSpacing(8)
+
+        self.lbl_row2 = QLabel("Tx EIRP: — &nbsp;│&nbsp; Tx Ant: — &nbsp;│&nbsp; Rx Ant: — &nbsp;│&nbsp; Field: — &nbsp;│&nbsp; Model: —")
+        self.lbl_row2.setStyleSheet("color: #94A3B8; font-size: 10px; font-family: 'Segoe UI', system-ui, sans-serif;")
+        tier2.addWidget(self.lbl_row2, 1)
+
+        # Aliases for backward compatibility
+        self.lbl_line1 = self.lbl_row1
+        self.lbl_line2 = QLabel()
+        self.lbl_line2.setVisible(False)
+        self.lbl_line3 = self.lbl_row2
+        self.lbl_line4 = QLabel()
+        self.lbl_line4.setVisible(False)
+
+        # Legend Row
         legend_row = QHBoxLayout()
-        legend_row.setSpacing(12)
+        legend_row.setSpacing(10)
         legend_row.setAlignment(Qt.AlignmentFlag.AlignRight)
 
         def _legend_item(sym, text, color):
-            lbl = QLabel(f"<span style='color:{color}; font-weight:bold;'>{sym}</span> <span style='color:#A0AEC0; font-size:10px;'>{text}</span>")
+            lbl = QLabel(f"<span style='color:{color}; font-weight:900;'>{sym}</span> <span style='color:#94A3B8; font-size:10px;'>{text}</span>")
             lbl.setTextFormat(Qt.TextFormat.RichText)
             return lbl
 
-        legend_row.addWidget(_legend_item("—", "Kontur Terbuka (LOS)", "#22C55E"))
-        legend_row.addWidget(_legend_item("—", "Marjinal (60% F1)", "#EAB308"))
-        legend_row.addWidget(_legend_item("—", "Bayangan / Terhalang", "#EF4444"))
-        legend_row.addWidget(_legend_item("---", "Fresnel (1.0 F1)", "#38BDF8"))
-        legend_row.addWidget(_legend_item("—", "Berkas LOS", "#22C55E"))
-        right_col.addLayout(legend_row)
+        legend_row.addWidget(_legend_item("━", "LOS Bebas", "#22C55E"))
+        legend_row.addWidget(_legend_item("━", "Marjinal (60% F1)", "#EAB308"))
+        legend_row.addWidget(_legend_item("━", "Terhalang", "#EF4444"))
+        legend_row.addWidget(_legend_item("┄", "Fresnel (1.0 F1)", "#38BDF8"))
+        legend_row.addWidget(_legend_item("─", "Berkas LOS", "#22C55E"))
+        tier2.addLayout(legend_row)
+        info_area.addLayout(tier2)
 
-        header_layout.addLayout(right_col)
+        header_layout.addLayout(info_area, 1)
         main_layout.addWidget(header_widget)
 
         # ---------------------------------------------------------------------
@@ -858,17 +993,37 @@ class CloudRFPathProfilePanel(QWidget):
         # Field strength: E(dBuV/m) = 107 + Rx(dBm) - Grx(dBi) + 20*log10(freq_MHz) - 27.55
         field_str = max(0.0, 77.2 + rx_dbm + 20.0 * math.log10(max(1.0, freq_mhz)) - rx_gain_dbi)
 
-        # Update 4 lines
-        self.lbl_line1.setText(f"Distance: <b>{dist_km:.3f} Km</b> &nbsp; Bearing to Rx: <b>{az_deg:.0f}°</b> &nbsp; Downtilt to Rx: <b>{downtilt:+.1f}°</b>")
-        self.lbl_line2.setText(f"Frequency: <b>{freq_mhz:.0f}MHz</b> &nbsp; Model: <b>{model}</b> &nbsp; Path loss: <b>{loss_db:.1f}dB</b> &nbsp; Received power: <b>{rx_dbm:.1f}dBm</b> &nbsp; Field strength: <b>{field_str:.1f}dBuV/m</b>")
-        self.lbl_line3.setText(f"Tx antenna gain: <b>{tx_gain_dbd:.0f}dBd / {tx_gain_dbi:.2f}dBi</b> &nbsp; ERP: <b>{erp_w:.2f}W / {erp_dbm:.1f}dBm</b> &nbsp; EIRP: <b>{eirp_w:.2f}W / {eirp_dbm:.2f}dBm</b>")
+        # Update Row 1: Primary Link & Propagation
+        self.lbl_row1.setText(
+            f"<span style='color:#64748B;'>Dist:</span> <b style='color:#FFFFFF;'>{dist_km:.2f} km</b> &nbsp;"
+            f"<span style='color:#334155;'>│</span>&nbsp; "
+            f"<span style='color:#64748B;'>Bearing:</span> <b style='color:#FFFFFF;'>{az_deg:.0f}°</b> &nbsp;"
+            f"<span style='color:#334155;'>│</span>&nbsp; "
+            f"<span style='color:#64748B;'>Tilt:</span> <b style='color:#FFFFFF;'>{downtilt:+.1f}°</b> &nbsp;"
+            f"<span style='color:#334155;'>│</span>&nbsp; "
+            f"<span style='color:#64748B;'>Freq:</span> <b style='color:#FFFFFF;'>{freq_mhz:.0f} MHz</b> &nbsp;"
+            f"<span style='color:#334155;'>│</span>&nbsp; "
+            f"<span style='color:#64748B;'>Path Loss:</span> <b style='color:#F59E0B;'>{loss_db:.1f} dB</b> &nbsp;"
+            f"<span style='color:#334155;'>│</span>&nbsp; "
+            f"<span style='color:#64748B;'>Field:</span> <b style='color:#38BDF8;'>{field_str:.1f} dBµV/m</b>"
+        )
+
+        # Update Row 2: RF Specs, Antennas & Model
         rx_cable_loss = float(params.get("rx_cable_loss_db", 0.0))
         rx_net_dbi = rx_gain_dbi - rx_cable_loss
-        rx_loss_str = f" &nbsp; Rx cable loss: <b>{rx_cable_loss:.1f}dB</b> (net: <b>{rx_net_dbi:.2f}dBi</b>)" if rx_cable_loss > 0 else ""
-        self.lbl_line4.setText(f"Rx antenna gain: <b>{rx_gain_dbi:.2f}dBi / {rx_gain_dbd:.2f}dBd</b>{rx_loss_str}")
+        rx_spec_str = f"<b>{rx_gain_dbi:.1f} dBi</b>" + (f" (<span style='color:#64748B;'>net</span> <b>{rx_net_dbi:.1f}</b>)" if rx_cable_loss > 0 else "")
+        self.lbl_row2.setText(
+            f"<span style='color:#64748B;'>Tx EIRP:</span> <b style='color:#E2E8F0;'>{eirp_w:.2f}W ({eirp_dbm:.1f} dBm)</b> &nbsp;"
+            f"<span style='color:#334155;'>│</span>&nbsp; "
+            f"<span style='color:#64748B;'>Tx Ant:</span> <b style='color:#E2E8F0;'>{tx_gain_dbi:.1f} dBi</b> &nbsp;"
+            f"<span style='color:#334155;'>│</span>&nbsp; "
+            f"<span style='color:#64748B;'>Rx Ant:</span> <span style='color:#E2E8F0;'>{rx_spec_str}</span> &nbsp;"
+            f"<span style='color:#334155;'>│</span>&nbsp; "
+            f"<span style='color:#64748B;'>Model:</span> <b style='color:#CBD5E1;'>{model}</b>"
+        )
 
-        # Update Big Signal Callout
-        self._set_signal_badge(rx_dbm)
+        # Update Signal Badge & Verdict
+        self._set_signal_badge(rx_dbm, obstructed=obstructed)
 
         # Send data to Canvas
         self.canvas.set_data(
@@ -885,16 +1040,49 @@ class CloudRFPathProfilePanel(QWidget):
             rx_gain_dbi=rx_gain_dbi
         )
 
-    def _set_signal_badge(self, rx_dbm: float):
-        sig_col = "#EF4444" if rx_dbm < -100 else ("#F59E0B" if rx_dbm < -85 else "#68D391")
-        self.lbl_signal_callout.setText(f"{rx_dbm:.1f}dBm")
-        if getattr(self, "_current_sig_col", None) != sig_col:
-            self._current_sig_col = sig_col
-            self.lbl_signal_callout.setStyleSheet(
-                f"color: {sig_col}; font-size: 16px; font-weight: 800; "
-                f"font-family: 'Segoe UI', system-ui, sans-serif; "
-                f"background: rgba(26, 32, 44, 0.85); border: 1px solid {sig_col}55; border-radius: 6px;"
-            )
+    def _set_signal_badge(self, rx_dbm: float, obstructed: Optional[bool] = None):
+        if obstructed is None:
+            obstructed = getattr(self, "_last_obstructed", False)
+        else:
+            self._last_obstructed = obstructed
+
+        if obstructed:
+            sig_col = "#EF4444"
+            verdict_text = "✕ OBSTRUCTED"
+            card_border = "#EF444466"
+            card_bg = "#2D1214"
+        elif rx_dbm < -100:
+            sig_col = "#EF4444"
+            verdict_text = "▲ WEAK SIGNAL"
+            card_border = "#EF444466"
+            card_bg = "#2D1214"
+        elif rx_dbm < -85:
+            sig_col = "#F59E0B"
+            verdict_text = "▲ MARGINAL"
+            card_border = "#F59E0B66"
+            card_bg = "#291F0E"
+        else:
+            sig_col = "#22C55E"
+            verdict_text = "● CLEAR LOS"
+            card_border = "#22C55E66"
+            card_bg = "#0D2318"
+
+        self.lbl_signal_val.setText(f"{rx_dbm:.1f} dBm")
+        self.lbl_signal_val.setStyleSheet(
+            f"color: {sig_col}; font-size: 15px; font-weight: 800; font-family: 'Segoe UI', system-ui, sans-serif;"
+        )
+        self.lbl_verdict.setText(verdict_text)
+        self.lbl_verdict.setStyleSheet(
+            f"color: {sig_col}; font-size: 9px; font-weight: 700; letter-spacing: 0.5px;"
+        )
+        if hasattr(self, "signal_card"):
+            self.signal_card.setStyleSheet(f"""
+                QFrame#SignalBadgeCard {{
+                    background-color: {card_bg};
+                    border: 1px solid {card_border};
+                    border-radius: 6px;
+                }}
+            """)
 
     def _on_cursor_left(self):
         """Restore default received power badge when cursor leaves profile canvas."""
