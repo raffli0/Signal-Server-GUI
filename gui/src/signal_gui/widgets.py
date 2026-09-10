@@ -311,12 +311,15 @@ class ParameterForm(QWidget):
     demnas_dir_picked = Signal()    # DEMNAS folder (re)selected, even if unchanged
     transparent_holes_toggled = Signal(bool)
     contour_mode_changed = Signal(int)
+    swap_requested = Signal()
+    lock_toggled = Signal(bool)
 
     def __init__(self, signal_server_root: str = "", parent=None):
         super().__init__(parent)
         self.ss_root = signal_server_root
         self.sections: dict[str, CollapsibleSection] = {}
         self.is_locked = False
+        self.points_locked = False
         # Guard for bidirectional dBm<->dBµV threshold synchronisation.
         self._thr_syncing = False
         self._ground_elev: dict[str, Optional[float]] = {"tx": None, "rx": None}
@@ -659,6 +662,60 @@ class ParameterForm(QWidget):
                                 "End bearing of the sector (start>end wraps over North)")
         self.az_mask.toggled.connect(self.az_start.setEnabled)
         self.az_mask.toggled.connect(self.az_end.setEnabled)
+
+        # Quick actions bar between Tx and Rx: Swap and Lock
+        tx_rx_bar = QFrame()
+        tx_rx_bar.setStyleSheet("""
+            QFrame {
+                background-color: #1A202C;
+                border: 1px solid #2D3748;
+                border-radius: 4px;
+            }
+        """)
+        bar_layout = QHBoxLayout(tx_rx_bar)
+        bar_layout.setContentsMargins(4, 4, 4, 4)
+        bar_layout.setSpacing(6)
+
+        self.btn_swap_tx_rx = QPushButton(" Tukar Tx & Rx (Swap)")
+        self.btn_swap_tx_rx.setIcon(self._icon("swap", 14, "#CBD5E0"))
+        self.btn_swap_tx_rx.setToolTip("Tukar koordinat, ketinggian, nama, dan parameter Tx & Rx")
+        self.btn_swap_tx_rx.setFixedHeight(28)
+        self.btn_swap_tx_rx.setStyleSheet("""
+            QPushButton {
+                background-color: #2B6CB0;
+                color: #FFFFFF;
+                border: none;
+                border-radius: 3px;
+                padding: 3px 8px;
+                font-size: 11px;
+                font-weight: 600;
+            }
+            QPushButton:hover { background-color: #3182CE; }
+            QPushButton:pressed { background-color: #2C5282; }
+        """)
+        self.btn_swap_tx_rx.clicked.connect(lambda: self.swap_requested.emit())
+        bar_layout.addWidget(self.btn_swap_tx_rx, 1)
+
+        self.btn_lock_points = QPushButton(" Kunci Titik")
+        self.btn_lock_points.setIcon(self._icon("unlock", 14, "#CBD5E0"))
+        self.btn_lock_points.setToolTip("Kunci koordinat titik Tx & Rx agar tidak berubah saat peta diklik")
+        self.btn_lock_points.setFixedHeight(28)
+        self.btn_lock_points.setStyleSheet("""
+            QPushButton {
+                background-color: #2D3748;
+                color: #CBD5E0;
+                border: 1px solid #4A5568;
+                border-radius: 3px;
+                padding: 3px 8px;
+                font-size: 11px;
+                font-weight: 600;
+            }
+            QPushButton:hover { background-color: #4A5568; color: #FFFFFF; }
+        """)
+        self.btn_lock_points.clicked.connect(lambda: self.lock_toggled.emit(not self.points_locked))
+        bar_layout.addWidget(self.btn_lock_points, 1)
+
+        self.layout.addWidget(tx_rx_bar)
 
         # =========================================================================
         # -- 2. Receiver (Rx)
@@ -1041,8 +1098,8 @@ class ParameterForm(QWidget):
         row_run.setSpacing(6)
 
         self.btn_lock = QPushButton()
-        self.btn_lock.setIcon(self._icon("lock", 14, "#CBD5E0"))
-        self.btn_lock.setToolTip("Lock / Unlock Form Inputs")
+        self.btn_lock.setIcon(self._icon("unlock", 14, "#CBD5E0"))
+        self.btn_lock.setToolTip("Kunci / Buka Kunci Titik Tx & Rx")
         self.btn_lock.setFixedSize(30, 30)
         self.btn_lock.setStyleSheet("""
             QPushButton {
@@ -1053,7 +1110,7 @@ class ParameterForm(QWidget):
             }
             QPushButton:hover { background-color: #334155; color: #FFFFFF; }
         """)
-        self.btn_lock.clicked.connect(self._toggle_lock)
+        self.btn_lock.clicked.connect(lambda: self.lock_toggled.emit(not self.points_locked))
 
         self.btn_run = QPushButton(" Run Coverage")
         self.btn_run.setIcon(self._icon("play", 15, "#FFFFFF"))
@@ -1127,19 +1184,84 @@ class ParameterForm(QWidget):
         return footer
 
     def _toggle_lock(self):
-        self.is_locked = not self.is_locked
-        self.btn_lock.setStyleSheet("""
-            QPushButton {
-                background-color: %s;
-                color: #FFFFFF;
-                border: none;
-                border-radius: 6px;
-                font-size: 18px;
-            }
-        """ % ("#E53E3E" if self.is_locked else "#0088CC"))
-        self.setEnabled(not self.is_locked)
-        # Keep lock button interactive
-        self.btn_lock.setEnabled(True)
+        self.lock_toggled.emit(not self.points_locked)
+
+    def set_points_locked(self, locked: bool) -> None:
+        self.points_locked = bool(locked)
+        self.is_locked = self.points_locked
+
+        if self.points_locked:
+            # Locked state styling
+            self.btn_lock_points.setText(" Titik Terkunci")
+            self.btn_lock_points.setIcon(self._icon("lock", 14, "#FFFFFF"))
+            self.btn_lock_points.setStyleSheet("""
+                QPushButton {
+                    background-color: #E53E3E;
+                    color: #FFFFFF;
+                    border: 1px solid #C53030;
+                    border-radius: 3px;
+                    padding: 3px 8px;
+                    font-size: 11px;
+                    font-weight: 600;
+                }
+                QPushButton:hover { background-color: #C53030; }
+            """)
+            self.btn_lock_points.setToolTip("Titik Tx & Rx terkunci. Klik untuk membuka kunci.")
+
+            self.btn_lock.setIcon(self._icon("lock", 14, "#FFFFFF"))
+            self.btn_lock.setStyleSheet("""
+                QPushButton {
+                    background-color: #E53E3E;
+                    color: #FFFFFF;
+                    border: none;
+                    border-radius: 4px;
+                }
+                QPushButton:hover { background-color: #C53030; }
+            """)
+            self.btn_lock.setToolTip("Titik Tx & Rx terkunci. Klik untuk membuka kunci.")
+
+            self.btn_pick_tx.setEnabled(False)
+            self.btn_pick_rx.setEnabled(False)
+            self.btn_pick_tx.setToolTip("Titik terkunci. Buka kunci terlebih dahulu.")
+            self.btn_pick_rx.setToolTip("Titik terkunci. Buka kunci terlebih dahulu.")
+            self.tx_coord.setEnabled(False)
+            self.rx_coord.setEnabled(False)
+        else:
+            # Unlocked state styling
+            self.btn_lock_points.setText(" Kunci Titik")
+            self.btn_lock_points.setIcon(self._icon("unlock", 14, "#CBD5E0"))
+            self.btn_lock_points.setStyleSheet("""
+                QPushButton {
+                    background-color: #2D3748;
+                    color: #CBD5E0;
+                    border: 1px solid #4A5568;
+                    border-radius: 3px;
+                    padding: 3px 8px;
+                    font-size: 11px;
+                    font-weight: 600;
+                }
+                QPushButton:hover { background-color: #4A5568; color: #FFFFFF; }
+            """)
+            self.btn_lock_points.setToolTip("Kunci koordinat titik Tx & Rx agar tidak berubah saat peta diklik")
+
+            self.btn_lock.setIcon(self._icon("unlock", 14, "#CBD5E0"))
+            self.btn_lock.setStyleSheet("""
+                QPushButton {
+                    background-color: #1E293B;
+                    color: #CBD5E0;
+                    border: 1px solid #334155;
+                    border-radius: 4px;
+                }
+                QPushButton:hover { background-color: #334155; color: #FFFFFF; }
+            """)
+            self.btn_lock.setToolTip("Kunci koordinat titik Tx & Rx")
+
+            self.btn_pick_tx.setEnabled(True)
+            self.btn_pick_rx.setEnabled(True)
+            self.btn_pick_tx.setToolTip("")
+            self.btn_pick_rx.setToolTip("")
+            self.tx_coord.setEnabled(True)
+            self.rx_coord.setEnabled(True)
 
     def _pick(self, label: QLabel, filter_: str, start_dir: Optional[str] = None) -> None:
         p = _browse(self, "Select file", filter_, start_dir)

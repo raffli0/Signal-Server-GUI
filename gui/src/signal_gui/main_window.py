@@ -111,6 +111,7 @@ class MainWindow(QMainWindow):
         self._last_coverage_result = None
         self._last_link_result = None
         self._pick_no_fly = False
+        self.points_locked = False
         self._amsl_timer = QTimer(self)
         self._amsl_timer.setSingleShot(True)
         self._amsl_timer.setInterval(600)
@@ -457,6 +458,13 @@ class MainWindow(QMainWindow):
         self.form.demnas_live.toggled.connect(self._update_demnas_live)
         self.form.transparent_holes_toggled.connect(self.map.set_transparent_holes)
         self.form.contour_mode_changed.connect(self.map.set_contour_mode)
+        # Wire up Lock and Swap Signals across Form, Map, and Radio Link Panel
+        self.form.swap_requested.connect(self._swap_tx_rx_link)
+        self.form.lock_toggled.connect(self.toggle_points_locked)
+        self.map.swap_requested.connect(self._swap_tx_rx_link)
+        self.map.lock_toggled.connect(self.toggle_points_locked)
+        self.path_profile_panel.swap_requested.connect(self._swap_tx_rx_link)
+        self.path_profile_panel.lock_toggled.connect(self.toggle_points_locked)
         # DEM source changes affect where elevations are sampled from.
         self.form.demnas_dir_picked.connect(self._schedule_amsl)
         self.demnas_default_dir = self._find_demnas_default()
@@ -1079,29 +1087,92 @@ class MainWindow(QMainWindow):
         """Update interactive tracking marker on the map as the user moves cursor on profile (2D drone altitude)."""
         self.map.set_link_cursor(lat, lon, dist_km, amsl_m, agl_m, ground_m)
 
+    def toggle_points_locked(self, locked: Optional[bool] = None) -> None:
+        """Synchronize Tx & Rx points locked state across Form, Map, and Radio Link Panel."""
+        if locked is None:
+            self.points_locked = not getattr(self, "points_locked", False)
+        else:
+            self.points_locked = bool(locked)
+
+        if hasattr(self, "form"):
+            self.form.set_points_locked(self.points_locked)
+        if hasattr(self, "map"):
+            self.map.set_points_locked(self.points_locked)
+        if hasattr(self, "path_profile_panel"):
+            self.path_profile_panel.set_points_locked(self.points_locked)
+
+        if self.points_locked:
+            self._set_status("Titik Tx & Rx dikunci (Aman dari klik peta)")
+        else:
+            self._set_status("Titik Tx & Rx dibuka kuncinya")
+
     def _swap_tx_rx_link(self) -> None:
-        """Swap Tx and Rx coordinates, antenna heights, and re-run link."""
+        """Swap Tx and Rx coordinates, antenna heights, names, gains, losses, power, and re-run link if active."""
         try:
-            tx_lat = self.form.tx_lat.value()
-            tx_lon = self.form.tx_lon.value()
+            tx_lat, tx_lon = self.form.tx_coord.get()
+            rx_lat, rx_lon = self.form.rx_coord.get()
+            if tx_lat is None or tx_lon is None or rx_lat is None or rx_lon is None:
+                self._set_status("Swap gagal: Koordinat Tx atau Rx tidak valid")
+                return
+
+            tx_name = self.form.tx_name.text()
+            rx_name = self.form.rx_name.text()
             tx_h = self.form.tx_height.value()
-
-            rx_lat = self.form.rx_lat.value()
-            rx_lon = self.form.rx_lon.value()
             rx_h = self.form.rx_height.value()
+            tx_g = self.form.tx_gain.value()
+            rx_g = self.form.rx_gain.value()
+            tx_loss = self.form.cable_loss.value()
+            rx_loss = self.form.rx_cable_loss.value()
+            tx_p = self.form.rf_power.value()
+            rx_p = self.form.rx_power.value()
+            tx_thr = self.form.tx_thr.value()
+            rx_thr = self.form.rx_thr.value()
 
-            self.form.tx_lat.setValue(rx_lat)
-            self.form.tx_lon.setValue(rx_lon)
+            # Temporarily unlock form coordinates if locked so programmatic swap succeeds
+            was_locked = getattr(self, "points_locked", False)
+            if was_locked:
+                self.form.tx_coord.setEnabled(True)
+                self.form.rx_coord.setEnabled(True)
+
+            self._pick_no_fly = True
+            try:
+                self.form.tx_coord.set(rx_lat, rx_lon)
+                self.form.rx_coord.set(tx_lat, tx_lon)
+            finally:
+                self._pick_no_fly = False
+
+            if was_locked:
+                self.form.tx_coord.setEnabled(False)
+                self.form.rx_coord.setEnabled(False)
+
+            self.form.tx_name.setText(rx_name)
+            self.form.rx_name.setText(tx_name)
             self.form.tx_height.setValue(rx_h)
-
-            self.form.rx_lat.setValue(tx_lat)
-            self.form.rx_lon.setValue(tx_lon)
             self.form.rx_height.setValue(tx_h)
+            self.form.tx_gain.setValue(rx_g)
+            self.form.rx_gain.setValue(tx_g)
+            self.form.cable_loss.setValue(rx_loss)
+            self.form.rx_cable_loss.setValue(tx_loss)
+            self.form.rf_power.setValue(rx_p)
+            self.form.rx_power.setValue(tx_p)
+            self.form.tx_thr.setValue(rx_thr)
+            self.form.rx_thr.setValue(tx_thr)
 
+            # Update map markers and site labels
             self.map.set_tx(rx_lat, rx_lon, fly=False)
             self.map.set_rx(tx_lat, tx_lon, fly=False)
+            self.map.set_site_labels(tx=rx_name.strip() or None, rx=tx_name.strip() or None)
 
-            self.start(link=True)
+            self._schedule_amsl()
+            self._schedule_demnas_live()
+
+            tx_disp = rx_name or f"{rx_lat:.4f},{rx_lon:.4f}"
+            rx_disp = tx_name or f"{tx_lat:.4f},{tx_lon:.4f}"
+            self._set_status(f"Tx & Rx ditukar: Tx({tx_disp}) ⇄ Rx({rx_disp})")
+
+            # If Radio Link panel is currently visible, re-run link in reverse direction immediately
+            if getattr(self, "path_profile_panel", None) and self.path_profile_panel.isVisible():
+                self.start(link=True)
         except Exception as exc:
             self._set_status(f"Swap error: {exc}")
 
@@ -1140,6 +1211,9 @@ class MainWindow(QMainWindow):
         self._launch()
 
     def _on_picked(self, role: str, lat: float, lon: float) -> None:
+        if getattr(self, "points_locked", False):
+            self._set_status("Titik Tx & Rx terkunci (Buka kunci untuk memindahkan titik)")
+            return
         # Picking on the map must not move/zoom the view: the clicked point is
         # already visible. The guard makes the tx_changed/rx_changed handlers
         # update markers without flyToSite (form coordinate sets emit synchronously).

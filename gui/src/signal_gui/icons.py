@@ -96,6 +96,13 @@ _ICONS: dict[str, str] = {
         '<rect x="5" y="11" width="14" height="9" rx="1.5"/>'
         '<path d="M8 11V8a4 4 0 0 1 8 0v3"/>'
     ),
+    "unlock": (
+        '<rect x="5" y="11" width="14" height="9" rx="1.5"/>'
+        '<path d="M8 11V7a4 4 0 0 1 7.9-1"/>'
+    ),
+    "swap": (
+        '<path d="M7 16V4M7 4L3 8M7 4L11 8M17 8v12M17 20l4-4M17 20l-4-4"/>'
+    ),
     "folder": (
         '<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>'
     ),

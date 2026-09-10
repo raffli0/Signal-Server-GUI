@@ -49,7 +49,7 @@ def parse_pick_url(url: str):
 
 
 def render_html(template: str, coverage, markers, armed: str,
-                cov_palette=None) -> str:
+                cov_palette=None, points_locked: bool = False) -> str:
     """Build the final HTML string by injecting coverage/markers/armed state.
 
     ``coverage`` is ``(data_uri, [south, west, north, east])`` or ``None``.
@@ -68,10 +68,12 @@ def render_html(template: str, coverage, markers, armed: str,
     palette_js = ""
     if cov_palette:
         palette_js = "window.__covPalette=" + json.dumps(cov_palette) + ";"
+    locked_js = f"window.__pointsLocked={'true' if points_locked else 'false'};"
     inject = (
         f"window.__coverage={cov_js};"
         f"window.__markers={markers_js};"
         f"window.__armedRole='{armed}';"
+        + locked_js
         + palette_js
     )
     return template.replace("/*__DATA__*/", inject)
@@ -111,7 +113,7 @@ def palette_from_color_file(color_file: Optional[str]):
 
 
 class PickerPage(QWebEnginePage):
-    """Intercepts ``app://pick`` navigations and forwards them to the owner."""
+    """Intercepts ``app://pick``, ``app://toggle_lock``, and ``app://swap`` navigations and forwards them to the owner."""
 
     def __init__(self, owner: "MapView"):
         super().__init__(owner)
@@ -119,7 +121,14 @@ class PickerPage(QWebEnginePage):
 
     def acceptNavigationRequest(self, url: QUrl, _type, _isMainFrame: bool) -> bool:
         if url.scheme() == "app":
-            parsed = parse_pick_url(url.toString())
+            url_str = url.toString()
+            if url.host() == "toggle_lock" or "toggle_lock" in url_str:
+                self._owner.lock_toggled.emit()
+                return False
+            if url.host() == "swap" or "swap" in url_str:
+                self._owner.swap_requested.emit()
+                return False
+            parsed = parse_pick_url(url_str)
             if parsed:
                 self._owner.picked.emit(*parsed)
             return False  # never actually navigate
@@ -128,6 +137,8 @@ class PickerPage(QWebEnginePage):
 
 class MapView(QWebEngineView):
     picked = Signal(str, float, float)
+    lock_toggled = Signal()
+    swap_requested = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -141,6 +152,7 @@ class MapView(QWebEngineView):
         self._armed = "tx"
         self._ready = False              # True once the web page has loaded
         self._focus = None               # (lat, lon) to fly to after load
+        self.points_locked = False
         self._page = PickerPage(self)
         self.setPage(self._page)
         self.tx_label = "Tx"
@@ -212,9 +224,17 @@ class MapView(QWebEngineView):
         js = "placeMarkers(" + json.dumps(self._markers_list()) + ");"
         self.page().runJavaScript(js)
 
+    def set_points_locked(self, locked: bool) -> None:
+        self.points_locked = bool(locked)
+        if self._ready:
+            js_bool = "true" if self.points_locked else "false"
+            self.page().runJavaScript(f"if (typeof setPointsLocked === 'function') setPointsLocked({js_bool});")
+
     def _on_loaded(self, _ok: bool) -> None:
         self._ready = True
         self._update_markers()
+        if self.points_locked:
+            self.page().runJavaScript("if (typeof setPointsLocked === 'function') setPointsLocked(true);")
         # When a coverage overlay is shown, loadCoverage() already fitBounds() to
         # it -- don't clobber that with a forced zoom-14 fly-to (which would hide
         # a large (e.g. 100 km) result). Only auto-fly on the blank initial load.
@@ -226,7 +246,8 @@ class MapView(QWebEngineView):
     def _render(self) -> None:
         self._ready = False
         html = render_html(self._template, self._coverage, self._markers_list(),
-                           self._armed, cov_palette=self._cov_palette)
+                           self._armed, cov_palette=self._cov_palette,
+                           points_locked=self.points_locked)
         self.setHtml(html)
 
     def show_blank(self) -> None:

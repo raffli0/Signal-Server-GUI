@@ -660,6 +660,8 @@ class CloudRFPathProfilePanel(QWidget):
     export_kmz_requested = Signal()
     export_kml_requested = Signal()
     export_png_requested = Signal()
+    swap_requested = Signal()
+    lock_toggled = Signal(bool)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -667,7 +669,20 @@ class CloudRFPathProfilePanel(QWidget):
         self._link_data: Optional[dict] = None
         self._params_data: Optional[dict] = None
         self._default_rx_dbm: float = -80.0
+        self.points_locked: bool = False
         self._build_ui()
+
+    def set_points_locked(self, locked: bool) -> None:
+        self.points_locked = bool(locked)
+        if hasattr(self, "btn_lock"):
+            if self.points_locked:
+                self.btn_lock.setText("🔒 Locked")
+                self.btn_lock.setStyleSheet("QPushButton { background: #E53E3E; color: #FFFFFF; font-weight: 700; font-size: 11px; border: none; border-radius: 3px; padding: 2px 6px; } QPushButton:hover { background: #C53030; }")
+                self.btn_lock.setToolTip("Titik Tx & Rx terkunci. Klik untuk membuka kunci.")
+            else:
+                self.btn_lock.setText("🔓 Lock")
+                self.btn_lock.setStyleSheet("QPushButton { background: #2D3748; color: #CBD5E0; font-weight: 700; font-size: 11px; border: 1px solid #4A5568; border-radius: 3px; padding: 2px 6px; } QPushButton:hover { background: #4A5568; color: #FFFFFF; }")
+                self.btn_lock.setToolTip("Kunci titik Tx & Rx agar tidak berubah saat peta diklik")
 
     def _build_ui(self):
         main_layout = QVBoxLayout(self)
@@ -721,10 +736,20 @@ class CloudRFPathProfilePanel(QWidget):
         right_col.setContentsMargins(0, 0, 0, 0)
         right_col.setAlignment(Qt.AlignmentFlag.AlignRight)
 
-        # Action links row (KMZ, PNG, Close)
+        # Action links row (Swap, Lock, KMZ, PNG, Close)
         actions_row = QHBoxLayout()
-        actions_row.setSpacing(10)
+        actions_row.setSpacing(8)
         actions_row.setAlignment(Qt.AlignmentFlag.AlignRight)
+
+        self.btn_swap = QPushButton("⇄ Swap")
+        self.btn_swap.setToolTip("Tukar Tx dan Rx (Swap arah link)")
+        self.btn_swap.setStyleSheet("QPushButton { background: #2B6CB0; color: #FFFFFF; font-weight: 700; font-size: 11px; border: none; border-radius: 3px; padding: 2px 6px; } QPushButton:hover { background: #3182CE; }")
+        self.btn_swap.clicked.connect(lambda: self.swap_requested.emit())
+
+        self.btn_lock = QPushButton("🔓 Lock")
+        self.btn_lock.setToolTip("Kunci / Buka kunci titik Tx dan Rx dari klik peta")
+        self.btn_lock.setStyleSheet("QPushButton { background: #2D3748; color: #CBD5E0; font-weight: 700; font-size: 11px; border: 1px solid #4A5568; border-radius: 3px; padding: 2px 6px; } QPushButton:hover { background: #4A5568; color: #FFFFFF; }")
+        self.btn_lock.clicked.connect(lambda: self.lock_toggled.emit(not self.points_locked))
 
         btn_kml = QPushButton("KML")
         btn_kml.setToolTip("Export Radio Link 3D KML (Radio Mobile format)")
@@ -747,6 +772,8 @@ class CloudRFPathProfilePanel(QWidget):
         btn_close.setStyleSheet("QPushButton { background: transparent; color: #A0AEC0; font-size: 12px; font-weight: bold; border: none; } QPushButton:hover { color: #FC8181; }")
         btn_close.clicked.connect(lambda: self.close_requested.emit())
 
+        actions_row.addWidget(self.btn_swap)
+        actions_row.addWidget(self.btn_lock)
         actions_row.addWidget(btn_kml)
         actions_row.addWidget(btn_kmz)
         actions_row.addWidget(btn_png)
