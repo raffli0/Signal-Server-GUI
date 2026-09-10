@@ -5,7 +5,9 @@ from PySide6.QtCore import QPointF, QSize
 from PySide6.QtGui import QColor, QPixmap
 from PySide6.QtWidgets import QApplication
 
-from signal_gui.cloudrf_profile_panel import CloudRFProfileCanvas, CloudRFPathProfilePanel
+from signal_gui.cloudrf_profile_panel import (
+    CloudRFProfileCanvas, CloudRFPathProfilePanel, compute_terrain_contour_colors
+)
 
 
 @pytest.fixture(scope="session")
@@ -106,3 +108,33 @@ def test_cloudrf_panel_throttling_and_reset(qapp, sample_profile):
     # Cursor left resets to default received power
     panel._on_cursor_left()
     assert "-68.4" in panel.lbl_signal_callout.text()
+
+
+def test_compute_terrain_contour_colors():
+    dists = [0.0, 1.0, 2.0, 3.0, 4.0]
+    los = [150.0, 150.0, 150.0, 150.0, 150.0]
+    f_lower = [140.0, 140.0, 140.0, 140.0, 140.0]
+
+    # Test 1: Clear terrain -> Green
+    terrain_clear = [50.0, 50.0, 50.0, 50.0, 50.0]
+    cols = compute_terrain_contour_colors(dists, terrain_clear, los, f_lower)
+    assert len(cols) == len(dists) - 1
+    assert all(c == QColor("#22C55E") for c in cols)
+
+    # Test 2: Penetrating LOS -> Red
+    terrain_obs = [50.0, 160.0, 50.0, 50.0, 50.0]
+    cols_obs = compute_terrain_contour_colors(dists, terrain_obs, los, f_lower)
+    assert cols_obs[0] == QColor("#EF4444")
+    assert cols_obs[1] == QColor("#EF4444")
+
+    # Test 3: Penetrating 60% Fresnel -> Yellow
+    terrain_fres = [50.0, 145.0, 50.0, 50.0, 50.0]
+    cols_fres = compute_terrain_contour_colors(dists, terrain_fres, los, f_lower)
+    assert cols_fres[0] == QColor("#EAB308")
+
+    # Test 4: Valley in deep shadow behind mountain -> Red
+    # Mountain at d=1.0 with height 130m, deep valley at d=2.0 with height 10m
+    terrain_shadow = [80.0, 130.0, 10.0, 10.0, 80.0]
+    cols_shadow = compute_terrain_contour_colors(dists, terrain_shadow, los, f_lower)
+    assert cols_shadow[1] == QColor("#EF4444")  # in shadow of mountain
+

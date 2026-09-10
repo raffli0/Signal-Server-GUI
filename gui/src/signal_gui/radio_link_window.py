@@ -18,6 +18,7 @@ from typing import Optional, Dict, Any, List
 
 from .link_parse import _destination_point, _initial_bearing
 from .two_ray import calculate_two_ray, TwoRayDetails
+from .cloudrf_profile_panel import compute_terrain_contour_colors
 
 from PySide6.QtCore import Qt, Signal, QRectF, QPointF
 from PySide6.QtGui import (
@@ -505,22 +506,10 @@ class DarkPathProfileCanvas(QWidget):
         painter.fillPath(t_path, QBrush(QColor("#C8823B")))
 
         # 5. Clearance-Aware Multi-Color Terrain Contour (Green / Yellow / Red per Radio Mobile)
+        seg_colors = compute_terrain_contour_colors(dists, terrain, los, f_lower)
         for i in range(n - 1):
-            t_mid = 0.5 * (terrain[i] + terrain[i + 1])
-            l_mid = 0.5 * (los[i] + los[i + 1])
-            d_mid_m = 0.5 * (dists[i] + dists[i + 1] - 2 * d_min) * 1000.0
-            r1_mid = math.sqrt(max(0.0, wavelength * d_mid_m * (total_dist_m - d_mid_m) / total_dist_m))
-            f60_mid = l_mid - 0.6 * r1_mid
-            
-            # Segment color: Red if terrain penetrates LOS, Yellow if penetrates 60% Fresnel, Green if clear
-            if t_mid > l_mid:
-                seg_col = QColor("#FF0000")  # Obstructed (Red)
-            elif t_mid > f60_mid:
-                seg_col = QColor("#FFFF00")  # Marginal (Yellow)
-            else:
-                seg_col = QColor("#00E600")  # Clear Line of Sight (Green)
-
-            painter.setPen(QPen(seg_col, 3.0, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+            col = seg_colors[i] if i < len(seg_colors) else QColor("#22C55E")
+            painter.setPen(QPen(col, 2.8, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
             p1 = to_screen(dists[i], terrain[i])
             p2 = to_screen(dists[i + 1], terrain[i + 1])
             painter.drawLine(QPointF(p1[0], p1[1]), QPointF(p2[0], p2[1]))

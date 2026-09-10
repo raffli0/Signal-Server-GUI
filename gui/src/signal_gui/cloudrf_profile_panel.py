@@ -13,6 +13,8 @@ from typing import Optional, Dict, Any, List
 
 from .link_parse import _destination_point, _initial_bearing
 
+import numpy as np
+
 from PySide6.QtCore import Qt, Signal, QRectF, QPointF
 from PySide6.QtGui import (
     QColor, QFont, QPainter, QPainterPath, QPen, QBrush, QLinearGradient,
@@ -22,6 +24,80 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QToolTip,
     QFrame, QSizePolicy, QFileDialog, QMessageBox
 )
+
+
+def compute_terrain_contour_colors(
+    dists: list[float],
+    terrain: list[float],
+    los: list[float],
+    f_lower: list[float],
+) -> list[QColor]:
+    """Compute Radio Mobile style clearance & shadow colors (Green/Yellow/Red) for terrain segments."""
+    n = len(dists)
+    if n < 2:
+        return []
+
+    d_arr = np.asarray(dists, dtype=np.float64) * 1000.0  # in meters
+    t_arr = np.asarray(terrain, dtype=np.float64)
+    l_arr = np.asarray(los, dtype=np.float64)
+    fl_arr = np.asarray(f_lower, dtype=np.float64)
+
+    tx_amsl = l_arr[0]
+    rx_amsl = l_arr[-1]
+    tot_m = max(1.0, d_arr[-1] - d_arr[0])
+    r_eff = 8500000.0  # 4/3 effective earth radius in meters
+
+    col_red = QColor("#EF4444")     # Obstructed / Terrain shadow (Red)
+    col_yellow = QColor("#EAB308")  # Marginal / 60% Fresnel / Diffraction (Yellow)
+    col_green = QColor("#22C55E")   # Clear Line of Sight / Illuminated (Green)
+
+    colors: list[QColor] = []
+    for i in range(n - 1):
+        t_mid = 0.5 * (t_arr[i] + t_arr[i + 1])
+        l_mid = 0.5 * (l_arr[i] + l_arr[i + 1])
+        fl_mid = 0.5 * (fl_arr[i] + fl_arr[i + 1])
+        d_mid = 0.5 * (d_arr[i] + d_arr[i + 1])
+
+        # 1. Direct path clearance between Tx and Rx:
+        if t_mid >= l_mid or t_arr[i] >= l_arr[i] or t_arr[i + 1] >= l_arr[i + 1]:
+            colors.append(col_red)
+            continue
+        if t_mid >= fl_mid or t_arr[i] >= fl_arr[i] or t_arr[i + 1] >= fl_arr[i + 1]:
+            colors.append(col_yellow)
+            continue
+
+        # 2. Line-of-sight visibility from Tx:
+        if i > 0:
+            dj = d_arr[1 : i + 1]
+            alpha = dj / d_mid
+            drop = (dj * (d_mid - dj)) / (2.0 * r_eff)
+            ray_h = tx_amsl + alpha * (t_mid - tx_amsl) - drop
+            clr_tx = float(np.min(ray_h - t_arr[1 : i + 1]))
+        else:
+            clr_tx = 999.0
+
+        vis_clr = clr_tx
+
+        # 3. Line-of-sight visibility from Rx for the second half of the path:
+        if d_mid > 0.5 * tot_m and i < n - 2:
+            rem_m = tot_m - d_mid
+            dj_rx = tot_m - d_arr[i + 1 : -1]
+            alpha_rx = dj_rx / rem_m
+            drop_rx = (dj_rx * (rem_m - dj_rx)) / (2.0 * r_eff)
+            ray_h_rx = rx_amsl + alpha_rx * (t_mid - rx_amsl) - drop_rx
+            clr_rx = float(np.min(ray_h_rx - t_arr[i + 1 : -1]))
+            vis_clr = max(vis_clr, clr_rx)
+
+        # 4. Classify segment color:
+        if vis_clr < -1.0:
+            colors.append(col_red)
+        elif vis_clr < 8.0:
+            colors.append(col_yellow)
+        else:
+            colors.append(col_green)
+
+    return colors
+
 
 
 class CloudRFProfileCanvas(QWidget):
@@ -290,23 +366,14 @@ class CloudRFProfileCanvas(QWidget):
         painter.setPen(Qt.PenStyle.NoPen)
         painter.drawPath(t_body)
 
-        # 2b. Terrain Surface Contour Line (Rich Brown #A0522D, with Red highlight for LOS obstructions)
+        # 2b. Terrain Surface Contour Line (Radio Mobile Multi-Color: Green / Yellow / Red)
+        seg_colors = compute_terrain_contour_colors(dists, terrain, los, f_lower)
         for i in range(n - 1):
             x1, y1 = to_screen(dists[i], terrain[i])
-            x2, y2 = to_screen(dists[i+1], terrain[i+1])
-            l1, l2 = los[i], los[i+1]
-            t1, t2 = terrain[i], terrain[i+1]
+            x2, y2 = to_screen(dists[i + 1], terrain[i + 1])
+            col = seg_colors[i] if i < len(seg_colors) else QColor("#22C55E")
 
-            if t1 >= l1 or t2 >= l2:
-                # Segment obstructs direct LOS ray
-                line_color = QColor("#EF4444")
-                line_w = 2.6
-            else:
-                # Authentic sleek brown terrain surface
-                line_color = QColor("#A0522D")
-                line_w = 2.2
-
-            painter.setPen(QPen(line_color, line_w, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+            painter.setPen(QPen(col, 2.8, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
             painter.drawLine(QPointF(x1, y1), QPointF(x2, y2))
 
         # 3. Fresnel Zone (Crisp Sky Blue / Cyan Dashed Line - Strictly NO FILL, NO GREEN)
@@ -660,10 +727,11 @@ class CloudRFPathProfilePanel(QWidget):
             lbl.setTextFormat(Qt.TextFormat.RichText)
             return lbl
 
-        legend_row.addWidget(_legend_item("—", "Tanah (Earth)", "#A0522D"))
-        legend_row.addWidget(_legend_item("—", "Terhalang (LOS)", "#EF4444"))
+        legend_row.addWidget(_legend_item("—", "Kontur Terbuka (LOS)", "#22C55E"))
+        legend_row.addWidget(_legend_item("—", "Marjinal (60% F1)", "#EAB308"))
+        legend_row.addWidget(_legend_item("—", "Bayangan / Terhalang", "#EF4444"))
         legend_row.addWidget(_legend_item("---", "Fresnel (1.0 F1)", "#38BDF8"))
-        legend_row.addWidget(_legend_item("—", "LOS", "#22C55E"))
+        legend_row.addWidget(_legend_item("—", "Berkas LOS", "#22C55E"))
         right_col.addLayout(legend_row)
 
         header_layout.addLayout(right_col)
