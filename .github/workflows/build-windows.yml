@@ -23,8 +23,18 @@ jobs:
       uses: actions/setup-python@v5
       with:
         python-version: '3.11'
+        cache: 'pip'
+        cache-dependency-path: 'gui/pyproject.toml'
+
+    - name: Cache Signal-Server C++ Binaries & GDAL
+      id: cache-cpp-bin
+      uses: actions/cache@v4
+      with:
+        path: bin
+        key: cpp-bin-${{ runner.os }}-${{ hashFiles('Signal-Server/**', '.github/workflows/build-windows.yml') }}
 
     - name: Set up MSYS2 MinGW-w64
+      if: steps.cache-cpp-bin.outputs.cache-hit != 'true'
       uses: msys2/setup-msys2@v2
       with:
         msystem: MINGW64
@@ -39,6 +49,7 @@ jobs:
           mingw-w64-x86_64-gdal
 
     - name: Compile Signal-Server C++ Engines (MinGW-w64)
+      if: steps.cache-cpp-bin.outputs.cache-hit != 'true'
       shell: msys2 {0}
       run: |
         ROOT_DIR="$(pwd)"
@@ -105,6 +116,15 @@ jobs:
         cp bin/gdal*.exe bin/gdal/ 2>/dev/null || true
         cp bin/*.dll bin/gdal/ 2>/dev/null || true
 
+    - name: Verify C++ Engines & Runtime Dependencies
+      run: |
+        if (!(Test-Path "bin\signal-server.exe")) {
+          Write-Error "bin/signal-server.exe is missing! Check build or cache."
+          exit 1
+        }
+        Write-Host "C++ engine binaries and GDAL dependencies verified successfully in bin/."
+        Get-ChildItem bin\*.exe | Select-Object Name, Length
+
     - name: Install Python Dependencies & PyInstaller
       run: |
         python -m pip install --upgrade pip
@@ -115,8 +135,20 @@ jobs:
       run: |
         python scripts/package_windows.py
 
+    - name: Cache Inno Setup
+      id: cache-inno
+      uses: actions/cache@v4
+      with:
+        path: C:\Program Files (x86)\Inno Setup 6
+        key: inno-setup-6
+
     - name: Install Inno Setup
-      run: choco install innosetup
+      run: |
+        if (!(Test-Path "C:\Program Files (x86)\Inno Setup 6\ISCC.exe") -and !(Test-Path "C:\Program Files\Inno Setup 6\ISCC.exe")) {
+          choco install innosetup --no-progress
+        } else {
+          Write-Host "Inno Setup compiler found and ready."
+        }
 
     - name: Compile Windows Installer (Inno Setup)
       run: |
@@ -131,6 +163,16 @@ jobs:
           exit 1
         }
 
+    - name: Create Lightweight GUI Update Patch
+      run: |
+        New-Item -ItemType Directory -Force -Path dist-patch\SignalServerGUI
+        Copy-Item -Path dist\SignalServerGUI\* -Destination dist-patch\SignalServerGUI -Recurse
+        if (Test-Path dist-patch\SignalServerGUI\bin) {
+          Remove-Item -Path dist-patch\SignalServerGUI\bin -Recurse -Force
+        }
+        Compress-Archive -Path dist-patch\SignalServerGUI\* -DestinationPath dist-patch\SignalServerGUI-Patch.zip -Force
+        Write-Host "GUI Patch ZIP created successfully at dist-patch\SignalServerGUI-Patch.zip"
+
     - name: Upload Windows Standalone Folder Artifact
       uses: actions/upload-artifact@v4
       with:
@@ -142,3 +184,9 @@ jobs:
       with:
         name: SignalServerGUI-Setup
         path: dist-installer/*.exe
+
+    - name: Upload Lightweight GUI Patch Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: SignalServerGUI-Patch
+        path: dist-patch/SignalServerGUI-Patch.zip
