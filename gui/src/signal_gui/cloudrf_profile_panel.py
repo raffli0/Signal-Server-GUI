@@ -997,10 +997,6 @@ class CloudRFPathProfilePanel(QWidget):
         self.lbl_row1.setText(
             f"<span style='color:#64748B;'>Dist:</span> <b style='color:#FFFFFF;'>{dist_km:.2f} km</b> &nbsp;"
             f"<span style='color:#334155;'>│</span>&nbsp; "
-            f"<span style='color:#64748B;'>Bearing:</span> <b style='color:#FFFFFF;'>{az_deg:.0f}°</b> &nbsp;"
-            f"<span style='color:#334155;'>│</span>&nbsp; "
-            f"<span style='color:#64748B;'>Tilt:</span> <b style='color:#FFFFFF;'>{downtilt:+.1f}°</b> &nbsp;"
-            f"<span style='color:#334155;'>│</span>&nbsp; "
             f"<span style='color:#64748B;'>Freq:</span> <b style='color:#FFFFFF;'>{freq_mhz:.0f} MHz</b> &nbsp;"
             f"<span style='color:#334155;'>│</span>&nbsp; "
             f"<span style='color:#64748B;'>Path Loss:</span> <b style='color:#F59E0B;'>{loss_db:.1f} dB</b> &nbsp;"
@@ -1013,7 +1009,9 @@ class CloudRFPathProfilePanel(QWidget):
         rx_net_dbi = rx_gain_dbi - rx_cable_loss
         rx_spec_str = f"<b>{rx_gain_dbi:.1f} dBi</b>" + (f" (<span style='color:#64748B;'>net</span> <b>{rx_net_dbi:.1f}</b>)" if rx_cable_loss > 0 else "")
         self.lbl_row2.setText(
-            f"<span style='color:#64748B;'>Tx EIRP:</span> <b style='color:#E2E8F0;'>{eirp_w:.2f}W ({eirp_dbm:.1f} dBm)</b> &nbsp;"
+            f"<span style='color:#64748B;'>ERP:</span> <b style='color:#E2E8F0;'>{erp_w:.2f}W</b> &nbsp;"
+            f"<span style='color:#334155;'>│</span>&nbsp; "
+            f"<span style='color:#64748B;'>EIRP:</span> <b style='color:#E2E8F0;'>{eirp_w:.2f}W ({eirp_dbm:.1f} dBm)</b> &nbsp;"
             f"<span style='color:#334155;'>│</span>&nbsp; "
             f"<span style='color:#64748B;'>Tx Ant:</span> <b style='color:#E2E8F0;'>{tx_gain_dbi:.1f} dBi</b> &nbsp;"
             f"<span style='color:#334155;'>│</span>&nbsp; "
