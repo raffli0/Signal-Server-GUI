@@ -458,7 +458,9 @@ class MainWindow(QMainWindow):
         self.form.demnas_live.toggled.connect(self._update_demnas_live)
         self.form.transparent_holes_toggled.connect(self.map.set_transparent_holes)
         self.form.contour_mode_changed.connect(self.map.set_contour_mode)
-        # Wire up Lock and Swap Signals across Form, Map, and Radio Link Panel
+        # Wire up Lock and Swap Signals across Header, Form, Map, and Radio Link Panel
+        self.header.swap_requested.connect(self._swap_tx_rx_link)
+        self.header.lock_toggled.connect(self.toggle_points_locked)
         self.form.swap_requested.connect(self._swap_tx_rx_link)
         self.form.lock_toggled.connect(self.toggle_points_locked)
         self.map.swap_requested.connect(self._swap_tx_rx_link)
@@ -1088,12 +1090,14 @@ class MainWindow(QMainWindow):
         self.map.set_link_cursor(lat, lon, dist_km, amsl_m, agl_m, ground_m)
 
     def toggle_points_locked(self, locked: Optional[bool] = None) -> None:
-        """Synchronize Tx & Rx points locked state across Form, Map, and Radio Link Panel."""
+        """Synchronize Tx & Rx points locked state across Header, Form, Map, and Radio Link Panel."""
         if locked is None:
             self.points_locked = not getattr(self, "points_locked", False)
         else:
             self.points_locked = bool(locked)
 
+        if hasattr(self, "header"):
+            self.header.set_points_locked(self.points_locked)
         if hasattr(self, "form"):
             self.form.set_points_locked(self.points_locked)
         if hasattr(self, "map"):

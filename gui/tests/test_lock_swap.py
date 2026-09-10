@@ -4,6 +4,7 @@ from PySide6.QtCore import QUrl
 from PySide6.QtWidgets import QApplication
 
 from signal_gui import map_view
+from signal_gui.header import CloudRFHeader
 from signal_gui.widgets import ParameterForm
 from signal_gui.cloudrf_profile_panel import CloudRFPathProfilePanel
 from signal_gui.main_window import MainWindow
@@ -71,8 +72,40 @@ def test_picker_page_navigation_interception(qapp):
     assert pick_emitted[0] == ("rx", -6.123, 106.456)
 
 
-def test_parameter_form_lock_state(qapp):
+def test_navbar_header_lock_and_swap_state(qapp):
+    header = CloudRFHeader()
+    assert hasattr(header, "btn_swap")
+    assert hasattr(header, "btn_lock")
+    assert header.points_locked is False
+    assert "Kunci Titik" in header.btn_lock.text()
+
+    swap_emitted = []
+    lock_emitted = []
+    header.swap_requested.connect(lambda: swap_emitted.append(True))
+    header.lock_toggled.connect(lambda val: lock_emitted.append(val))
+
+    header.btn_swap.click()
+    assert len(swap_emitted) == 1
+
+    header.btn_lock.click()
+    assert len(lock_emitted) == 1
+    assert lock_emitted[0] is True  # toggled from False to True
+
+    header.set_points_locked(True)
+    assert header.points_locked is True
+    assert "Terkunci" in header.btn_lock.text()
+
+    header.set_points_locked(False)
+    assert header.points_locked is False
+    assert "Kunci Titik" in header.btn_lock.text()
+
+
+def test_parameter_form_no_sidebar_buttons_and_lock_state(qapp):
     form = ParameterForm()
+    # Confirm buttons are NOT in the sidebar
+    assert not hasattr(form, "btn_swap_tx_rx")
+    assert not hasattr(form, "btn_lock_points")
+
     assert form.points_locked is False
 
     # Lock points
@@ -82,7 +115,6 @@ def test_parameter_form_lock_state(qapp):
     assert form.btn_pick_rx.isEnabled() is False
     assert form.tx_coord.isEnabled() is False
     assert form.rx_coord.isEnabled() is False
-    assert "Terkunci" in form.btn_lock_points.text()
 
     # Unlock points
     form.set_points_locked(False)
@@ -91,7 +123,6 @@ def test_parameter_form_lock_state(qapp):
     assert form.btn_pick_rx.isEnabled() is True
     assert form.tx_coord.isEnabled() is True
     assert form.rx_coord.isEnabled() is True
-    assert "Kunci Titik" in form.btn_lock_points.text()
 
 
 def test_profile_panel_lock_state(qapp):
@@ -120,9 +151,11 @@ def test_main_window_toggle_points_locked_and_guard_pick(qapp, monkeypatch):
     # Toggle lock to True
     win.toggle_points_locked(True)
     assert win.points_locked is True
+    assert win.header.points_locked is True
     assert win.form.points_locked is True
     assert win.map.points_locked is True
     assert win.path_profile_panel.points_locked is True
+    assert "Terkunci" in win.header.btn_lock.text()
 
     # Attempt to pick while locked -> coordinates must NOT change
     win._on_picked("tx", -7.0, 108.0)
@@ -132,6 +165,8 @@ def test_main_window_toggle_points_locked_and_guard_pick(qapp, monkeypatch):
     # Unlock again
     win.toggle_points_locked(False)
     assert win.points_locked is False
+    assert win.header.points_locked is False
+    assert "Kunci Titik" in win.header.btn_lock.text()
     win._on_picked("tx", -7.0, 108.0)
     lat_unlocked, lon_unlocked = win.form.tx_coord.get()
     assert abs(lat_unlocked - (-7.0)) < 1e-5 and abs(lon_unlocked - 108.0) < 1e-5
@@ -157,8 +192,8 @@ def test_main_window_swap_tx_rx(qapp, monkeypatch):
     win.form.rx_power.setValue(2)
     win.form.rx_thr.setValue(-105)
 
-    # Perform swap
-    win._swap_tx_rx_link()
+    # Perform swap via header action
+    win.header.btn_swap.click()
 
     # Verify Tx now has Bravo's parameters
     new_tx_lat, new_tx_lon = win.form.tx_coord.get()

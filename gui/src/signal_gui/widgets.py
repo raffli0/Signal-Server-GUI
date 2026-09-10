@@ -663,60 +663,6 @@ class ParameterForm(QWidget):
         self.az_mask.toggled.connect(self.az_start.setEnabled)
         self.az_mask.toggled.connect(self.az_end.setEnabled)
 
-        # Quick actions bar between Tx and Rx: Swap and Lock
-        tx_rx_bar = QFrame()
-        tx_rx_bar.setStyleSheet("""
-            QFrame {
-                background-color: #1A202C;
-                border: 1px solid #2D3748;
-                border-radius: 4px;
-            }
-        """)
-        bar_layout = QHBoxLayout(tx_rx_bar)
-        bar_layout.setContentsMargins(4, 4, 4, 4)
-        bar_layout.setSpacing(6)
-
-        self.btn_swap_tx_rx = QPushButton(" Tukar Tx & Rx (Swap)")
-        self.btn_swap_tx_rx.setIcon(self._icon("swap", 14, "#CBD5E0"))
-        self.btn_swap_tx_rx.setToolTip("Tukar koordinat, ketinggian, nama, dan parameter Tx & Rx")
-        self.btn_swap_tx_rx.setFixedHeight(28)
-        self.btn_swap_tx_rx.setStyleSheet("""
-            QPushButton {
-                background-color: #2B6CB0;
-                color: #FFFFFF;
-                border: none;
-                border-radius: 3px;
-                padding: 3px 8px;
-                font-size: 11px;
-                font-weight: 600;
-            }
-            QPushButton:hover { background-color: #3182CE; }
-            QPushButton:pressed { background-color: #2C5282; }
-        """)
-        self.btn_swap_tx_rx.clicked.connect(lambda: self.swap_requested.emit())
-        bar_layout.addWidget(self.btn_swap_tx_rx, 1)
-
-        self.btn_lock_points = QPushButton(" Kunci Titik")
-        self.btn_lock_points.setIcon(self._icon("unlock", 14, "#CBD5E0"))
-        self.btn_lock_points.setToolTip("Kunci koordinat titik Tx & Rx agar tidak berubah saat peta diklik")
-        self.btn_lock_points.setFixedHeight(28)
-        self.btn_lock_points.setStyleSheet("""
-            QPushButton {
-                background-color: #2D3748;
-                color: #CBD5E0;
-                border: 1px solid #4A5568;
-                border-radius: 3px;
-                padding: 3px 8px;
-                font-size: 11px;
-                font-weight: 600;
-            }
-            QPushButton:hover { background-color: #4A5568; color: #FFFFFF; }
-        """)
-        self.btn_lock_points.clicked.connect(lambda: self.lock_toggled.emit(not self.points_locked))
-        bar_layout.addWidget(self.btn_lock_points, 1)
-
-        self.layout.addWidget(tx_rx_bar)
-
         # =========================================================================
         # -- 2. Receiver (Rx)
         # =========================================================================
@@ -1093,24 +1039,9 @@ class ParameterForm(QWidget):
         fv.setContentsMargins(4, 4, 4, 4)
         fv.setSpacing(4)
 
-        # Primary Action Row: Lock + Big Green Calculate Button
+        # Primary Action Row: Big Green Calculate Button
         row_run = QHBoxLayout()
         row_run.setSpacing(6)
-
-        self.btn_lock = QPushButton()
-        self.btn_lock.setIcon(self._icon("unlock", 14, "#CBD5E0"))
-        self.btn_lock.setToolTip("Kunci / Buka Kunci Titik Tx & Rx")
-        self.btn_lock.setFixedSize(30, 30)
-        self.btn_lock.setStyleSheet("""
-            QPushButton {
-                background-color: #1E293B;
-                color: #CBD5E0;
-                border: 1px solid #334155;
-                border-radius: 4px;
-            }
-            QPushButton:hover { background-color: #334155; color: #FFFFFF; }
-        """)
-        self.btn_lock.clicked.connect(lambda: self.lock_toggled.emit(not self.points_locked))
 
         self.btn_run = QPushButton(" Run Coverage")
         self.btn_run.setIcon(self._icon("play", 15, "#FFFFFF"))
@@ -1132,7 +1063,6 @@ class ParameterForm(QWidget):
         """)
         self.btn_run.clicked.connect(lambda: self.start_requested.emit())
 
-        row_run.addWidget(self.btn_lock)
         row_run.addWidget(self.btn_run, 1)
         fv.addLayout(row_run)
 
@@ -1191,71 +1121,13 @@ class ParameterForm(QWidget):
         self.is_locked = self.points_locked
 
         if self.points_locked:
-            # Locked state styling
-            self.btn_lock_points.setText(" Titik Terkunci")
-            self.btn_lock_points.setIcon(self._icon("lock", 14, "#FFFFFF"))
-            self.btn_lock_points.setStyleSheet("""
-                QPushButton {
-                    background-color: #E53E3E;
-                    color: #FFFFFF;
-                    border: 1px solid #C53030;
-                    border-radius: 3px;
-                    padding: 3px 8px;
-                    font-size: 11px;
-                    font-weight: 600;
-                }
-                QPushButton:hover { background-color: #C53030; }
-            """)
-            self.btn_lock_points.setToolTip("Titik Tx & Rx terkunci. Klik untuk membuka kunci.")
-
-            self.btn_lock.setIcon(self._icon("lock", 14, "#FFFFFF"))
-            self.btn_lock.setStyleSheet("""
-                QPushButton {
-                    background-color: #E53E3E;
-                    color: #FFFFFF;
-                    border: none;
-                    border-radius: 4px;
-                }
-                QPushButton:hover { background-color: #C53030; }
-            """)
-            self.btn_lock.setToolTip("Titik Tx & Rx terkunci. Klik untuk membuka kunci.")
-
             self.btn_pick_tx.setEnabled(False)
             self.btn_pick_rx.setEnabled(False)
-            self.btn_pick_tx.setToolTip("Titik terkunci. Buka kunci terlebih dahulu.")
-            self.btn_pick_rx.setToolTip("Titik terkunci. Buka kunci terlebih dahulu.")
+            self.btn_pick_tx.setToolTip("Titik terkunci. Buka kunci di navbar terlebih dahulu.")
+            self.btn_pick_rx.setToolTip("Titik terkunci. Buka kunci di navbar terlebih dahulu.")
             self.tx_coord.setEnabled(False)
             self.rx_coord.setEnabled(False)
         else:
-            # Unlocked state styling
-            self.btn_lock_points.setText(" Kunci Titik")
-            self.btn_lock_points.setIcon(self._icon("unlock", 14, "#CBD5E0"))
-            self.btn_lock_points.setStyleSheet("""
-                QPushButton {
-                    background-color: #2D3748;
-                    color: #CBD5E0;
-                    border: 1px solid #4A5568;
-                    border-radius: 3px;
-                    padding: 3px 8px;
-                    font-size: 11px;
-                    font-weight: 600;
-                }
-                QPushButton:hover { background-color: #4A5568; color: #FFFFFF; }
-            """)
-            self.btn_lock_points.setToolTip("Kunci koordinat titik Tx & Rx agar tidak berubah saat peta diklik")
-
-            self.btn_lock.setIcon(self._icon("unlock", 14, "#CBD5E0"))
-            self.btn_lock.setStyleSheet("""
-                QPushButton {
-                    background-color: #1E293B;
-                    color: #CBD5E0;
-                    border: 1px solid #334155;
-                    border-radius: 4px;
-                }
-                QPushButton:hover { background-color: #334155; color: #FFFFFF; }
-            """)
-            self.btn_lock.setToolTip("Kunci koordinat titik Tx & Rx")
-
             self.btn_pick_tx.setEnabled(True)
             self.btn_pick_rx.setEnabled(True)
             self.btn_pick_tx.setToolTip("")
