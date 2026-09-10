@@ -924,11 +924,11 @@ class CloudRFPathProfilePanel(QWidget):
             lbl.setTextFormat(Qt.TextFormat.RichText)
             return lbl
 
-        legend_row.addWidget(_legend_item("━", "LOS Bebas", "#22C55E"))
-        legend_row.addWidget(_legend_item("━", "Marjinal (60% F1)", "#EAB308"))
-        legend_row.addWidget(_legend_item("━", "Terhalang", "#EF4444"))
+        legend_row.addWidget(_legend_item("━", "Clear LOS", "#22C55E"))
+        legend_row.addWidget(_legend_item("━", "Marginal (60% F1)", "#EAB308"))
+        legend_row.addWidget(_legend_item("━", "Obstructed / Shadow", "#EF4444"))
         legend_row.addWidget(_legend_item("┄", "Fresnel (1.0 F1)", "#38BDF8"))
-        legend_row.addWidget(_legend_item("─", "Berkas LOS", "#22C55E"))
+        legend_row.addWidget(_legend_item("─", "Direct LOS Ray (Tx–Rx)", "#22C55E"))
         tier2.addLayout(legend_row)
         info_area.addLayout(tier2)
 
