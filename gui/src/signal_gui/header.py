@@ -199,53 +199,53 @@ class CloudRFHeader(QFrame):
         layout.addWidget(self.btn_line_itm)
 
         # Points Action Tools (Swap & Lock Tx/Rx)
-        sep_pts = QFrame()
-        sep_pts.setFrameShape(QFrame.Shape.VLine)
-        sep_pts.setStyleSheet(f"color: {BORDER_DEFAULT};")
-        layout.addWidget(sep_pts)
+        # sep_pts = QFrame()
+        # sep_pts.setFrameShape(QFrame.Shape.VLine)
+        # sep_pts.setStyleSheet(f"color: {BORDER_DEFAULT};")
+        # layout.addWidget(sep_pts)
 
-        self.btn_swap = QPushButton()
-        self.btn_swap.setIcon(svg_icon("swap", 14, "#CBD5E0"))
-        self.btn_swap.setText(" Swap Tx/Rx")
-        self.btn_swap.setToolTip("Tukar posisi koordinat, ketinggian, dan parameter Tx & Rx")
-        self.btn_swap.setFixedHeight(26)
-        self.btn_swap.setStyleSheet(f"""
-            QPushButton {{
-                background: {BG_CARD};
-                color: {TEXT_PRIMARY};
-                border: 1px solid {BORDER_LIGHT};
-                border-radius: 4px;
-                font-size: 12px;
-                font-weight: 600;
-                padding: 0 8px;
-            }}
-            QPushButton:hover {{ background: {PRIMARY_BLUE}; color: #FFFFFF; border-color: {PRIMARY_HOVER}; }}
-            QPushButton:pressed {{ background: #1A365D; }}
-        """)
-        self.btn_swap.clicked.connect(lambda: self.swap_requested.emit())
-        layout.addWidget(self.btn_swap)
+        # self.btn_swap = QPushButton()
+        # self.btn_swap.setIcon(svg_icon("swap", 14, "#CBD5E0"))
+        # self.btn_swap.setText(" Swap Tx/Rx")
+        # self.btn_swap.setToolTip("Tukar posisi koordinat, ketinggian, dan parameter Tx & Rx")
+        # self.btn_swap.setFixedHeight(26)
+        # self.btn_swap.setStyleSheet(f"""
+        #     QPushButton {{
+        #         background: {BG_CARD};
+        #         color: {TEXT_PRIMARY};
+        #         border: 1px solid {BORDER_LIGHT};
+        #         border-radius: 4px;
+        #         font-size: 12px;
+        #         font-weight: 600;
+        #         padding: 0 8px;
+        #     }}
+        #     QPushButton:hover {{ background: {PRIMARY_BLUE}; color: #FFFFFF; border-color: {PRIMARY_HOVER}; }}
+        #     QPushButton:pressed {{ background: #1A365D; }}
+        # """)
+        # self.btn_swap.clicked.connect(lambda: self.swap_requested.emit())
+        # layout.addWidget(self.btn_swap)
 
-        self.btn_lock = QPushButton()
-        self.btn_lock.setIcon(svg_icon("unlock", 14, "#CBD5E0"))
-        self.btn_lock.setText(" Kunci Titik")
-        self.btn_lock.setToolTip("Kunci koordinat titik Tx & Rx agar tidak berubah saat peta diklik")
-        self.btn_lock.setFixedHeight(26)
-        self.btn_lock.setStyleSheet(f"""
-            QPushButton {{
-                background: {BG_CARD};
-                color: {TEXT_PRIMARY};
-                border: 1px solid {BORDER_LIGHT};
-                border-radius: 4px;
-                font-size: 12px;
-                font-weight: 600;
-                padding: 0 8px;
-            }}
-            QPushButton:hover {{ background: #4A5568; color: #FFFFFF; }}
-        """)
-        self.btn_lock.clicked.connect(lambda: self.lock_toggled.emit(not self.points_locked))
-        layout.addWidget(self.btn_lock)
+        # self.btn_lock = QPushButton()
+        # self.btn_lock.setIcon(svg_icon("unlock", 14, "#CBD5E0"))
+        # self.btn_lock.setText(" Kunci Titik")
+        # self.btn_lock.setToolTip("Kunci koordinat titik Tx & Rx agar tidak berubah saat peta diklik")
+        # self.btn_lock.setFixedHeight(26)
+        # self.btn_lock.setStyleSheet(f"""
+        #     QPushButton {{
+        #         background: {BG_CARD};
+        #         color: {TEXT_PRIMARY};
+        #         border: 1px solid {BORDER_LIGHT};
+        #         border-radius: 4px;
+        #         font-size: 12px;
+        #         font-weight: 600;
+        #         padding: 0 8px;
+        #     }}
+        #     QPushButton:hover {{ background: #4A5568; color: #FFFFFF; }}
+        # """)
+        # self.btn_lock.clicked.connect(lambda: self.lock_toggled.emit(not self.points_locked))
+        # layout.addWidget(self.btn_lock)
 
-        # Spacer to push right elements
+        # # Spacer to push right elements
         layout.addStretch()
 
         # Clear propagation result button (clears coverage overlay / log / status)
