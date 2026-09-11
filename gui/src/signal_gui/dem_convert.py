@@ -27,6 +27,7 @@ import urllib.request
 import urllib.error
 import zipfile
 import ssl
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
 from typing import Optional, Any
 
@@ -292,6 +293,46 @@ def download_tile_zip(tile_code: str, resolution: int, dest_dir: str) -> str:
     return zip_path
 
 
+def _link_or_copy_sdf(src_file: str, dst_file: str) -> None:
+    """Atomically link or copy an SDF tile into destination directory."""
+    if os.path.exists(dst_file):
+        return
+    try:
+        os.link(src_file, dst_file)
+    except OSError:
+        try:
+            shutil.copy2(src_file, dst_file)
+        except OSError:
+            pass
+
+
+def download_tile_zips(
+    tile_codes: list[str],
+    resolution: int,
+    dest_dir: str,
+    max_workers: int = 4,
+) -> dict[str, str]:
+    """Download multiple regional DEM zips in parallel; returns {tile_code: zip_path}."""
+    if not tile_codes:
+        return {}
+    results: dict[str, str] = {}
+    unique_codes = list(dict.fromkeys(tile_codes))
+    if len(unique_codes) == 1 or max_workers <= 1:
+        for tc in unique_codes:
+            results[tc] = download_tile_zip(tc, resolution, dest_dir)
+        return results
+
+    with ThreadPoolExecutor(max_workers=min(len(unique_codes), max_workers)) as pool:
+        future_map = {
+            pool.submit(download_tile_zip, tc, resolution, dest_dir): tc
+            for tc in unique_codes
+        }
+        for fut in as_completed(future_map):
+            tc = future_map[fut]
+            results[tc] = fut.result()
+    return results
+
+
 def extract_hgt(zip_path: str, extract_dir: str) -> list[str]:
     """Extract a Viewfinder zip; returns the list of ``.hgt`` file paths.
 
@@ -466,8 +507,18 @@ def prepare_region(
     hgt_files = extract_hgt(zip_path, raw_dir)
     if not hgt_files:
         raise DemResolveError(f"No .hgt files found in tile {tile_code}")
-    for hgt in hgt_files:
-        convert_hgt_to_sdf(srtm2sdf_exe, hgt, sdf_dir)
+    max_workers = min(os.cpu_count() or 4, 8)
+    if len(hgt_files) <= 1 or max_workers <= 1:
+        for hgt in hgt_files:
+            convert_hgt_to_sdf(srtm2sdf_exe, hgt, sdf_dir)
+    else:
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            futures = [
+                pool.submit(convert_hgt_to_sdf, srtm2sdf_exe, hgt, sdf_dir)
+                for hgt in hgt_files
+            ]
+            for fut in as_completed(futures):
+                fut.result()
     if center_lat is not None and center_lon is not None:
         if not hgt_covers_center(raw_dir, center_lat, center_lon):
             raise DemResolveError(
@@ -543,19 +594,63 @@ def ensure_dem_for_area(
     """
     ranked = _ranked_tiles_for_bbox(lat_lo, lat_hi, lon_lo, lon_hi, resolution)
     last_err: Optional[Exception] = None
+    primary_code = None
+    primary_sdf_dir = None
     for code in ranked:
         try:
-            sdf_dir = prepare_region(
+            primary_sdf_dir = prepare_region(
                 code, resolution, cache_dir, srtm2sdf_exe,
                 center_lat=center_lat, center_lon=center_lon,
             )
+            primary_code = code
+            break
         except DemResolveError as exc:
             last_err = exc
             continue
-        return sdf_dir
-    raise DemResolveError(
-        str(last_err) if last_err else "No Viewfinder DEM tile covers this location"
-    )
+
+    if primary_sdf_dir is None or primary_code is None:
+        raise DemResolveError(
+            str(last_err) if last_err else "No Viewfinder DEM tile covers this location"
+        )
+
+    # Check if the primary tile alone covers all bbox corners
+    hd = engine == "HD"
+    boxes = sdf_dir_boxes(primary_sdf_dir, hd=hd)
+    missing = sdf_missing_corners(boxes, lat_lo, lat_hi, lon_lo, lon_hi) if boxes else []
+
+    # If corners are missing and multiple tiles cover the bounding box, fetch and merge them
+    if missing and len(ranked) > 1:
+        other_codes = [c for c in ranked if c != primary_code]
+
+        def _prep_extra(c: str) -> tuple[str, Optional[str]]:
+            try:
+                return c, prepare_region(c, resolution, cache_dir, srtm2sdf_exe)
+            except Exception as ex:
+                logger.warning("Optional multi-tile %s preparation skipped: %s", c, ex)
+                return c, None
+
+        max_workers = min(len(other_codes), os.cpu_count() or 4, 4)
+        ready_codes = [primary_code]
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            for c, sdir in pool.map(_prep_extra, other_codes):
+                if sdir:
+                    ready_codes.append(c)
+
+        if len(ready_codes) > 1:
+            combo_name = f"combo_{'_'.join(sorted(ready_codes))}"
+            combo_dir = _cache_sub(cache_dir, os.path.join("sdf", combo_name))
+            for c in ready_codes:
+                src_sdir = os.path.join(cache_dir, "sdf", c)
+                if os.path.isdir(src_sdir):
+                    for f in os.listdir(src_sdir):
+                        if f.endswith(".sdf"):
+                            _link_or_copy_sdf(
+                                os.path.join(src_sdir, f),
+                                os.path.join(combo_dir, f),
+                            )
+            return combo_dir
+
+    return primary_sdf_dir
 
 
 # ---------------------------------------------------------------------------
@@ -1031,39 +1126,51 @@ def demnas_folder_to_sdf(
 
     # Split into 1-degree SRTM .hgt tiles, one per cell, named by the
     # south-west corner (standard SRTM convention, e.g. S07E107.hgt).
-    hgt_files: list[str] = []
+    cells = []
     for ilat in range(ilat_lo, ilat_hi):
         for ilon in range(ilon_lo, ilon_hi):
-            ns = "S" if ilat < 0 else "N"
-            ew = "W" if ilon < 0 else "E"
-            name = f"{ns}{abs(ilat):02d}{ew}{abs(ilon):03d}.hgt"
-            out_hgt = os.path.join(raw_dir, name)
-            if os.path.exists(out_hgt) and hgt_valid(out_hgt, tile_size):
-                hgt_files.append(out_hgt)
-                continue
-            # (Re)build inside a temp dir with the exact SRTM name the driver
-            # requires, then move into place so a kill mid-translate cannot
-            # cache a truncated tile.
-            import tempfile
-            os.makedirs(raw_dir, exist_ok=True)
-            with tempfile.TemporaryDirectory(prefix=".hgt_",
-                                             dir=raw_dir) as td:
-                tmp_hgt = os.path.join(td, name)
-                _run([
-                    "gdal_translate", "-of", "SRTMHGT",
-                    "-outsize", str(tile_size), str(tile_size),
-                    "-projwin", str(ilon), str(ilat + 1), str(ilon + 1),
-                    str(ilat), clipped, tmp_hgt,
-                ])
-                if not os.path.exists(tmp_hgt):
-                    continue
-                if not hgt_valid(tmp_hgt, tile_size):
-                    raise DemResolveError(
-                        f"Tile .hgt {name} terpotong/invalid setelah "
-                        f"konversi (ukuran tak sesuai grid {tile_size}).")
-                os.replace(tmp_hgt, out_hgt)
-            if os.path.exists(out_hgt):
-                hgt_files.append(out_hgt)
+            cells.append((ilat, ilon))
+
+    def _build_one_hgt(cell: tuple[int, int]) -> Optional[str]:
+        ilat, ilon = cell
+        ns = "S" if ilat < 0 else "N"
+        ew = "W" if ilon < 0 else "E"
+        name = f"{ns}{abs(ilat):02d}{ew}{abs(ilon):03d}.hgt"
+        out_hgt = os.path.join(raw_dir, name)
+        if os.path.exists(out_hgt) and hgt_valid(out_hgt, tile_size):
+            return out_hgt
+        os.makedirs(raw_dir, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix=".hgt_", dir=raw_dir) as td:
+            tmp_hgt = os.path.join(td, name)
+            _run([
+                "gdal_translate", "-of", "SRTMHGT",
+                "-outsize", str(tile_size), str(tile_size),
+                "-projwin", str(ilon), str(ilat + 1), str(ilon + 1),
+                str(ilat), clipped, tmp_hgt,
+            ])
+            if not os.path.exists(tmp_hgt):
+                return None
+            if not hgt_valid(tmp_hgt, tile_size):
+                raise DemResolveError(
+                    f"Tile .hgt {name} terpotong/invalid setelah "
+                    f"konversi (ukuran tak sesuai grid {tile_size})."
+                )
+            os.replace(tmp_hgt, out_hgt)
+        return out_hgt if os.path.exists(out_hgt) else None
+
+    hgt_files: list[str] = []
+    max_hgt_workers = min(len(cells), os.cpu_count() or 4, 8)
+    if len(cells) <= 1 or max_hgt_workers <= 1:
+        for c in cells:
+            res = _build_one_hgt(c)
+            if res:
+                hgt_files.append(res)
+    else:
+        with ThreadPoolExecutor(max_workers=max_hgt_workers) as pool:
+            for res in pool.map(_build_one_hgt, cells):
+                if res:
+                    hgt_files.append(res)
+
     if not hgt_files:
         raise DemResolveError(
             "Gagal mengonversi DEMNAS menjadi .hgt (periksa CRS/proyeksi "
@@ -1075,7 +1182,19 @@ def demnas_folder_to_sdf(
         pct = hgt_void_pct(hgt)
         if pct > worst_void:
             worst_void, worst_tile = pct, os.path.basename(hgt)
-        convert_hgt_to_sdf(srtm2sdf_exe, hgt, sdf_dir)
+
+    max_sdf_workers = min(len(hgt_files), os.cpu_count() or 4, 8)
+    if len(hgt_files) <= 1 or max_sdf_workers <= 1:
+        for hgt in hgt_files:
+            convert_hgt_to_sdf(srtm2sdf_exe, hgt, sdf_dir)
+    else:
+        with ThreadPoolExecutor(max_workers=max_sdf_workers) as pool:
+            futures = [
+                pool.submit(convert_hgt_to_sdf, srtm2sdf_exe, hgt, sdf_dir)
+                for hgt in hgt_files
+            ]
+            for fut in as_completed(futures):
+                fut.result()
     level, msg = evaluate_void(worst_void)
     if level == "reject":
         raise DemResolveError(f"{msg} (tile terparah: {worst_tile})")

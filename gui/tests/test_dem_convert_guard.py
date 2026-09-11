@@ -125,3 +125,34 @@ def test_resolve_regional_tile_viewfinder_index():
     assert dc.resolve_regional_tile(-6.9, 107.6, 1) == "SB48"
 
 
+def test_download_tile_zips_parallel(monkeypatch, tmp_path):
+    dest = tmp_path / "zips"
+    dest.mkdir()
+
+    calls = []
+    def fake_download(code, res, d):
+        calls.append(code)
+        p = os.path.join(d, f"{code}.zip")
+        with open(p, "w") as f:
+            f.write("fake")
+        return p
+
+    monkeypatch.setattr(dc, "download_tile_zip", fake_download)
+    res = dc.download_tile_zips(["SB48", "SB49", "SA48"], 3, str(dest), max_workers=3)
+    assert len(res) == 3
+    assert set(calls) == {"SB48", "SB49", "SA48"}
+    for code, path in res.items():
+        assert os.path.exists(path)
+
+
+def test_link_or_copy_sdf(tmp_path):
+    src = tmp_path / "test.sdf"
+    src.write_text(GOOD_SDF)
+    dst = tmp_path / "out" / "test.sdf"
+    dst.parent.mkdir()
+    dc._link_or_copy_sdf(str(src), str(dst))
+    assert dst.exists()
+    assert dst.read_text() == GOOD_SDF
+
+
+

@@ -1,4 +1,7 @@
-cmake_minimum_required(VERSION 3.5 FATAL_ERROR)
+cmake_minimum_required(VERSION 3.9 FATAL_ERROR)
+if (POLICY CMP0069)
+    cmake_policy(SET CMP0069 NEW)
+endif()
 
 project(SignalServer LANGUAGES CXX)
 
@@ -7,16 +10,43 @@ set(CMAKE_CXX_STANDARD 14)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-# Optimization
-set(CMAKE_CXX_FLAGS "-O2")
+# Optimization & Performance Tuning
+option(ENABLE_NATIVE_OPT "Enable CPU native architecture optimization (-march=native)" ON)
+option(ENABLE_LTO "Enable Link-Time Optimization (LTO/IPO)" ON)
 
-# Compiler warnings
 if (MSVC)
-    # warning level 4
-    add_compile_options(/W4)
+    # Warning level 4 and aggressive optimization
+    add_compile_options(/W4 /O2 /Oi /Ot /Gy)
 else()
-    # lots of warnings
+    # Compiler warnings
     add_compile_options(-Wall -Wextra -Wpedantic)
+    # Advanced optimization flags for GCC/Clang
+    add_compile_options(
+        -O3
+        -funroll-loops
+        -finline-functions
+        -fomit-frame-pointer
+        -ftree-vectorize
+    )
+
+    if (ENABLE_NATIVE_OPT AND NOT CMAKE_CROSSCOMPILING)
+        include(CheckCXXCompilerFlag)
+        check_cxx_compiler_flag("-march=native" COMPILER_SUPPORTS_MARCH_NATIVE)
+        if (COMPILER_SUPPORTS_MARCH_NATIVE)
+            add_compile_options(-march=native)
+        endif()
+    endif()
+endif()
+
+if (ENABLE_LTO)
+    include(CheckIPOSupported)
+    check_ipo_supported(RESULT ipo_supported OUTPUT ipo_error)
+    if (ipo_supported)
+        set(CMAKE_INTERPROCEDURAL_OPTIMIZATION TRUE)
+        message(STATUS "IPO/LTO enabled for all targets.")
+    else()
+        message(STATUS "IPO/LTO not supported: ${ipo_error}")
+    endif()
 endif()
 
 # Get GIT commit branch & hash

@@ -34,7 +34,6 @@ class CloudRFHeader(QFrame):
     section_clicked = Signal(str)  # Emits key of section to expand/scroll to
     save_profile_requested = Signal()
     load_profile_requested = Signal()
-    import_rm_requested = Signal()
     radio_link_requested = Signal()
     line_itm_requested = Signal()
     swap_requested = Signal()

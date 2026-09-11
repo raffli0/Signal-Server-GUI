@@ -22,7 +22,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QTimer, QObject, QEvent, Signal, QByteArray
 from PySide6.QtGui import QShortcut, QKeySequence
 
-from . import backend, params as params_mod, output_stage, rm_import
+from . import backend, params as params_mod, output_stage
 from .widgets import ParameterForm
 
 logger = logging.getLogger("signal_gui.main_window")
@@ -442,7 +442,6 @@ class MainWindow(QMainWindow):
         self.form.export_requested.connect(self.export_model)
         self.header.save_profile_requested.connect(self.save_profile)
         self.header.load_profile_requested.connect(self.load_profile)
-        self.header.import_rm_requested.connect(self._import_rm_data)
         self.header.radio_link_requested.connect(lambda: self.start(link=True))
         self.header.line_itm_requested.connect(self.start_line_itm)
         self.header.clear_cache_requested.connect(self.clear_cache)
@@ -1256,44 +1255,6 @@ class MainWindow(QMainWindow):
         self._schedule_amsl()
 
     # ------------------------------------------------------------------ profile
-    def _import_rm_data(self) -> None:
-        """Load a Radio Mobile coverage-data TXT export onto the map.
-
-        The file's ``Rx(dB)`` column is a margin above its threshold, so the
-        colour span follows the header (threshold .. threshold + Range) and the
-        Tx pin is restored from the ``Fixed unit`` line.
-        """
-        path, _ = QFileDialog.getOpenFileName(
-            self, "Import Radio Mobile data", "",
-            "Radio Mobile TXT (*.txt);;All files (*)")
-        if not path:
-            return
-        try:
-            data = rm_import.parse_rm_export(path)
-        except Exception as exc:  # noqa: BLE001 - surface any parse problem
-            logger.warning("Import Radio Mobile parse failed: %s", exc)
-            QMessageBox.warning(
-                self, "Import Radio Mobile", f"Gagal memuat file:\n{exc}")
-            return
-        vmin = float(data["threshold_dbm"])
-        vmax = vmin + float(data["range_db"])
-        png = os.path.join(self.cache_dir,
-                           f"rm_import_{datetime.now().strftime('%H%M%S%f')}.png")
-        try:
-            rm_import.render_grid_png(data["points"], vmin, vmax, png)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("Import Radio Mobile render grid failed: %s", exc)
-            QMessageBox.warning(
-                self, "Import Radio Mobile", f"Gagal merender grid:\n{exc}")
-            return
-        self.map.show_coverage(png, data["bbox"])
-        fixed = data.get("fixed")
-        if fixed:
-            self.map.set_tx(fixed["lat"], fixed["lon"], fly=False)
-        self._set_status(
-            f"RM import: {len(data['points'])} titik "
-            f"({vmin:.0f}…{vmax:.0f} dBm) — {os.path.basename(path)}")
-
     def save_profile(self) -> None:
         """Serialize the current form + map view into a JSON profile file."""
         path, _ = QFileDialog.getSaveFileName(
