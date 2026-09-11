@@ -136,7 +136,7 @@ class CollapsibleSection(QFrame):
         title_lbl = QLabel(title)
         title_lbl.setStyleSheet("color: #E2E8F0; font-size: 12px; font-weight: 600;")
 
-        self.arrow_lbl = QLabel("v" if expanded else "<")
+        self.arrow_lbl = QLabel("▾" if expanded else "▸")
         self.arrow_lbl.setStyleSheet("color: #A0AEC0; font-weight: bold; font-size: 11px;")
 
         h_layout.addWidget(icon_lbl)
@@ -164,7 +164,7 @@ class CollapsibleSection(QFrame):
     def set_expanded(self, exp: bool):
         self.expanded = exp
         self.content.setVisible(exp)
-        self.arrow_lbl.setText("v" if exp else "<")
+        self.arrow_lbl.setText("▾" if exp else "▸")
         self.header.setStyleSheet("""
             QFrame {
                 background-color: %s;
@@ -393,7 +393,7 @@ class ParameterForm(QWidget):
         return dbm, uv, container
 
     def _sub_label(self, text: str, icon: str = "") -> QWidget:
-        """Clear, prominent visual sub-group divider inside an accordion section."""
+        """Clear, elegant visual sub-group divider inside an accordion section."""
         if not icon:
             t_low = text.lower()
             if any(k in t_low for k in ("power", "feeder", "rf", "sensitivity")):
@@ -403,35 +403,29 @@ class ParameterForm(QWidget):
             elif any(k in t_low for k in ("site", "location", "position", "frequency")):
                 icon = "tower"
 
-        banner = QFrame()
-        banner.setStyleSheet("""
-            QFrame {
-                background-color: #1A1F26;
-                border-left: 3px solid #3182CE;
-                border-radius: 3px;
-            }
-        """)
-        b_layout = QHBoxLayout(banner)
-        b_layout.setContentsMargins(8, 5, 8, 5)
-        b_layout.setSpacing(6)
+        wrapper = QWidget()
+        w_layout = QHBoxLayout(wrapper)
+        w_layout.setContentsMargins(0, 10, 0, 4)
+        w_layout.setSpacing(6)
 
         if icon:
             icon_lbl = QLabel()
-            icon_lbl.setPixmap(_pixmap(icon, 13, "#63B3ED"))
-            b_layout.addWidget(icon_lbl)
+            icon_lbl.setPixmap(_pixmap(icon, 12, "#63B3ED"))
+            w_layout.addWidget(icon_lbl)
 
-        lbl = QLabel(text)
+        lbl = QLabel(text.upper())
         lbl.setStyleSheet(
-            "color: #F7FAFC; font-size: 11px; font-weight: 700; "
-            "letter-spacing: 0.3px;"
+            "color: #90CDF4; font-size: 10px; font-weight: 700; "
+            "letter-spacing: 0.8px;"
         )
-        b_layout.addWidget(lbl)
-        b_layout.addStretch(1)
+        w_layout.addWidget(lbl)
 
-        wrapper = QWidget()
-        w_layout = QVBoxLayout(wrapper)
-        w_layout.setContentsMargins(0, 10, 0, 4)
-        w_layout.addWidget(banner)
+        # Subtle horizontal divider line extending to the right
+        line = QFrame()
+        line.setFrameShape(QFrame.Shape.HLine)
+        line.setStyleSheet("background-color: #2D3748; border: none; max-height: 1px;")
+        w_layout.addWidget(line, 1)
+
         return wrapper
 
     def _add_gated_row(self, form_layout: QFormLayout, label_text: str,
@@ -586,13 +580,33 @@ class ParameterForm(QWidget):
         self._add_row_with_info(fl_tx, "Antenna gain (dBi)", self.tx_gain, "Transmitter antenna gain in dBi")
         self.cable_loss = FocusWheelSpinBox(); self.cable_loss.setRange(0, 50); self.cable_loss.setValue(0)
         self._add_row_with_info(fl_tx, "Line loss (dB)", self.cable_loss, "Transmission line / cable loss")
-        self.erp_label = QLabel("ERP: - W"); self.erp_label.setStyleSheet("color: #319795; font-size: 11px; font-weight: bold;")
-        self.eirp_label = QLabel("EIRP: - W (- dBm)"); self.eirp_label.setStyleSheet("color: #319795; font-size: 11px; font-weight: bold;")
-        fl_tx.addRow(self.erp_label); fl_tx.addRow(self.eirp_label)
+        # Tx ERP / EIRP Live Calculation Pill Card
+        erp_card = QFrame()
+        erp_card.setStyleSheet("""
+            QFrame {
+                background-color: #181B20;
+                border: 1px solid #282E38;
+                border-radius: 4px;
+            }
+        """)
+        erp_layout = QHBoxLayout(erp_card)
+        erp_layout.setContentsMargins(8, 5, 8, 5)
+        erp_layout.setSpacing(12)
+
+        self.erp_label = QLabel("ERP: — W")
+        self.erp_label.setStyleSheet("color: #38B2AC; font-size: 11px; font-weight: 600;")
+        self.eirp_label = QLabel("EIRP: — W (— dBm)")
+        self.eirp_label.setStyleSheet("color: #4299E1; font-size: 11px; font-weight: 600;")
+
+        erp_layout.addWidget(self.erp_label)
+        erp_layout.addStretch()
+        erp_layout.addWidget(self.eirp_label)
+        fl_tx.addRow(erp_card)
+
         self.tx_thr, self.tx_thr_uv, tx_thr_w = self._make_threshold_pair(
             -100, (-200, 100), (-100, 250))
         self._add_row_with_info(
-            fl_tx, "RX threshold (unit ini)", tx_thr_w,
+            fl_tx, "Receiver threshold (unit ini)", tx_thr_w,
             "Ambang terima stasiun ini (dBm ⇄ dBµV). Disimpan di profil/manifest; "
             "engine hanya menerima satu -rt dari sisi Rx.")
         for w in (self.rf_power, self.tx_gain, self.cable_loss):
@@ -705,9 +719,28 @@ class ParameterForm(QWidget):
         self.rx_cable_loss = FocusWheelSpinBox(); self.rx_cable_loss.setRange(0.0, 50.0); self.rx_cable_loss.setValue(0.5); self.rx_cable_loss.setSingleStep(0.1)
         self._add_row_with_info(fl_rx, "Line loss (dB)", self.rx_cable_loss, "Receiver transmission line / cable loss in dB (Radio Mobile: 0.5 dB)")
 
-        self.rx_erp_label = QLabel("ERP: - W"); self.rx_erp_label.setStyleSheet("color: #319795; font-size: 11px; font-weight: bold;")
-        self.rx_eirp_label = QLabel("EIRP: - W (- dBm)"); self.rx_eirp_label.setStyleSheet("color: #319795; font-size: 11px; font-weight: bold;")
-        fl_rx.addRow(self.rx_erp_label); fl_rx.addRow(self.rx_eirp_label)
+        # Rx ERP / EIRP Live Calculation Pill Card
+        rx_erp_card = QFrame()
+        rx_erp_card.setStyleSheet("""
+            QFrame {
+                background-color: #181B20;
+                border: 1px solid #282E38;
+                border-radius: 4px;
+            }
+        """)
+        rx_erp_layout = QHBoxLayout(rx_erp_card)
+        rx_erp_layout.setContentsMargins(8, 5, 8, 5)
+        rx_erp_layout.setSpacing(12)
+
+        self.rx_erp_label = QLabel("ERP: — W")
+        self.rx_erp_label.setStyleSheet("color: #38B2AC; font-size: 11px; font-weight: 600;")
+        self.rx_eirp_label = QLabel("EIRP: — W (— dBm)")
+        self.rx_eirp_label.setStyleSheet("color: #4299E1; font-size: 11px; font-weight: 600;")
+
+        rx_erp_layout.addWidget(self.rx_erp_label)
+        rx_erp_layout.addStretch()
+        rx_erp_layout.addWidget(self.rx_eirp_label)
+        fl_rx.addRow(rx_erp_card)
 
         for w in (self.rx_power, self.rx_gain, self.rx_cable_loss):
             w.valueChanged.connect(self._update_rx_erp)
@@ -715,7 +748,7 @@ class ParameterForm(QWidget):
         self.rx_thr, self.rx_thr_uv, rx_thr_w = self._make_threshold_pair(
             -100, (-200, 100), (-100, 250))
         self._add_row_with_info(
-            fl_rx, "Rx threshold", rx_thr_w,
+            fl_rx, "Receiver threshold", rx_thr_w,
             "Minimum required signal threshold (dBm ⇄ dBµV). Ini yang dikirim "
             "ke engine sebagai -rt (RX relative = margin pada link report).")
 
