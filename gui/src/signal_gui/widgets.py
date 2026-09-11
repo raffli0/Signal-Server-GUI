@@ -335,6 +335,7 @@ class ParameterForm(QWidget):
         row_l = QHBoxLayout(row_w)
         row_l.setContentsMargins(0, 0, 0, 0)
         row_l.setSpacing(6)
+        widget.setMinimumWidth(0)
         row_l.addWidget(widget, 1)
         if tooltip:
             info_btn = _make_info_btn(tooltip)
@@ -942,6 +943,8 @@ class ParameterForm(QWidget):
         # Color table selection with fast dropdown and Visual Palette Manager
         self.color_combo = QComboBox()
         self.color_combo.setStyleSheet(input_ss)
+        self.color_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self.color_combo.setMinimumContentsLength(8)
         self.color_btn = QPushButton()
         self.color_btn.setIcon(self._icon("palette", 14, "#CBD5E0"))
         self.color_btn.setToolTip("Buka Color Palette Manager (Visual Create & My Colours)...")
@@ -1012,17 +1015,19 @@ class ParameterForm(QWidget):
         self.dbm_color.setStyleSheet("color: #CBD5E0; font-size: 11px;")
         fl_out.addRow(self.dbm_color)
 
-        self.transparent_holes = QCheckBox("Transparankan area bolong putih (Transparent holes)")
+        self.transparent_holes = QCheckBox("Transparankan area bolong (Transparent holes)")
         self.transparent_holes.setChecked(True)
         self.transparent_holes.setStyleSheet("color: #CBD5E0; font-size: 11px;")
         self.transparent_holes.toggled.connect(self.transparent_holes_toggled.emit)
         fl_out.addRow(self.transparent_holes)
 
         self.kmz_contour_mode = QComboBox()
+        self.kmz_contour_mode.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self.kmz_contour_mode.setMinimumContentsLength(8)
         self.kmz_contour_mode.addItems([
-            "Kontur Halus / Tipis (Subtle, Tidak Tebal)",
-            "Flat Murni (Tanpa Kontur)",
-            "Kontur Penuh / Tebal (Original 3D)",
+            "Halus / Tipis (Subtle)",
+            "Flat (Tanpa Kontur)",
+            "Penuh / Tebal (3D)",
         ])
         self.kmz_contour_mode.setCurrentIndex(0)
         self.kmz_contour_mode.currentIndexChanged.connect(self.contour_mode_changed.emit)
@@ -1037,10 +1042,10 @@ class ParameterForm(QWidget):
             }
         """)
         self._add_row_with_info(
-            fl_out, "Mode Kontur (Peta & Export)", self.kmz_contour_mode,
+            fl_out, "Mode kontur", self.kmz_contour_mode,
             "Gaya kontur relief 3D pada tampilan peta (berganti seketika secara realtime) dan ekspor KMZ/KML: "
-            "Kontur Halus / Tipis (rekomendasi, kontur tetap terlihat lembut dan tidak terlalu tebal/gelap), "
-            "Flat Murni (warna solid seragam tanpa kontur), atau Kontur Penuh/Tebal (Original 3D)."
+            "Halus / Tipis (rekomendasi, kontur tetap terlihat lembut dan tidak terlalu tebal/gelap), "
+            "Flat (warna solid seragam tanpa kontur), atau Penuh / Tebal (Original 3D)."
         )
 
         self.raster_txt = QCheckBox("Save raster data (TXT)")
