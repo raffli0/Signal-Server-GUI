@@ -254,6 +254,8 @@ class MapView(QWebEngineView):
         self._coverage = None
         self._cov_palette = None
         self._render()
+        import gc
+        gc.collect()
 
     def show_coverage(self, png_path: str, bbox, color_file: Optional[str] = None,
                       contour_mode: Optional[int] = None) -> None:
@@ -265,14 +267,23 @@ class MapView(QWebEngineView):
         table is also parsed so the hover tooltip can report the dBm band at
         the cursor position.
         """
+        import gc
+
         if contour_mode is not None:
             self._contour_mode = int(contour_mode)
         cur_mode = getattr(self, "_contour_mode", 0)
         n, e, s, w = bbox
+
+        # Drop previous coverage reference from Python memory before loading new one
+        self._coverage = None
+
         with open(png_path, "rb") as fh:
             raw = fh.read()
         b64 = base64.b64encode(raw).decode("ascii")
+        del raw
         data_uri = f"data:image/png;base64,{b64}"
+        del b64
+
         self._coverage = (data_uri, [s, w, n, e])
         self._cov_palette = palette_from_color_file(color_file)
         if self._ready:
@@ -280,8 +291,11 @@ class MapView(QWebEngineView):
             mode_js = f"if (typeof setContourMode === 'function') setContourMode({cur_mode});"
             js = f"{pal_js} {mode_js} loadCoverage('{data_uri}', [[{s}, {w}], [{n}, {e}]]);"
             self.page().runJavaScript(js)
+            del js
         else:
             self._render()
+
+        gc.collect()
 
     def clear_coverage(self) -> None:
         """Remove the coverage overlay + link line from the live map (Tx/Rx
@@ -298,7 +312,8 @@ class MapView(QWebEngineView):
         self.clear_tx_saved()
         if self._ready:
             js = (
-                "if (typeof overlay !== 'undefined' && overlay) {"
+                "if (typeof clearCoverage === 'function') { clearCoverage(); }"
+                "else if (typeof overlay !== 'undefined' && overlay) {"
                 "  map.removeLayer(overlay); overlay = null; }"
                 "if (typeof clearLink === 'function') { clearLink(); }"
                 "if (typeof hideCovTip === 'function') { hideCovTip(); }"
@@ -306,6 +321,8 @@ class MapView(QWebEngineView):
             self.page().runJavaScript(js)
         else:
             self._render()
+        import gc
+        gc.collect()
 
     def set_opacity(self, value: int) -> None:
         """Set the coverage overlay opacity (0-100) via JavaScript.

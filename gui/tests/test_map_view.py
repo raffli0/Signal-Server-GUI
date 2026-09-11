@@ -91,3 +91,13 @@ def test_palette_from_splat_classic_dcf():
     assert pal["levels"][0] == 0.0
     assert pal["levels"][-1] == -150.0
 
+
+def test_map_html_has_clear_coverage_and_memory_cleanup():
+    html = _tpl()
+    assert "function clearCoverage()" in html
+    assert "window.clearCoverage = clearCoverage;" in html
+    assert "window.loadCoverage = loadCoverage;" in html
+    assert "covCanvas.width = 0;" in html
+    assert "srcPixels = null;" in html
+
+

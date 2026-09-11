@@ -914,9 +914,41 @@
       renderOverlay();
     }
 
-    function loadCoverage(dataUri, bounds) {
-      if (overlay) { map.removeLayer(overlay); overlay = null; }
+    function clearCoverage() {
+      if (overlay) {
+        try {
+          if (overlay._image) {
+            overlay._image.onload = null;
+            overlay._image.onerror = null;
+            overlay._image.src = '';
+            overlay._image.removeAttribute('src');
+          }
+        } catch (e) {}
+        map.removeLayer(overlay);
+        overlay = null;
+      }
+      if (covCanvas) {
+        try {
+          covCtx.clearRect(0, 0, covCanvas.width, covCanvas.height);
+          covCanvas.width = 0;
+          covCanvas.height = 0;
+        } catch (e) {}
+      }
+      srcPixels = null;
+      bandMap = null;
+      covBounds = null;
+      window.__coverage = null;
       hideCovTip();
+      var layerList = document.getElementById('layer-list');
+      if (layerList) layerList.innerHTML = '';
+      var legend = document.getElementById('legend');
+      if (legend) legend.style.display = 'none';
+      map.off('zoomend', _onZoomOpacity);
+    }
+    window.clearCoverage = clearCoverage;
+
+    function loadCoverage(dataUri, bounds) {
+      clearCoverage();
       if (!dataUri) return;
       covBounds = bounds;
       map.fitBounds(bounds);
@@ -938,9 +970,14 @@
         covCanvas.height = img.height;
         covCtx.clearRect(0, 0, img.width, img.height);
         covCtx.drawImage(img, 0, 0);
+        var w = img.width, h = img.height;
+        // Release raw img element memory immediately
+        img.onload = null;
+        img.onerror = null;
+        img.src = '';
         try {
-          srcPixels = covCtx.getImageData(0, 0, img.width, img.height).data;
-          bandMap = computeBands(srcPixels, img.width, img.height);
+          srcPixels = covCtx.getImageData(0, 0, w, h).data;
+          bandMap = computeBands(srcPixels, w, h);
           visibleBands = new Set();
           for (var i = 0; i < PALETTE.length; i++) visibleBands.add(i);
           buildLayerMenu();
@@ -957,6 +994,7 @@
       map.off('zoomend', _onZoomOpacity);
       map.on('zoomend', _onZoomOpacity);
     }
+    window.loadCoverage = loadCoverage;
 
     // Smoothly fade the coverage overlay as the user zooms in, so dense
     // rasters stop hiding basemap detail (buildings / roads) at street level.
