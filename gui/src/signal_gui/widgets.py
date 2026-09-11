@@ -886,20 +886,20 @@ class ParameterForm(QWidget):
             fl_dem, "DEM resolution", self.dem_res,
             "Resolusi data elevasi. Default 30m (SRTM1) agar detail kontur bukit terjaga.")
 
-        # self._dem_downsample = QCheckBox("Izinkan downsampling (hemat RAM)")
-        # self._dem_downsample.setChecked(False)
-        # self._dem_downsample.setStyleSheet("color:#CBD5E0; font-size:11px;")
-        # fl_dem.addRow(self._dem_downsample)
+        self._dem_downsample = QCheckBox("Izinkan downsampling (hemat RAM)")
+        self._dem_downsample.setChecked(False)
+        self._dem_downsample.setStyleSheet("color:#CBD5E0; font-size:11px;")
+        fl_dem.addRow(self._dem_downsample)
 
-        # self._dem_fine_step = QCheckBox("Step halus 1/4 DEM (7.5m)")
-        # self._dem_fine_step.setChecked(False)
-        # self._dem_fine_step.setStyleSheet("color:#CBD5E0; font-size:11px;")
-        # fl_dem.addRow(self._dem_fine_step)
+        self._dem_fine_step = QCheckBox("Step halus 1/4 DEM (7.5m)")
+        self._dem_fine_step.setChecked(False)
+        self._dem_fine_step.setStyleSheet("color:#CBD5E0; font-size:11px;")
+        fl_dem.addRow(self._dem_fine_step)
 
         # Clutter & Obstacles (kept headless so collect/load and backend remain functional without error)
-        # self.clutter_path = QLineEdit()
-        # self.gc = FocusWheelSpinBox(); self.gc.setRange(0, 1000); self.gc.setValue(0)
-        # self.obstacles = QPlainTextEdit()
+        self.clutter_path = QLineEdit()
+        self.gc = FocusWheelSpinBox(); self.gc.setRange(0, 1000); self.gc.setValue(0)
+        self.obstacles = QPlainTextEdit()
 
         # self.btn_export_dem = QPushButton("Export DEM .tif untuk QGIS")
         # self.btn_export_dem.setStyleSheet(btn_ss)
