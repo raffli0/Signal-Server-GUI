@@ -547,7 +547,7 @@ class ParameterForm(QWidget):
         self.tx_name.setPlaceholderText("Site name (e.g. BTS-01)")
         self._add_row_with_info(fl_tx, "Site name", self.tx_name, "Label for this transmitter site")
         self.tx_network = QLineEdit()
-        self.tx_network.setPlaceholderText("Network (e.g. Telkomsel)")
+        self.tx_network.setPlaceholderText("Network (e.g. System)")
         self._add_row_with_info(fl_tx, "Network", self.tx_network, "Operator / network identifier")
         self.tx_coord = SiteCoordWidget()
         self.tx_coord.set(-6.916667, 107.6083)
@@ -607,7 +607,7 @@ class ParameterForm(QWidget):
         self.tx_thr, self.tx_thr_uv, tx_thr_w = self._make_threshold_pair(
             -100, (-200, 100), (-100, 250))
         self._add_row_with_info(
-            fl_tx, "Receiver threshold (unit ini)", tx_thr_w,
+            fl_tx, "Receiver threshold", tx_thr_w,
             "Ambang terima stasiun ini (dBm ⇄ dBµV). Disimpan di profil/manifest; "
             "engine hanya menerima satu -rt dari sisi Rx.")
         for w in (self.rf_power, self.tx_gain, self.cable_loss):
@@ -886,26 +886,26 @@ class ParameterForm(QWidget):
             fl_dem, "DEM resolution", self.dem_res,
             "Resolusi data elevasi. Default 30m (SRTM1) agar detail kontur bukit terjaga.")
 
-        self._dem_downsample = QCheckBox("Izinkan downsampling (hemat RAM)")
-        self._dem_downsample.setChecked(False)
-        self._dem_downsample.setStyleSheet("color:#CBD5E0; font-size:11px;")
-        fl_dem.addRow(self._dem_downsample)
+        # self._dem_downsample = QCheckBox("Izinkan downsampling (hemat RAM)")
+        # self._dem_downsample.setChecked(False)
+        # self._dem_downsample.setStyleSheet("color:#CBD5E0; font-size:11px;")
+        # fl_dem.addRow(self._dem_downsample)
 
-        self._dem_fine_step = QCheckBox("Step halus 1/4 DEM (7.5m)")
-        self._dem_fine_step.setChecked(False)
-        self._dem_fine_step.setStyleSheet("color:#CBD5E0; font-size:11px;")
-        fl_dem.addRow(self._dem_fine_step)
+        # self._dem_fine_step = QCheckBox("Step halus 1/4 DEM (7.5m)")
+        # self._dem_fine_step.setChecked(False)
+        # self._dem_fine_step.setStyleSheet("color:#CBD5E0; font-size:11px;")
+        # fl_dem.addRow(self._dem_fine_step)
 
         # Clutter & Obstacles (kept headless so collect/load and backend remain functional without error)
-        self.clutter_path = QLineEdit()
-        self.gc = FocusWheelSpinBox(); self.gc.setRange(0, 1000); self.gc.setValue(0)
-        self.obstacles = QPlainTextEdit()
+        # self.clutter_path = QLineEdit()
+        # self.gc = FocusWheelSpinBox(); self.gc.setRange(0, 1000); self.gc.setValue(0)
+        # self.obstacles = QPlainTextEdit()
 
-        self.btn_export_dem = QPushButton("Export DEM .tif untuk QGIS")
-        self.btn_export_dem.setStyleSheet(btn_ss)
-        self.btn_export_dem.setToolTip("Simpan clip DEMNAS/LIDAR ter-clip ke .tif untuk diinspeksi di QGIS")
-        self.btn_export_dem.clicked.connect(lambda: self.export_dem_requested.emit())
-        fl_dem.addRow(self.btn_export_dem)
+        # self.btn_export_dem = QPushButton("Export DEM .tif untuk QGIS")
+        # self.btn_export_dem.setStyleSheet(btn_ss)
+        # self.btn_export_dem.setToolTip("Simpan clip DEMNAS/LIDAR ter-clip ke .tif untuk diinspeksi di QGIS")
+        # self.btn_export_dem.clicked.connect(lambda: self.export_dem_requested.emit())
+        # fl_dem.addRow(self.btn_export_dem)
 
         # =========================================================================
         # -- 5. Output & Visualization
