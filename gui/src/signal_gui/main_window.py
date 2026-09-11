@@ -326,30 +326,82 @@ class MainWindow(QMainWindow):
 
         # Collapsible Console Card
         term_card = QFrame()
-        term_card.setStyleSheet("QFrame { background-color: #14171A; border: 1px solid #23272B; border-radius: 4px; }")
+        term_card.setObjectName("term_card")
+        term_card.setStyleSheet("""
+            QFrame#term_card {
+                background-color: #14171A;
+                border: 1px solid #23272B;
+                border-radius: 4px;
+            }
+        """)
         term_v = QVBoxLayout(term_card)
-        term_v.setContentsMargins(6, 2, 6, 4)
-        term_v.setSpacing(2)
+        term_v.setContentsMargins(6, 4, 6, 4)
+        term_v.setSpacing(4)
 
         term_hdr = QHBoxLayout()
-        term_lbl = QLabel("LOG CONSOLE")
-        term_lbl.setStyleSheet("color: #718096; font-size: 9px; font-weight: 700; letter-spacing: 0.5px;")
-        btn_clear_log = QPushButton("Clear")
-        btn_clear_log.setStyleSheet("QPushButton { background: transparent; color: #A0AEC0; border: none; font-size: 10px; } QPushButton:hover { color: #FC8181; }")
-        btn_clear_log.clicked.connect(self.terminal.clear)
-        self.btn_toggle_log = QPushButton("▾")
-        self.btn_toggle_log.setStyleSheet("QPushButton { background: transparent; color: #A0AEC0; border: none; font-size: 11px; font-weight: bold; } QPushButton:hover { color: #FFFFFF; }")
-        
+        term_hdr.setContentsMargins(0, 0, 0, 0)
+        term_hdr.setSpacing(6)
+
+        self.btn_toggle_log = QPushButton("▾  LOG CONSOLE")
+        self.btn_toggle_log.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_toggle_log.setToolTip("Klik untuk memperluas / menyembunyikan Log Console")
+        self.btn_toggle_log.setStyleSheet("""
+            QPushButton {
+                background: transparent;
+                color: #8C9BAE;
+                border: 1px solid transparent;
+                border-radius: 3px;
+                font-size: 9px;
+                font-weight: 700;
+                letter-spacing: 0.6px;
+                text-align: left;
+                padding: 2px 6px;
+            }
+            QPushButton:hover {
+                background-color: #1F242A;
+                color: #CBD5E0;
+                border: 1px solid #2D3748;
+            }
+            QPushButton:pressed {
+                background-color: #28313B;
+            }
+        """)
+
+        self.btn_clear_log = QPushButton("Clear")
+        self.btn_clear_log.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_clear_log.setToolTip("Bersihkan output log console")
+        self.btn_clear_log.setFixedHeight(18)
+        self.btn_clear_log.setStyleSheet("""
+            QPushButton {
+                background-color: #1B1F24;
+                color: #A0AEC0;
+                border: 1px solid #2D3748;
+                border-radius: 3px;
+                font-size: 9px;
+                font-weight: 600;
+                padding: 0 8px;
+            }
+            QPushButton:hover {
+                background-color: #2D3748;
+                color: #FC8181;
+                border-color: #E53E3E;
+            }
+            QPushButton:pressed {
+                background-color: #17191C;
+            }
+        """)
+        self.btn_clear_log.clicked.connect(self.terminal.clear)
+
         def _toggle_term():
             vis = not self.terminal.isVisible()
             self.terminal.setVisible(vis)
-            self.btn_toggle_log.setText("▾" if vis else "▸")
+            self.btn_toggle_log.setText("▾  LOG CONSOLE" if vis else "▸  LOG CONSOLE")
+            self.btn_clear_log.setVisible(vis)
 
         self.btn_toggle_log.clicked.connect(_toggle_term)
-        term_hdr.addWidget(term_lbl)
-        term_hdr.addStretch()
-        term_hdr.addWidget(btn_clear_log)
         term_hdr.addWidget(self.btn_toggle_log)
+        term_hdr.addStretch()
+        term_hdr.addWidget(self.btn_clear_log)
         term_v.addLayout(term_hdr)
         term_v.addWidget(self.terminal)
 
@@ -737,7 +789,9 @@ class MainWindow(QMainWindow):
         # to maximize vertical real estate for the parameter form.
         if self.height() <= 800 and hasattr(self, "terminal") and hasattr(self, "btn_toggle_log"):
             self.terminal.setVisible(False)
-            self.btn_toggle_log.setText("▸")
+            self.btn_toggle_log.setText("▸  LOG CONSOLE")
+            if hasattr(self, "btn_clear_log"):
+                self.btn_clear_log.setVisible(False)
 
     def _on_splitter_moved(self, *_args) -> None:
         if hasattr(self, "_sidebar") and self._sidebar.isVisible():
